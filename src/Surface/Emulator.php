@@ -20,6 +20,9 @@ final class Emulator
         'x' => '│', 'y' => '≤', 'z' => '≥', '{' => 'π', '|' => '≠', '}' => '£', '~' => '·', '_' => ' ',
     ];
 
+    /** How the terminal identifies itself to XTVERSION. */
+    public const NAME = 'phasync-tui(0.0.1)';
+
     /** Largest pending tail kept for an unterminated sequence before it is dropped. */
     private const MAX_PENDING = 1 << 20;
 
@@ -71,6 +74,13 @@ final class Emulator
     public int $lastX = -1;
     public int $lastY = -1;
 
+    /** @var array{0: list<int>, 1: list<int>} kitty keyboard flag stacks of the main and alternate screens */
+    public array $keyboardStack = [[], []];
+    /** xterm modifyOtherKeys level, 0-2. */
+    public int $modifyOtherKeys = 0;
+    /** @var array{int,int} default foreground and background, as reported to OSC 10/11 queries */
+    public array $colors;
+
     public int $version = 0;
     /** @var array<int, int> version at which each row last changed */
     public array $rowVersion = [];
@@ -86,7 +96,15 @@ final class Emulator
         $this->scrollbackLimit = max(0, $scrollbackLimit);
         $this->emit = $emit;
         $this->pen = Style::plain();
+        $this->colors = [Color::rgb(229, 229, 229), Color::rgb(0, 0, 0)];
         $this->reset();
+    }
+
+    /** The kitty keyboard protocol flags in effect for the active screen. */
+    public function keyboardFlags(): int
+    {
+        $stack = $this->keyboardStack[$this->mainLines === null ? 0 : 1];
+        return $stack === [] ? 0 : $stack[\count($stack) - 1];
     }
 
     /** Full reset (RIS): everything but the scrollback and the title. */
@@ -110,6 +128,8 @@ final class Emulator
         $this->charsets = ['B', 'B', 'B', 'B'];
         $this->gl = 0;
         $this->savedMain = $this->savedAlt = null;
+        $this->keyboardStack = [[], []];
+        $this->modifyOtherKeys = 0;
         $this->lastChar = null;
         $this->lastX = $this->lastY = -1;
         $this->touchAll();
@@ -160,13 +180,23 @@ final class Emulator
             $this->printAscii($text);
             return;
         }
-        foreach (mb_str_split($text, 1, 'UTF-8') as $ch) {
-            $w = Width::of(mb_ord($ch, 'UTF-8'));
-            if ($w === 0) {
-                $this->combine($ch);
-            } else {
-                $this->put($ch, $w);
+        // grapheme clusters by Unicode rules (\X): combining marks, ZWJ sequences, variation
+        // selectors, flags and Hangul syllables each become one cell or two
+        preg_match_all('/\X/u', $text, $m);
+        foreach ($m[0] as $i => $g) {
+            if ($i === 0 && $this->extendsLast($g)) {
+                continue;
             }
+            $cp = mb_ord($g, 'UTF-8');
+            $w = Width::of($cp);
+            if ($w === 0) {
+                // a cluster of only combining characters with nothing to attach to
+                continue;
+            }
+            if ($w === 1 && str_contains($g, "\u{FE0F}") && Width::isEmoji($cp)) {
+                $w = 2;
+            }
+            $this->put($g, $w);
         }
     }
 
@@ -281,23 +311,47 @@ final class Emulator
         }
     }
 
-    /** Attach a zero-width character (combining mark, joiner, variation selector) to the last one. */
-    private function combine(string $ch): void
+    /**
+     * Continue the cluster in the last printed cell with $g if the cursor is still right after
+     * it and Unicode joins them into one cluster (a combining mark, ZWJ and the next emoji, a
+     * variation selector, the second regional indicator of a flag), even across writes. U+FE0F
+     * widens a one-cell emoji to two cells when there is room.
+     */
+    private function extendsLast(string $g): bool
     {
         $x = $this->lastX;
         $y = $this->lastY;
-        if ($x < 0 || $y < 0 || $y >= $this->rows || $x >= $this->cols) {
-            return;
+        if ($x < 0 || $y !== $this->y || $y >= $this->rows || $x >= $this->cols) {
+            return false;
         }
         $line = $this->lines[$y];
-        if ($line->chars[$x] === '') {
-            return;
+        $prev = $line->chars[$x];
+        if ($prev === '' || $prev === ' ') {
+            return false;
         }
-        $line->chars[$x] .= $ch;
-        if ($this->lastChar !== null) {
-            $this->lastChar .= $ch;
+        $width = ($line->chars[$x + 1] ?? null) === '' ? 2 : 1;
+        $after = $x + $width;
+        $adjacent = $this->wrapPending ? $after === $this->cols && $this->x === $this->cols - 1 : $this->x === $after;
+        if (!$adjacent || preg_match_all('/\X/u', $prev . $g) !== 1) {
+            return false;
         }
+        $line->chars[$x] = $prev . $g;
+        $this->lastChar = $prev . $g;
         $this->touch($y);
+        if ($width === 1 && str_contains($g, "\u{FE0F}") && Width::isEmoji(mb_ord($prev, 'UTF-8')) && $x + 1 < $this->cols) {
+            if (($line->chars[$x + 2] ?? null) === '') {
+                $line->chars[$x + 2] = ' ';
+            }
+            $line->chars[$x + 1] = '';
+            $line->styles[$x + 1] = $line->styles[$x];
+            if ($x + 2 >= $this->cols) {
+                $this->x = $this->cols - 1;
+                $this->wrapPending = $this->modes[7] ?? false;
+            } else {
+                $this->x = $x + 2;
+            }
+        }
+        return true;
     }
 
     /** Execute a C0 control. */
@@ -427,6 +481,7 @@ final class Emulator
                 'J' => $this->eraseDisplay($p[0] ?? 0),
                 'K' => $this->eraseLine($p[0] ?? 0),
                 'n' => ($p[0] ?? 0) === 6 ? $this->reply(sprintf("\e[?%d;%dR", $this->reportedRow(), $this->x + 1)) : null,
+                'u' => $this->reply(sprintf("\e[?%du", $this->keyboardFlags())),
                 default => null,
             };
             return;
@@ -434,6 +489,42 @@ final class Emulator
         if ($prefix === '>') {
             if ($final === 'c' && ($p[0] ?? 0) === 0) {
                 $this->reply("\e[>1;10;0c");
+            } elseif ($final === 'q' && ($p[0] ?? 0) === 0) {
+                $this->reply("\eP>|" . self::NAME . "\e\\");
+            } elseif ($final === 'u') {
+                // kitty keyboard protocol: push flags
+                $stack = &$this->keyboardStack[$this->mainLines === null ? 0 : 1];
+                $stack[] = ($p[0] ?? 0) & 31;
+                if (\count($stack) > 16) {
+                    array_shift($stack);
+                }
+            } elseif ($final === 'm' && ($p[0] ?? null) === 4) {
+                $this->modifyOtherKeys = min(2, $p[1] ?? 0);
+            } elseif ($final === 'n' && ($p[0] ?? null) === 4) {
+                $this->modifyOtherKeys = 0;
+            }
+            return;
+        }
+        if ($prefix === '<' && $final === 'u') {
+            // kitty keyboard protocol: pop entries
+            $stack = &$this->keyboardStack[$this->mainLines === null ? 0 : 1];
+            array_splice($stack, max(0, \count($stack) - max(1, $p[0] ?? 1)));
+            return;
+        }
+        if ($prefix === '=' && $final === 'u') {
+            // kitty keyboard protocol: set the current flags (1 replace, 2 add, 3 remove)
+            $stack = &$this->keyboardStack[$this->mainLines === null ? 0 : 1];
+            $flags = ($p[0] ?? 0) & 31;
+            $current = $stack === [] ? 0 : $stack[\count($stack) - 1];
+            $new = match ($p[1] ?? 1) {
+                2 => $current | $flags,
+                3 => $current & ~$flags,
+                default => $flags,
+            };
+            if ($stack === []) {
+                $stack[] = $new;
+            } else {
+                $stack[\count($stack) - 1] = $new;
             }
             return;
         }
@@ -515,6 +606,9 @@ final class Emulator
                     $count = min($n, $this->cols * $this->rows);
                     $ch = $this->lastChar;
                     $w = Width::of(mb_ord($ch, 'UTF-8'));
+                    if ($w === 1 && str_contains($ch, "\u{FE0F}") && Width::isEmoji(mb_ord($ch, 'UTF-8'))) {
+                        $w = 2;
+                    }
                     for ($i = 0; $i < $count; $i++) {
                         $this->put($ch, max(1, $w));
                     }
@@ -672,6 +766,29 @@ final class Emulator
         }
         if ($code === '0' || $code === '1') {
             $this->iconName = $value;
+        }
+        if ($code === '10' || $code === '11' || $code === '12') {
+            // color queries, possibly chained: "10;?;?" asks for 10 and 11
+            $term = $end === "\x07" ? "\x07" : "\e\\";
+            $n = (int) $code;
+            foreach (explode(';', $value) as $item) {
+                if ($item === '?' && $n <= 12) {
+                    [$r, $g, $b] = Color::toRgb($n === 11 ? $this->colors[1] : $this->colors[0]);
+                    $this->reply(sprintf("\e]%d;rgb:%02x%02x/%02x%02x/%02x%02x%s", $n, $r, $r, $g, $g, $b, $b, $term));
+                }
+                $n++;
+            }
+        }
+        if ($code === '52') {
+            // clipboard write: "52;<selections>;<base64>"; reading the clipboard is not offered
+            $parts = explode(';', $value, 2);
+            $data = $parts[1] ?? '';
+            if ($data !== '?') {
+                $decoded = base64_decode($data, true);
+                if ($decoded !== false) {
+                    ($this->emit)('clipboard', $decoded);
+                }
+            }
         }
     }
 

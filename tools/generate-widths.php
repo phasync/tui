@@ -5,8 +5,12 @@
  *
  *   0  combining marks (Mn, Me), format characters (Cf, except U+00AD), Hangul medial and
  *      final jamo (U+1160-U+11FF, U+D7B0-U+D7FF), zero width space
- *   2  East Asian Wide and Fullwidth (this includes the emoji with emoji presentation)
+ *   2  East Asian Wide and Fullwidth (this includes the emoji with emoji presentation), and the
+ *      regional indicators (two of them make one flag of two cells)
  *   1  everything else
+ *
+ * plus EMOJI: the code points of width 1 that have the Emoji property, which a following U+FE0F
+ * (emoji presentation selector) turns into a two-cell emoji, as modern terminals and Ink do.
  */
 if (!class_exists(IntlChar::class)) {
     fwrite(STDERR, "ext-intl is required to generate the width table\n");
@@ -25,6 +29,9 @@ $width = static function (int $cp): int {
         || $cat === IntlChar::CHAR_CATEGORY_FORMAT_CHAR) {
         return 0;
     }
+    if ($cp >= 0x1F1E6 && $cp <= 0x1F1FF) {
+        return 2;
+    }
     $eaw = IntlChar::getIntPropertyValue($cp, IntlChar::PROPERTY_EAST_ASIAN_WIDTH);
     if ($eaw === IntlChar::EA_WIDE || $eaw === IntlChar::EA_FULLWIDTH) {
         return 2;
@@ -32,7 +39,7 @@ $width = static function (int $cp): int {
     return 1;
 };
 
-$ranges = [0 => [], 2 => []];
+$ranges = [0 => [], 2 => [], 'emoji' => []];
 $start = null;
 $current = 1;
 for ($cp = 0xA0; $cp <= 0x110000; $cp++) {
@@ -43,6 +50,18 @@ for ($cp = 0xA0; $cp <= 0x110000; $cp++) {
         }
         $start = $cp;
         $current = $w;
+    }
+}
+
+$start = null;
+for ($cp = 0x20; $cp <= 0x110000; $cp++) {
+    $e = $cp < 0x110000 && ($cp < 0xD800 || $cp > 0xDFFF) && IntlChar::hasBinaryProperty($cp, 57 /* UCHAR_EMOJI, no IntlChar constant */)
+        && ($cp < 0xA0 || $width($cp) === 1);
+    if ($e && $start === null) {
+        $start = $cp;
+    } elseif (!$e && $start !== null) {
+        $ranges['emoji'][] = [$start, $cp - 1];
+        $start = null;
     }
 }
 
@@ -78,8 +97,15 @@ final class Width
         {$format($ranges[2])},
     ];
 
+    /** @var list<array{int,int}> */
+    public const EMOJI = [
+        {$format($ranges['emoji'])},
+    ];
+
     /** @var array<int,int> */
     private static array \$cache = [];
+    /** @var array<int,bool> */
+    private static array \$emoji = [];
 
     /** The number of columns code point \$cp occupies: 0, 1 or 2. */
     public static function of(int \$cp): int
@@ -88,6 +114,12 @@ final class Width
             return \$cp === 0xAD || \$cp >= 0x20 ? 1 : 0;
         }
         return self::\$cache[\$cp] ??= (self::search(self::ZERO, \$cp) ? 0 : (self::search(self::WIDE, \$cp) ? 2 : 1));
+    }
+
+    /** True if U+FE0F after code point \$cp makes it a two-cell emoji (it has width 1 and the Emoji property). */
+    public static function isEmoji(int \$cp): bool
+    {
+        return self::\$emoji[\$cp] ??= self::search(self::EMOJI, \$cp);
     }
 
     /** @param list<array{int,int}> \$ranges */

@@ -75,10 +75,48 @@ describe('printing', function () {
             ->and(cursorAt($s))->toBe([4, 0]);
     });
 
-    it('keeps emoji with variation selectors and joiners in one cell', function () {
+    it('makes an emoji with the presentation selector two cells wide', function () {
         $s = vt("\u{2764}\u{FE0F}!");
         expect($s->cell(0, 0)->char)->toBe("\u{2764}\u{FE0F}")
-            ->and($s->cell(1, 0)->char)->toBe('!');
+            ->and($s->cell(0, 0)->width)->toBe(2)
+            ->and($s->cell(2, 0)->char)->toBe('!');
+    });
+
+    it('keeps a ZWJ emoji sequence in one two-cell cluster, as Ink counts it', function () {
+        $family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        $s = vt($family . 'x');
+        expect($s->cell(0, 0)->char)->toBe($family)
+            ->and($s->cell(0, 0)->width)->toBe(2)
+            ->and($s->cell(2, 0)->char)->toBe('x');
+    });
+
+    it('makes flags, skin tones and keycaps one two-cell cluster', function () {
+        $s = vt("\u{1F1F3}\u{1F1F4}|\u{1F44D}\u{1F3FD}|1\u{FE0F}\u{20E3}|");
+        expect($s->cell(0, 0)->char)->toBe("\u{1F1F3}\u{1F1F4}")
+            ->and($s->cell(2, 0)->char)->toBe('|')
+            ->and($s->cell(3, 0)->char)->toBe("\u{1F44D}\u{1F3FD}")
+            ->and($s->cell(5, 0)->char)->toBe('|')
+            ->and($s->cell(6, 0)->char)->toBe("1\u{FE0F}\u{20E3}")
+            ->and($s->cell(6, 0)->width)->toBe(2)
+            ->and(cursorAt($s))->toBe([9, 0]);
+    });
+
+    it('joins a cluster continued in the next write', function () {
+        $s = new Surface(10, 1);
+        $s->write("\u{1F468}\u{200D}");
+        $s->write("\u{1F469}x");
+        expect($s->cell(0, 0)->char)->toBe("\u{1F468}\u{200D}\u{1F469}")
+            ->and($s->cell(2, 0)->char)->toBe('x');
+        $s = new Surface(10, 1);
+        $s->write("\u{2764}");
+        $s->write("\u{FE0F}x");
+        expect($s->cell(0, 0)->width)->toBe(2)
+            ->and($s->cell(2, 0)->char)->toBe('x');
+    });
+
+    it('does not join across a cursor movement', function () {
+        $s = vt("a\e[3G\u{0301}");
+        expect($s->cell(0, 0)->char)->toBe('a');
     });
 
     it('shows malformed UTF-8 as U+FFFD', function () {

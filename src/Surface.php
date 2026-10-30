@@ -293,6 +293,32 @@ final class Surface implements \Stringable
         return $this->vt->modes[$mode] ?? false;
     }
 
+    /**
+     * The kitty keyboard protocol flags the program enabled (`CSI > flags u`), 0 when it uses
+     * legacy key encoding: 1 disambiguate escape codes, 2 report event types, 4 report alternate
+     * keys, 8 report all keys as escape codes, 16 report associated text. `sendKey()` honours them.
+     */
+    public function keyboardFlags(): int
+    {
+        return $this->vt->keyboardFlags();
+    }
+
+    /** The xterm modifyOtherKeys level the program set (`CSI > 4 ; n m`): 0, 1 or 2. `sendKey()` honours it. */
+    public function modifyOtherKeys(): int
+    {
+        return $this->vt->modifyOtherKeys;
+    }
+
+    /**
+     * Set the colors reported to programs that ask for the terminal's default foreground and
+     * background (OSC 10 and 11; many programs choose a light or dark theme from them). The
+     * default is light gray on black. Pass truecolor values from `Color::rgb()`.
+     */
+    public function setDefaultColors(int $fg, int $bg): void
+    {
+        $this->vt->colors = [$fg, $bg];
+    }
+
     /** Whether the program switched the keypad to application mode (DECKPAM, ESC =). */
     public function isKeypadApplication(): bool
     {
@@ -345,6 +371,7 @@ final class Surface implements \Stringable
      * - `resize`: receives `[$cols, $rows]`
      * - `title`: receives the new title
      * - `bell`: the program rang the bell (BEL)
+     * - `clipboard`: the program asked to copy text to the clipboard (OSC 52); receives the text
      *
      * @param \Closure(mixed $data): void $listener
      */

@@ -446,3 +446,55 @@ describe('scrollback', function () {
         expect((new Surface(3, 1, scrollback: 0))->scrollbackSize())->toBe(0);
     });
 });
+
+describe('keyboard protocols and terminal queries', function () {
+    it('keeps a kitty keyboard flag stack per screen and answers the query', function () {
+        $s = vt("\e[?u\e[>1u\e[?u\e[>3u\e[?u\e[<u\e[?u");
+        expect($s->input->peek())->toBe("\e[?0u\e[?1u\e[?3u\e[?1u")
+            ->and($s->keyboardFlags())->toBe(1);
+        $s->write("\e[?1049h");
+        expect($s->keyboardFlags())->toBe(0);
+        $s->write("\e[=5u\e[=2;3u");
+        expect($s->keyboardFlags())->toBe(5);
+        $s->write("\e[?1049l\e[<5u");
+        expect($s->keyboardFlags())->toBe(0);
+    });
+
+    it('records modifyOtherKeys', function () {
+        $s = vt("\e[>4;2m");
+        expect($s->modifyOtherKeys())->toBe(2);
+        $s->write("\e[>4m");
+        expect($s->modifyOtherKeys())->toBe(0);
+        $s->write("\e[>4;1m\e[>4n");
+        expect($s->modifyOtherKeys())->toBe(0);
+    });
+
+    it('answers XTVERSION', function () {
+        expect(vt("\e[>q")->input->peek())->toBe("\eP>|phasync-tui(0.0.1)\e\\");
+    });
+
+    it('answers color queries with the same terminator', function () {
+        $s = vt("\e]11;?\x07\e]10;?\e\\");
+        expect($s->input->peek())->toBe("\e]11;rgb:0000/0000/0000\x07\e]10;rgb:e5e5/e5e5/e5e5\e\\");
+        $s = new Surface(10, 1);
+        $s->setDefaultColors(Color::rgb(0, 0, 0), Color::rgb(255, 255, 255));
+        $s->write("\e]10;?;?\x07");
+        expect($s->input->peek())->toBe("\e]10;rgb:0000/0000/0000\x07\e]11;rgb:ffff/ffff/ffff\x07");
+    });
+
+    it('passes clipboard writes (OSC 52) on as an event', function () {
+        $s = new Surface(10, 1);
+        $copied = [];
+        $s->on('clipboard', function (string $text) use (&$copied) { $copied[] = $text; });
+        $s->write("\e]52;c;" . base64_encode('hello') . "\x07\e]52;c;?\x07\e]52;c;!!\x07");
+        expect($copied)->toBe(['hello'])
+            ->and($s->input->peek())->toBe('');
+    });
+
+    it('records focus reporting and synchronized output and reports them to DECRQM', function () {
+        $s = vt("\e[?1004h\e[?2026h\e[?2026\$p");
+        expect($s->mode(1004))->toBeTrue()
+            ->and($s->mode(2026))->toBeTrue()
+            ->and($s->input->peek())->toBe("\e[?2026;1\$y");
+    });
+});
