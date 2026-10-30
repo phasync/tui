@@ -472,6 +472,8 @@ final class Viewport
      */
     public function paint(array $wanted, int $cols, int $rows): string
     {
+        // the version first: changes made while the rows are read are painted next time
+        $version = $this->source->version();
         $this->syncScrolled();
         $out = '';
         $x0 = $this->x;
@@ -532,7 +534,7 @@ final class Viewport
                 $out .= self::rowAnsi($chars, $styles, $x0, $clipL, $clipR, $ty);
             }
         }
-        $this->paintedVersion = $this->source->version();
+        $this->paintedVersion = $version;
         $this->paintedKey = $this->paintKey();
         return $out;
     }

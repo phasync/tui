@@ -79,6 +79,8 @@ final class Emulator
     public array $keyboardStack = [[], []];
     /** xterm modifyOtherKeys level, 0-2. */
     public int $modifyOtherKeys = 0;
+    /** When the current synchronized update (mode 2026) began. */
+    public float $syncStarted = 0.0;
     /** @var array{int,int} default foreground and background, as reported to OSC 10/11 queries */
     public array $colors;
 
@@ -1102,6 +1104,13 @@ final class Emulator
                 case 47:
                 case 1047:
                     $this->switchScreen($on);
+                    break;
+                case 2026:
+                    // a synchronized update begins (a host shows it when it ends); BSU twice keeps the start
+                    if ($on && !($this->modes[2026] ?? false)) {
+                        $this->syncStarted = microtime(true);
+                    }
+                    $this->modes[2026] = $on;
                     break;
                 case 1048:
                     $on ? $this->saveCursor() : $this->restoreCursor();

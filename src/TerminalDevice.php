@@ -187,6 +187,8 @@ abstract class TerminalDevice
         $this->drawing = true;
         try {
             $root->compose();
+            // the version first: changes made while the rows are read are drawn next frame
+            $version = $root->version();
             $out = '';
             if ($this->redraw) {
                 $this->redraw = false;
@@ -197,7 +199,7 @@ abstract class TerminalDevice
             } else {
                 $damaged = $root->damagedSince($this->drawnVersion);
             }
-            $this->drawnVersion = $root->version();
+            $this->drawnVersion = $version;
             $at = [-1, -1];
             foreach ($damaged as $y) {
                 $out .= $this->drawRow($y, $root, $at);

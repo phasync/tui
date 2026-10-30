@@ -37,6 +37,8 @@ final class Tty extends TerminalDevice
     private float $sizeChecked = 0.0;
     private bool $resized = false;
     private bool $signals = false;
+    private string $queue = '';
+    private bool $sending = false;
     private static bool $shutdownRegistered = false;
     /** @var list<Tty> */
     private static array $openTerminals = [];
@@ -133,15 +135,27 @@ final class Tty extends TerminalDevice
 
     protected function send(string $bytes): void
     {
-        while ($bytes !== '') {
-            $n = @fwrite($this->out, $bytes);
-            if ($n === false) {
-                return;
+        // one writer at a time: bytes sent while a write waits for the terminal queue behind it,
+        // so two sequences never interleave
+        $this->queue .= $bytes;
+        if ($this->sending) {
+            return;
+        }
+        $this->sending = true;
+        try {
+            while ($this->queue !== '') {
+                $n = @fwrite($this->out, $this->queue);
+                if ($n === false) {
+                    $this->queue = '';
+                    return;
+                }
+                $this->queue = (string) substr($this->queue, $n);
+                if ($this->queue !== '') {
+                    writable($this->out);
+                }
             }
-            $bytes = (string) substr($bytes, $n);
-            if ($bytes !== '') {
-                writable($this->out);
-            }
+        } finally {
+            $this->sending = false;
         }
     }
 

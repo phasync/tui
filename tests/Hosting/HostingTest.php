@@ -354,3 +354,27 @@ it('measures text like the surface lays it out', function () {
         ->and(Text::pad('ab', 5, 'right'))->toBe('   ab')
         ->and(Text::pad('ab', 5, 'center'))->toBe(' ab  ');
 });
+
+it('shows a synchronized update that ends after its host\'s host composed (regression)', function () {
+    // root -> mid -> leaf: mid holds leaf back while leaf is in mode 2026; the end of the update
+    // must still reach the root, although mid was already dirty when it ended
+    $root = new Surface(6, 1);
+    $mid = new Surface(6, 1);
+    $leaf = new Surface(6, 1);
+    $root->host($mid);
+    $mid->host($leaf);
+    $leaf->write("\e[?2026hab");
+    expect($root->line(0))->toBe('')->and($root->needsCompose())->toBeTrue();
+    $leaf->write("cd\e[?2026l");
+    expect($root->needsCompose())->toBeTrue()->and($root->line(0))->toBe('abcd');
+});
+
+it('does not lose rows changed while a host reads them (regression)', function () {
+    $host = new Surface(4, 2);
+    $src = new Surface(4, 2);
+    $view = $host->host($src);
+    $src->write('ab');
+    $host->compose();
+    $src->write("\r\ncd");
+    expect($view->damagedRows())->toBe([1])->and($host->line(1))->toBe('cd');
+});

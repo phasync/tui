@@ -35,8 +35,6 @@ final class Host
     private int $composedVersion = -1;
     /** @var array<int, list<\Closure>> listener removers per viewport */
     private array $offs = [];
-    /** @var array<int, float> when a surface was first seen holding back output (mode 2026) */
-    private array $syncSince = [];
     /** @var array<int, true>|null surfaces placed by the layout being applied */
     private ?array $placed = null;
     private ?Viewport $capture = null;
@@ -126,7 +124,7 @@ final class Host
         foreach ($this->offs[$id] as $off) {
             $off();
         }
-        unset($this->offs[$id], $this->syncSince[spl_object_id($child)]);
+        unset($this->offs[$id]);
         $this->viewports = array_values(array_filter($this->viewports, fn(Viewport $v) => $v !== $view));
         if ($this->capture === $view) {
             $this->capture = $this->anchor = null;
@@ -307,10 +305,15 @@ final class Host
         }
         $this->composing = true;
         try {
+            // children first; one still holding back an update keeps this host dirty too, so
+            // the hosts above (and the terminal device) keep looking until it is shown
+            $this->dirty = false;
             foreach ($this->viewports as $v) {
                 $v->source->compose();
+                if ($v->source->needsCompose()) {
+                    $this->dirty = true;
+                }
             }
-            $this->dirty = false;
             $cols = $this->vt->cols;
             $rows = $this->vt->rows;
             // rows the host's own producer changed: the windows over them are painted again
@@ -320,22 +323,16 @@ final class Host
                     $own[$y] = true;
                 }
             }
-            $now = microtime(true);
             $out = '';
             /** @var list<array{Viewport, array<int,true>}> $painted */
             $painted = [];
             foreach ($this->viewports as $v) {
                 [$vx, $vy, $vw, $vh] = $v->rect();
-                $sid = spl_object_id($v->source);
-                if ($v->source->mode(2026)) {
-                    $since = $this->syncSince[$sid] ??= $now;
-                    if ($now - $since < self::SYNC_TIMEOUT) {
-                        // the program is drawing a frame: show it once it is complete
-                        $this->dirty = true;
-                        continue;
-                    }
-                } else {
-                    unset($this->syncSince[$sid]);
+                $age = $v->source->syncAge();
+                if ($age !== null && $age < self::SYNC_TIMEOUT) {
+                    // the program is drawing a frame: show it once it is complete
+                    $this->dirty = true;
+                    continue;
                 }
                 $set = [];
                 foreach ($v->damagedRows() as $y) {

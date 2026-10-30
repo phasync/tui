@@ -651,6 +651,15 @@ final class Surface implements \Stringable
     }
 
     /**
+     * @internal Seconds since the program began the synchronized update it is in (mode 2026), or
+     * null when it is not in one. Hosts hold its window back meanwhile, for a limited time.
+     */
+    public function syncAge(): ?float
+    {
+        return ($this->vt->modes[2026] ?? false) ? microtime(true) - $this->vt->syncStarted : null;
+    }
+
+    /**
      * @internal The cells of row $y as parallel arrays of graphemes ('' for a continuation) and
      * styles, for renderers in this library (Viewport). Not part of the public API.
      *

@@ -31,6 +31,9 @@ use function fiber\writable;
  */
 final class Pty
 {
+    /** An OSC the wrapper prints once it has set the size, before the program starts. */
+    private const READY = '7701;phasync-tui-ready';
+
     /** @var resource */
     private $process;
     /** @var resource */
@@ -44,6 +47,8 @@ final class Pty
     /** @var array{int,int}|null */
     private ?array $wantedSize = null;
     private bool $resizing = false;
+    /** The wrapper has set the initial size: later sizes can be applied. */
+    private bool $ready = false;
     private Signal $done;
     private \Closure $offResize;
 
@@ -71,7 +76,14 @@ final class Pty
         $cols = $surface->cols();
         $rows = $surface->rows();
         // set the size before the program starts, then exec it in place
-        $wrapper = ['/bin/sh', '-c', "stty cols $cols rows $rows 2>/dev/null; exec \"\$@\"", 'sh', ...$argv];
+        // PHP's proc_open() passes every descriptor of this process on to the child, among them the
+        // masters of other ptys: a program holding them would keep those terminals from ever
+        // hanging up. The wrapper closes them, sets the size, and runs the program in its place.
+        // bash can close any descriptor; POSIX sh only 3 to 9.
+        $bash = self::bash();
+        $close = 'for f in /proc/$$/fd/* /dev/fd/*; do n=${f##*/}; case $n in ' . ($bash !== null ? '*[!0-9]*|0|1|2) ;; *)' : '[3-9])')
+            . ' eval "exec $n>&-";; esac; done; ';
+        $wrapper = [$bash ?? '/bin/sh', '-c', $close . "stty cols $cols rows $rows 2>/dev/null; printf '\\033]" . self::READY . "\\007'; exec \"\$@\"", 'sh', ...$argv];
         if (self::hasSetsid()) {
             // a new session with the pty as controlling terminal
             $wrapper = ['setsid', '-c', ...$wrapper];
@@ -100,6 +112,21 @@ final class Pty
         return $pty;
     }
 
+    private static function bash(): ?string
+    {
+        static $bash = false;
+        if ($bash === false) {
+            $bash = null;
+            foreach (['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash', '/opt/homebrew/bin/bash'] as $path) {
+                if (is_executable($path)) {
+                    $bash = $path;
+                    break;
+                }
+            }
+        }
+        return $bash;
+    }
+
     private static function hasSetsid(): bool
     {
         static $has = null;
@@ -124,6 +151,22 @@ final class Pty
                         break;
                     }
                     continue;
+                }
+                if (!$this->ready) {
+                    $marker = "\e]" . self::READY . "\x07";
+                    $head = ($head ?? '') . $data;
+                    $at = strpos($head, $marker);
+                    if ($at === false) {
+                        continue;   // nothing comes before the marker but a piece of it
+                    }
+                    $data = substr($head, 0, $at) . substr($head, $at + \strlen($marker));
+                    $this->ready = true;
+                    if ($this->wantedSize !== null) {
+                        $this->resize(...$this->wantedSize);
+                    }
+                    if ($data === '') {
+                        continue;
+                    }
                 }
                 $surface->write($data);
             }
@@ -238,7 +281,7 @@ final class Pty
     public function resize(int $cols, int $rows): void
     {
         $this->wantedSize = [max(1, $cols), max(1, $rows)];
-        if ($this->resizing || $this->ended) {
+        if ($this->resizing || $this->ended || !$this->ready) {
             return;
         }
         $this->resizing = true;
