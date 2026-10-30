@@ -6,11 +6,29 @@ emulator. Everything that shows on screen is a Surface; a shell in a pty and a P
 surfaces, a compositor for the real terminal, layouts (splits, stacks), and components with a
 lifecycle and a coroutine of their own. Think tmux as a library, with Tether-style components.
 
-Package `phasync/tui`, namespace `phasync\Tui`. PHP 8.3+. Depends on `phasync/phasync` (^2.0.7)
-for coroutines (`phasync::go/service/readable/writable/sleep/awaitFlag/raiseFlag`) and
-`phasync\Util\StringBuffer`. ext-phasync is optional: with it, `phasync\ext\sapi()` routes a
-coroutine's `echo` into a Surface; without it, the application calls `$surface->write()`. Nothing
-else is platform-specific beyond what is stated below. MIT.
+Package `phasync/tui`, namespace `phasync\Tui`. PHP 8.3+. MIT.
+
+**Runtime: `fiber-interop/api` only.** All concurrency goes through the `fiber\` functions
+(`run`, `go`, `await`, `await_all`, `await_any`, `service`, `sleep`, `readable`, `writable`,
+`fiber\Deferred`, `fiber\Timeout`), so the library runs unchanged on phasync, Revolt/AMPHP and
+ReactPHP. Its README and docs are in `vendor/fiber-interop/api` after install. The library's
+`composer.json` requires `fiber-interop/api` and, as a dev dependency, the adapter
+`fiber-interop/phasync` (which brings `phasync/phasync`); the tests run under that adapter. Do not
+use the `phasync` class or `phasync\Util\*` in `src/` (phasync's own types would tie the library to
+one runtime). Two things `fiber\` lacks are to be solved inside the library in the plain way:
+- **Cancellation** is not in `fiber\`: a component's coroutines end cooperatively. The component
+  exposes a "stopped" awaitable (a `Deferred`) that resolves on unmount; the frame loop and other
+  waits use `await_any([$work, $stopped])` or short sleeps that check `isMounted()`; a `Pty` ends
+  by killing its process, which ends the pump's `readable()`.
+- **Byte queues between coroutines** (pty output → Surface, keys → producer): a small internal
+  buffer class of this library, with `await`-able readiness via `Deferred`.
+If the `fiber\` surface proves genuinely insufficient for something the spec requires, say exactly
+what and why in DEVNOTES.md and in the report, with the smallest `fiber\` addition that would do;
+do not quietly reach for phasync. The supervisor decides whether to switch.
+
+ext-phasync is optional: with it, `phasync\ext\sapi()` routes a coroutine's `echo` into a Surface
+(the one place that may mention phasync, guarded by `function_exists`); without it, the application
+calls `$surface->write()`.
 
 Audience: any PHP developer writing a command-line program, not only phasync users. The API must
 read naturally to someone who knows the terminal and PHP, with no knowledge of the internals.
@@ -68,8 +86,8 @@ A grid of cells with its own `cols` × `rows`, independent of the screen, plus s
 ## 2. Producers
 
 - **Pty**: runs a command with `proc_open(..., [['pty'], ['pty'], ['pty']])` and pumps its output
-  into a Surface, keys from the Surface's input to the process, with phasync coroutines
-  (`readable()`/`writable()`), never blocking the loop. Resize: `stty -F <slave> cols C rows R`
+  into a Surface, keys from the Surface's input to the process, with `fiber\go()` coroutines and
+  `fiber\readable()`/`writable()`, never blocking the loop. Resize: `stty -F <slave> cols C rows R`
   from a helper process (sets the size and raises SIGWINCH in the child); the slave path comes
   from the child or `/proc`. Exposes exit status, `wait()`, `kill()`. The environment sets
   `TERM=xterm-256color` and `COLORTERM` to match what the Surface implements.
@@ -94,7 +112,8 @@ drawn by the viewport, not the child. A Surface may be larger than its viewport 
   cursor hidden while composing, restored on exit and on exceptions/signals.
 - Holds a Surface of the terminal's size; composites viewports in z-order into it; a differ emits
   the minimum cursor moves and SGR runs against the previous frame. Frames at most 60/s, only when
-  damaged; a `phasync::service()` coroutine drives it.
+  damaged; a `fiber\go()` coroutine of the Screen drives it (not `service()`: the screen belongs
+  to the program's `run()`), ending when the Screen closes.
 - Input decoder: keys (legacy, SS3, CSI, CSI-u/kitty basics, alt-modified, UTF-8 text), mouse
   (SGR 1006, buttons, wheel, drag), paste (bracketed), focus in/out. Delivered as typed events
   (`Key`, `Mouse`, `Paste`, `Resize`) to the focus owner; a Surface receiving a Key/Mouse encodes
@@ -117,7 +136,8 @@ drawn by the viewport, not the child. A Surface may be larger than its viewport 
 
 A class owning a Surface and a lifecycle, after Tether: `mount()`, `render()` (either draw into
 `$this->surface` directly or return a child layout), `run()` (a coroutine running while mounted;
-`go()` for more, all cancelled on unmount), `requestRender()` (batched into the next frame),
+`go()` for more, all told to stop on unmount through the component's stopped awaitable, and the
+component's disposal waits for them briefly), `requestRender()` (batched into the next frame),
 `dispose()`, children with keys, event handlers for keys/mouse/focus/resize, and an error boundary
 that contains a child's failure to its rectangle. Built-in components, minimal but complete:
 `Terminal` (a pty in a component), `Log` (append-only text with scrollback and follow),
@@ -126,10 +146,12 @@ a child). More widgets belong to applications or later versions.
 
 ## 7. Deliverables for every version
 
-- `composer.json` (`phasync/tui`, PSR-4 `phasync\Tui\` → `src/`), `composer install` works
-  offline-friendly (phasync from Packagist).
-- `src/`, `tests/` (Pest, run with `vendor/bin/pest`, green; also green with ext-phasync loaded via
-  `php -d extension=vendor/phasync/phasync/ext/phasync-8.5-nts-x86_64-glibc.so`). The VT parser has
+- `composer.json` (`phasync/tui`, PSR-4 `phasync\Tui\` → `src/`; requires `fiber-interop/api`,
+  `charm/parsing` only if the compiled parser needs it at runtime; dev: `fiber-interop/phasync`,
+  `pestphp/pest`), all from Packagist.
+- `src/`, `tests/` (Pest, run with `vendor/bin/pest` under the phasync adapter, green; also green
+  with ext-phasync loaded via `php -d extension=vendor/phasync/phasync/ext/phasync-8.5-nts-x86_64-glibc.so`,
+  where the `echo`-capture path is exercised). The VT parser has
   known-answer tests for every sequence class above and tests from recorded real program output
   (e.g. `ls --color`, a `symfony/console` progress bar, `vim` startup/exit, `htop` frames captured
   with `script`), and tests comparing the Surface against a reference where one is available
