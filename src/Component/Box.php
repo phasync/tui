@@ -52,6 +52,13 @@ final class Box extends Component
         return $this->title;
     }
 
+    protected function mount(): void
+    {
+        // the content is the box's child from the start, so a focused box passes keys to it
+        // also before the render that shows it
+        $this->child('content', fn() => $this->content);
+    }
+
     protected function render(): Layout
     {
         $content = $this->child('content', fn() => $this->content);

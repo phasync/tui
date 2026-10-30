@@ -665,12 +665,25 @@ final class Surface implements \Stringable
     }
 
     /**
-     * @internal True if the latest focus request of all was for this surface (`focus()` or
-     * `takeFocus()`), so nothing has been focused since.
+     * @internal The latest focus request in this surface's subtree, its own included (0: none):
+     * what decides whether its host's keys go its way. Changes nothing.
      */
-    public function isLatestFocus(): bool
+    public function latestFocus(): int
     {
-        return $this->focusStamp > 0 && $this->focusStamp === self::$focusClock;
+        return max($this->focusStamp, $this->latestFocusBelow());
+    }
+
+    /**
+     * @internal The latest focus request that decides where this surface passes keys on: that of
+     * the window subtree it focuses, or its own `takeFocus()` (0: none). Changes nothing.
+     */
+    public function latestFocusBelow(): int
+    {
+        $rank = $this->keepStamp;
+        foreach ($this->host?->viewports ?? [] as $v) {
+            $rank = max($rank, $v->source->latestFocus());
+        }
+        return $rank;
     }
 
     /**

@@ -95,8 +95,6 @@ abstract class Component
     private ?\Throwable $error = null;
     /** @var list<\Closure> */
     private array $offs = [];
-    /** A child focused before a render showed it: its keys go through this component meanwhile. */
-    private ?Component $focusPending = null;
 
     // ------------------------------------------------------------------------------------------
     // Hooks
@@ -200,9 +198,9 @@ abstract class Component
         $this->wake = new Signal();
         $s = $this->surface;
         $this->offs = [
-            $s->on('key', fn(Key $e) => $this->handle(fn() => $this->onKey($e)) || $this->toPending($e)),
+            $s->on('key', fn(Key $e) => $this->handle(fn() => $this->onKey($e)) || $this->toUnshown($e)),
             $s->on('mouse', fn(Mouse $e) => $this->handle(fn() => $this->onMouse($e))),
-            $s->on('paste', fn(Paste $e) => $this->handle(fn() => $this->onPaste($e)) || $this->toPending($e)),
+            $s->on('paste', fn(Paste $e) => $this->handle(fn() => $this->onPaste($e)) || $this->toUnshown($e)),
             $s->on('focus', function (Focus $e): void {
                 $this->handle(fn() => $this->onFocus($e));
                 $this->requestRender();
@@ -339,20 +337,23 @@ abstract class Component
     }
 
     /**
-     * Give the focus to this component: every host from the root down to it focuses the way to
-     * it, so keys and pastes come here (and on to its focused child), through any hosts in
-     * between, components or plain surfaces (see `Surface::focus()`). It takes effect at once:
-     * the very next key comes here, also when the component is not shown yet (a dialog created
-     * in a key handler, shown by the render that follows): until a render shows it, its keys and
-     * pastes go to it through its parent. The focus stays with it through every re-render.
+     * Give the focus to this component: keys and pastes come here, and on to the descendant it
+     * focused (a dialog that focused its text field in `mount()` passes them to the field).
+     * Every host from the root down focuses the way to it, through any hosts in between,
+     * components or plain surfaces (see `Surface::focus()`). The latest `focus()` wins, and the
+     * focus stays with it through every re-render.
+     *
+     * It takes effect at once, for the very next key, also when the component is not shown yet
+     * (a dialog created and focused in a key handler, shown by the render that follows): until a
+     * render shows it, keys reach it through its nearest shown ancestor, exactly as if it were
+     * on the focus path, and go on from it to the same descendant they will reach once it is
+     * shown. Nothing needs repeating in `render()`.
      */
     public function focus(): void
     {
-        // not shown yet: the nearest ancestor that is takes its keys and passes them down
-        $this->focusPending = null;
+        // not shown yet: the nearest ancestor that is joins the focus path and passes keys down
         $c = $this;
         while ($c->parent !== null && $c->surface->viewport() === null) {
-            $c->parent->focusPending = $c;
             $c = $c->parent;
         }
         if ($c !== $this) {
@@ -361,30 +362,79 @@ abstract class Component
         $this->surface->focus();
     }
 
-    /** Pass a key or paste to a child focused before it was shown; false when there is none. */
-    private function toPending(Key|Paste $event): bool
+    /**
+     * True if keys go to this component (or through it to a descendant): it is on the focus path
+     * from the root, also while it is not shown yet (see `focus()`).
+     */
+    public function hasFocus(): bool
     {
-        $child = $this->focusPending;
-        if ($child === null) {
+        if (!$this->surface->hasFocus()) {
             return false;
         }
-        // until it is shown, while it is mounted, and while nothing else has been focused since
-        $target = $child;
-        while ($target->focusPending !== null && $target->surface->viewport() === null) {
-            $target = $target->focusPending;
+        // on the surface path from the top of its surface's tree; every ancestor must pass the
+        // keys this way, and the top (the root, or a component not shown yet) must get them
+        $top = $this->surface->root();
+        for ($c = $this; $c->parent !== null; $c = $c->parent) {
+            $passesTo = $c->parent->unshownFocus();
+            if ($c->surface === $top) {
+                return $passesTo === $c && $c->parent->hasFocus();
+            }
+            if ($passesTo !== null) {
+                return false;
+            }
         }
-        if (!$child->mounted || $child->surface->viewport() !== null || !$target->surface->isLatestFocus()) {
-            $this->focusPending = null;
+        return true;
+    }
+
+    /**
+     * The child not shown yet that keys reaching this component go on to: the one whose subtree
+     * holds a focus request later than any in the windows this surface shows (and than a
+     * `takeFocus()` of the surface). Before this component's first render, when nothing below
+     * it was focused, its first child: the window its host would focus first.
+     */
+    private function unshownFocus(): ?Component
+    {
+        $best = null;
+        $bestRank = 0;
+        $first = null;
+        foreach ($this->children as $child) {
+            if (!$child->mounted || $child->surface->viewport() !== null) {
+                continue;
+            }
+            $first ??= $child;
+            $rank = $child->focusRank();
+            if ($rank > $bestRank) {
+                $best = $child;
+                $bestRank = $rank;
+            }
+        }
+        if ($best === null) {
+            return $this->rendered || $this->surface->latestFocusBelow() > 0 ? null : $first;
+        }
+        return $bestRank > $this->surface->latestFocusBelow() ? $best : null;
+    }
+
+    /** The latest focus request in this component's subtree, children not shown yet included. */
+    private function focusRank(): int
+    {
+        $rank = $this->surface->latestFocus();
+        foreach ($this->children as $child) {
+            if ($child->mounted && $child->surface->viewport() === null) {
+                $rank = max($rank, $child->focusRank());
+            }
+        }
+        return $rank;
+    }
+
+    /** Pass a key or paste on to the focused child not shown yet; false when there is none. */
+    private function toUnshown(Key|Paste $event): bool
+    {
+        $child = $this->unshownFocus();
+        if ($child === null) {
             return false;
         }
         $child->surface->dispatch($event);
         return true;
-    }
-
-    /** True if keys go to this component: it is on the focus path from the root. */
-    public function hasFocus(): bool
-    {
-        return $this->surface->hasFocus();
     }
 
     // ------------------------------------------------------------------------------------------

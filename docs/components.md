@@ -103,6 +103,46 @@ component sees an event before its focused child does, and returning true stops 
 is where application-wide keys go (a quit key on the root component); a widget that handles
 keys itself (a text field) returns true for the keys it uses.
 
+## Focus
+
+One component has the keyboard: the one focused last (`focus()`), or the descendant it passes
+the keys on to. A focus request names a component, and through it the descendant that
+component focused: a dialog that focuses its text field in `mount()` and is then focused itself
+gives its keys to the text field.
+
+```php
+final class NameDialog extends Component
+{
+    protected function mount(): void
+    {
+        $this->child('name', fn() => new TextInput())->focus();   // the dialog's own focus
+    }
+    // render() shows the TextInput
+}
+
+// in the parent's key handler: create the dialog, focus it, render it
+$this->dialog = $this->child('dialog', fn() => new NameDialog());
+$this->dialog->focus();
+$this->requestRender();
+```
+
+The rule is the same before and after the component is shown, so nothing has to be repeated in
+`render()`:
+
+- **Before a render shows it** (the keys typed right after the one that opened the dialog), the
+  keys reach it through its nearest shown ancestor, which passes them on to it as if it were on
+  the focus path, and it passes them on to the descendant it focused (the text field gets
+  them, not only the dialog's own `onKey()`). `hasFocus()` is true for it and for that
+  descendant, and false for the window that had the focus before.
+- **Once a render shows it**, the surface tree's focus path leads to the same component and on
+  to the same descendant (the surfaces remember the requests; see `Surface::focus()`).
+
+The latest request wins wherever it is: focusing another component, shown or not, takes the
+keys there. Of several children none of which was focused, a host gives the keys to its first
+window; a component not rendered yet gives them to its first child (as a `Box` does to its
+content). When the focused component is no longer shown, the component focused before it gets
+the focus back.
+
 ## Methods
 
 | Method | What it does |
@@ -113,8 +153,8 @@ keys itself (a text field) returns true for the keys it uses.
 | `isMounted(): bool` | True between start and dispose. |
 | `stopped(): object` | An awaitable that resolves on disposal. |
 | `requestRender()` | Ask for a render (batched). |
-| `focus()` | Give it the focus: every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). It takes effect at once, for the very next key: also for a child not shown yet (a dialog created in a key handler, shown by the render that follows), whose keys and pastes go to it through its parent until that render shows it. The focus stays with it through every re-render, also one that moves it into a different nested layout; when it is no longer shown, the component focused before it gets the focus back. |
-| `hasFocus(): bool` | True if it is on the focus path from the root (read from the surface tree). |
+| `focus()` | Give it the focus, and through it to the descendant it focused (see "Focus" above): every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). It takes effect at once, for the very next key, also for a component not shown yet (a dialog created in a key handler, shown by the render that follows). The focus stays with it through every re-render, also one that moves it into a different nested layout; when it is no longer shown, the component focused before it gets the focus back. |
+| `hasFocus(): bool` | True if keys go to it or through it to a descendant, also while it is not shown yet. |
 | `parent(): ?Component` | The parent, null for a root. |
 | `error(): ?Throwable` | The exception that ended it, if one did. |
 | `child(string $key, Closure $create): Component` (protected) | The child under `$key`, created with `$create` and started the first time it is asked for. After a render that returned a layout, children it did not ask for are disposed. |

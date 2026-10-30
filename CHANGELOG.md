@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.0.1-beta4 (2026-10-30)
+
+**A dialog focused before it is shown keeps the keyboard, down to its text field**
+
+- A dialog created and focused in a key handler (`$dialog->focus(); $this->requestRender();`)
+  whose `mount()` focuses a `TextInput` inside it: the keys typed before the next frame no
+  longer stop at the dialog's own `onKey()`, they reach the text field, and after the frame
+  they keep going there. Before and after the render that shows it, one rule decides: the
+  latest `focus()` wins, and a focused component passes the keys on to the descendant it
+  focused. Nothing has to be repeated in `render()`.
+- `Component::hasFocus()` is true for exactly the components the keys go to or through: the
+  dialog and its text field while the dialog is not shown yet, and no longer for the window
+  that had the focus before (it used to say true for any component not shown).
+- A `Box` focused before it is shown passes keys to its content right away (the content is
+  the box's child from its `mount()` on). A component that has not rendered yet and focused
+  nothing below it passes keys to its first child, as a host gives them to its first window.
+
 ## 0.0.1-beta3 (2026-10-30)
 
 **A program starts at the size of its pane**
