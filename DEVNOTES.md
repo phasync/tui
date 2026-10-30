@@ -3,6 +3,19 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.1-beta2, in progress; TODO-0.0.1-beta2.md)
+
+- [x] Text: escape-aware width/truncate/pad, `wrap()` (char + word)
+- [x] Surface tree: parent()/viewport()/root()/area() (Rect), focus() through any host (pending
+      until hosted, latest request wins by a stamp), takeFocus(), hasFocus(), focusToward(), close()
+- [x] Layout: Split/Stack nest layouts directly (Host::nested(i) keeps the surface by position)
+- [x] Pty: onExit (start param) + exited() awaitable
+- [x] Device: 1003 union of the tree; detach closes root, root close detaches
+- [ ] Component: start(device), close → dispose, root failure disposes tree + closes + rethrows,
+      deferred first render of children, on()/events, Terminal exited()/restart
+- [ ] Log model (lines kept, relayout on resize, word wrap, setLines), TextInput history, ListView
+- [ ] docs, README, CHANGELOG, examples, Claude Code test, tag
+
 ## Status (0.0.1-beta1)
 
 Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
