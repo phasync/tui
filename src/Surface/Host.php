@@ -80,6 +80,7 @@ final class Host
             ];
             // the focus settles when the change to the tree is complete (Surface::changeTree())
             $this->markDirty();
+            Surface::geometryChanged();
         } else {
             if ($x !== null || $y !== null) {
                 $view->move($x ?? $view->x(), $y ?? $view->y());
@@ -136,6 +137,7 @@ final class Host
             $this->focus = null;    // settled again when the change to the tree is complete
         }
         $this->markDirty();
+        Surface::geometryChanged();
     }
 
     public function raise(Surface $child): void
@@ -154,12 +156,14 @@ final class Host
     {
         $this->blank($old);
         $this->markDirty();
+        Surface::geometryChanged();
     }
 
     /** A viewport's look or scroll position changed. */
     public function changed(Viewport $view): void
     {
         $this->markDirty();
+        Surface::geometryChanged();
     }
 
     /**

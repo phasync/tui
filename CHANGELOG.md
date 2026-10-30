@@ -17,6 +17,18 @@
   the box's child from its `mount()` on). A component that has not rendered yet and focused
   nothing below it passes keys to its first child, as a host gives them to its first window.
 
+**A component that reads its own rectangle is drawn again when the rectangle changes**
+
+- A component whose `render()` shows its size or position, or lays itself out from it, no
+  longer keeps showing the old one after a layout moved it without resizing it (a `Stack` item
+  placed at another `x`, a split around a nested layout that moved), or after a window it is in
+  was moved by hand: the library renders a component again whenever its area (its size, or
+  where it shows on the screen, `Surface::area()`) changed since its last render. No resize
+  handler calling `requestRender()` is needed.
+- New surface event `area`: `$surface->on('area', fn(Rect $area) => ...)` is told when where
+  the surface shows on its root changed (moved, resized, scrolled, hosted, unhosted), once per
+  change of the tree.
+
 ## 0.0.1-beta3 (2026-10-30)
 
 **A program starts at the size of its pane**

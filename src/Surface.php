@@ -59,6 +59,13 @@ final class Surface implements \Stringable
     private static int $focusClock = 0;
     /** Changes to the tree in progress; the focus settles when the outermost one ends. */
     private static int $treeChanges = 0;
+    /** @var \WeakMap<Surface, true>|null surfaces with `area` listeners */
+    private static ?\WeakMap $areaWatchers = null;
+    /** A window moved, was resized, scrolled, hosted or unhosted since the areas were checked. */
+    private static bool $geometryChanged = false;
+    private static bool $checkingAreas = false;
+    /** The area last announced to `area` listeners. */
+    private ?Rect $areaSeen = null;
     /** @var array<string, array<int, \Closure>> */
     private array $listeners = [];
 
@@ -168,6 +175,7 @@ final class Surface implements \Stringable
         }
         $this->emit('resize', new Resize($this->vt->cols, $this->vt->rows));
         $this->emit('change', null);
+        self::geometryChanged();
     }
 
     /**
@@ -407,6 +415,9 @@ final class Surface implements \Stringable
      * - `bell`: the program rang the bell (BEL)
      * - `clipboard`: the program asked to copy text to the clipboard (OSC 52); receives the text
      * - `close`: `close()` was called: the session on this surface is over
+     * - `area`: where this surface shows on its root (`area()`) changed: its window, or a window
+     *   it is in, was moved, resized or scrolled, or it was hosted or unhosted; receives the new
+     *   `Rect`. Told once a change to the tree is complete (a layout's whole arrange is one).
      *
      * Input listeners see the events given to `dispatch()` before they go further, and stop them
      * by returning true; this is how a program reacts to keys on any surface (a shortcut on the
@@ -423,8 +434,17 @@ final class Surface implements \Stringable
     {
         $id = spl_object_id($listener);
         $this->listeners[$event][$id] = $listener;
+        if ($event === 'area') {
+            self::$areaWatchers ??= new \WeakMap();
+            self::$areaWatchers[$this] = true;
+            $this->areaSeen ??= $this->area();
+        }
         return function () use ($event, $id): void {
             unset($this->listeners[$event][$id]);
+            if ($event === 'area' && ($this->listeners['area'] ?? []) === []) {
+                unset(self::$areaWatchers[$this]);
+                $this->areaSeen = null;
+            }
         };
     }
 
@@ -699,7 +719,48 @@ final class Surface implements \Stringable
         } finally {
             if (--self::$treeChanges === 0) {
                 $this->root()->settleFocus();
+                self::checkAreas();
             }
+        }
+    }
+
+    /**
+     * @internal The geometry of a window changed (moved, resized, scrolled, hosted, unhosted, or
+     * a surface resized): the `area` listeners are told once the change to the tree is complete.
+     */
+    public static function geometryChanged(): void
+    {
+        self::$geometryChanged = true;
+        if (self::$treeChanges === 0) {
+            self::checkAreas();
+        }
+    }
+
+    /** Tell the `area` listeners whose surface's area differs from the one they were told last. */
+    private static function checkAreas(): void
+    {
+        if (self::$checkingAreas || !self::$geometryChanged || self::$areaWatchers === null) {
+            return;
+        }
+        self::$checkingAreas = true;
+        try {
+            // a listener may change the tree again: check until it is quiet
+            while (self::$geometryChanged) {
+                self::$geometryChanged = false;
+                $watched = [];
+                foreach (self::$areaWatchers as $surface => $_) {
+                    $watched[] = $surface;
+                }
+                foreach ($watched as $surface) {
+                    $area = $surface->area();
+                    if ($surface->areaSeen != $area) {
+                        $surface->areaSeen = $area;
+                        $surface->emit('area', $area);
+                    }
+                }
+            }
+        } finally {
+            self::$checkingAreas = false;
         }
     }
 

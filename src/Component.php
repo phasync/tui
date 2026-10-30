@@ -52,8 +52,10 @@ use function fiber\await_all;
  *
  * **Rendering.** `render()` either draws into `$this->surface` with escape sequences (the
  * surface is a terminal; see `Ansi`) and returns null, or returns a layout of child components'
- * surfaces. It runs after `mount()`, after every resize, and after `requestRender()` (calls in
- * the same moment are batched into one render). Children come from `child($key, $create)`: the
+ * surfaces. It runs after `sized()`, again whenever the component's area changed (its size, or
+ * where it shows on the screen, `$this->surface->area()`: the terminal resized, a layout moved
+ * or resized it, a window it is in moved), and after `requestRender()` (calls in the same moment
+ * are batched into one render). So a render that reads its own rectangle is never stale. Children come from `child($key, $create)`: the
  * same key gives the same component on every render; after a render that returned a layout,
  * children it did not ask for are disposed. A child renders for the first time when the layout
  * that shows it has given it its size, so it never draws for a size it does not have.
@@ -110,7 +112,8 @@ abstract class Component
     /**
      * Called once when the component has its real size (`$this->surface->cols()`/`rows()`), right
      * before the first render: start what depends on the rectangle here, such as a program that
-     * reads its terminal size when it starts. Later sizes arrive with `onResize()`.
+     * reads its terminal size when it starts. Later changes of the area (size or place) are each
+     * followed by a render, a change of size by `onResize()` first.
      */
     protected function sized(): void
     {
@@ -158,7 +161,10 @@ abstract class Component
     {
     }
 
-    /** The component's surface was resized (a render follows by itself). */
+    /**
+     * The component's surface was resized. A render follows by itself (as it does after any
+     * change of the component's area, a move included), so draw in `render()`, not here.
+     */
     protected function onResize(Resize $size): void
     {
     }
@@ -209,6 +215,8 @@ abstract class Component
                 $this->handle(fn() => $this->onResize($e));
                 $this->requestRender();
             }),
+            // what render() draws may depend on where the component is: draw again when it moved
+            $s->on('area', fn() => $this->requestRender()),
             $s->on('close', fn() => $this->dispose()),
         ];
         $this->guard($this->mount(...));

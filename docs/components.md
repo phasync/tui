@@ -48,8 +48,21 @@ fiber\run(function () {
    the rectangle starts in `sized()`**: a program that reads its terminal size once when it
    starts (the built-in `Terminal` starts its program there), text laid out for the width, a
    view computed for the height. Later sizes arrive with `onResize()` and a render.
-4. `render()` runs again after every resize and after `requestRender()` (batched: calls in the
-   same moment give one render, as soon as the current coroutine yields).
+4. `render()` runs again whenever the component's **area** changed, and after
+   `requestRender()` (batched: calls in the same moment give one render, as soon as the current
+   coroutine yields). The area is the rectangle the component has: its size
+   (`$this->surface->cols()`/`rows()`) and where it shows on the screen
+   (`$this->surface->area()`, a `Rect` in root coordinates). The library renders again when
+   either changed since the last render, whatever changed it: the terminal was resized, a
+   layout re-arranged (a parent's render that moves or resizes it, a nested layout around it
+   that moved), or a window it is in was moved, resized or scrolled by hand. So a `render()`
+   that reads its size or position (a status line that shows the size, a widget that lays
+   itself out, a pop-up placed next to another window) is never stale, and needs no resize
+   handler of yours.
+
+   Together with `sized()`: `sized()` runs once, before the first render, when the area is
+   first known; every later change of the area is followed by a render (and a change of size
+   by `onResize()` first).
 5. `dispose()` ends it: children are disposed first, the `stopped()` awaitable resolves and
    `sleep()` returns false, disposal waits up to a second for the component's coroutines to
    return, then `unmount()` runs. The surface keeps its last content. A component is disposed by
@@ -96,7 +109,7 @@ and the coroutines of mounted components and your own.
 | `onMouse(Mouse $mouse): bool` | A mouse event, in the component's coordinates; true if handled. |
 | `onPaste(Paste $paste): bool` | Text pasted while the component is on the focus path; true if handled. |
 | `onFocus(Focus $focus): void` | The component gained or lost the focus (a render follows). |
-| `onResize(Resize $size): void` | The surface was resized (a render follows). |
+| `onResize(Resize $size): void` | The surface was resized (a render follows by itself; so does one after a move). |
 
 Event handlers run as the event travels down the surface tree (see [hosting](hosting.md)): a
 component sees an event before its focused child does, and returning true stops it there. That

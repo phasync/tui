@@ -103,6 +103,10 @@ removes it.
 - `bell`: the program rang the bell
 - `clipboard`: the program asked to copy text to the clipboard (OSC 52); receives the text
 - `close`: `close()` was called: the session on this surface is over
+- `area`: where the surface shows on its root (`area()`, see [hosting](hosting.md)) changed:
+  its window, or a window it is in, was moved, resized or scrolled, or it was hosted or
+  unhosted; receives the new `Rect`. Told once per change of the tree (a layout's whole arrange
+  is one change), only when the rectangle differs from the one told last.
 - `key`, `mouse`, `paste`, `focus`: input events on their way through `dispatch()` (see
   [hosting](hosting.md)); a listener returning `true` takes the event.
 
