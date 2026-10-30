@@ -75,8 +75,14 @@ A grid of cells with its own `cols` × `rows`, independent of the screen, plus s
   charset designations parsed, DEC line drawing set honoured). Unknown sequences are consumed
   without corrupting the output. An escape sequence split across two `write()` calls is handled.
   Scrolling off the top goes to scrollback (configurable limit, default a few thousand lines).
-- Replies: a Surface answers the few queries a program may send (DSR 5/6, DA primary) by handing
-  the reply bytes to its producer (see `Input`). Title changes are observable.
+- Replies: a Surface answers the queries a program may send (DSR 5/6, DA primary/secondary,
+  XTVERSION, DECRQM mode queries, Kitty keyboard query, OSC 10/11 colour queries with a sensible
+  answer) by handing the reply bytes to its producer (see `Input`), as the terminal it claims to
+  be in `TERM`. Title changes are observable. OSC 52 clipboard writes from a program are passed up
+  to the host terminal.
+- Widths: grapheme clusters by Unicode rules (combining marks, ZWJ emoji sequences, variation
+  selectors), East Asian wide and emoji presentation as two cells, as modern terminals do; a
+  program that assumes those widths (Ink does) must line up.
 - **ANSI is the only way to render into a Surface.** There is no direct cell-drawing API
   (no `put()`/`fill()`): widgets, borders, graphs and the compositor's own drawing all go through
   `write()` as escape sequences, so that every bug in the parser shows up at once in the library's
@@ -166,6 +172,29 @@ that contains a child's failure to its rectangle. Built-in components, minimal b
 `Terminal` (a pty in a component), `Log` (append-only text with scrollback and follow),
 `TextInput` (single line with editing keys and cursor), `StatusBar`, `Box` (border + title around
 a child). More widgets belong to applications or later versions.
+
+## The benchmark: an advanced program in a window
+
+The library is judged first by hosting a demanding full-screen program in a window, with
+everything working, before any UI component matters. Two programs are the acceptance test:
+
+- **Claude Code** (`claude`, installed here: a Node/Ink program), in a pane next to a shell: typing,
+  its redraws (cursor-up/erase-line repaints, no alt screen), colours, emoji and wide characters
+  with correct widths, bracketed paste in, its cursor-position and terminal queries answered,
+  keyboard protocol negotiation (Kitty keyboard / modifyOtherKeys: pass the host terminal's
+  support through, or answer as a terminal that lacks it, consistently), synchronized output
+  (mode 2026), focus events (1004), title changes, mouse (when the program asks for it) and
+  scrolling, and **copy and paste**: when the pane has not asked for mouse reporting, mouse drag in
+  a window selects text in that Surface, highlighted, and copies it to the system clipboard via
+  OSC 52 to the host terminal (with `xclip`/`wl-copy`/`pbcopy` as fallback); the host's bracketed
+  paste goes to the focused pane as a paste (bracketed if the pane enabled it). What makes this
+  benchmark hard is exactly what the emulator must get right.
+- **Self-hosting**: `examples/split-shells.php` running inside a pane of another instance of
+  itself (as tmux inside tmux), nested twice, with resizes, focus and scrollback working at every
+  level. Everything the library emits must be exactly what its own Surface understands.
+
+A general `examples/host.php <command...>` runs any command in a window (with a status bar) so
+both can be tried by hand; tests drive them through the headless Screen and a pty.
 
 ## 7. Deliverables for every version
 
