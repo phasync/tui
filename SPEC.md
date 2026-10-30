@@ -147,6 +147,13 @@ another multiplexer is the same structure one level down, and so is a component 
   and SGR runs, through the same `write()` as every producer), clipped to the viewport. Damage then
   propagates up: the host is damaged where it repainted, so its host repaints, up to the root.
   Nothing paints cells directly; the ANSI-only rule holds for the compositor too.
+- **Always a diff, never a full re-render.** Every level works from damage: a Surface records which
+  cells changed since its damage was last taken; a host writes only those (coalesced into runs of
+  same style per row), and the device writes only the root's cells that differ from the previous
+  frame. A whole viewport is repainted only when all of it did change: newly shown, scrolled,
+  resized, or its z-order neighbour moved. A pane printing continuously costs its changed cells per
+  frame, whatever the byte volume; an idle pane costs nothing. Tests assert the byte count the
+  device emits for a one-cell change is a few dozen bytes, not a frame.
 - **Input goes down the same tree.** A host has one focused child (or itself). Key, mouse and paste
   events arrive at the root and are passed down the focus path; at the focused leaf, the Surface
   encodes them to the bytes its producer expects (application cursor keys, Kitty keyboard
