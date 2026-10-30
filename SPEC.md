@@ -34,6 +34,25 @@ Audience: any PHP developer writing a command-line program, not only phasync use
 read naturally to someone who knows the terminal and PHP, with no knowledge of the internals.
 Design for the general case; no API exists for one demo.
 
+## Design principles
+
+- **Structurally better than what PHP has.** symfony/console, laravel/prompts and termwind print;
+  this library emulates. The yardsticks are the best of other languages: tmux and Zellij for
+  windowed terminals and layouts, Textual (Python) and Ink (Node) for the component model,
+  Ratatui and Bubble Tea for how widgets and events are shaped. Take their best idea per layer and
+  make it read like PHP, not like a port.
+- **A real terminal in every window, no cheating.** The Surface is a faithful xterm-class emulator
+  and is the only way pixels get on screen. No special cases for known programs, no shortcuts that
+  make the library's own output look right while a foreign program's would not, no shelling out to
+  `tput`/`clear` for drawing. The windowed shell command (vim, htop, a build, an ssh session in a
+  pane of a PHP program) is the differentiator; it only works if the emulator is honest.
+- **Clean layers.** Each layer depends only on the one below it and is usable alone: a Surface
+  without a Screen, a Pty without a layout, a Screen without components. No layer knows about
+  phasync, Swerve or any application.
+- **Small, complete, consistent API.** One way to do each thing; names a terminal person expects
+  (rows/cols, scrollback, focus, cursor); the same shape for every producer. Documented so a
+  program can be written from the docs alone.
+
 ## 1. Surface (the primitive)
 
 A grid of cells with its own `cols` × `rows`, independent of the screen, plus scrollback.
