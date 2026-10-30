@@ -157,3 +157,63 @@ it('announces the end of the program as an event and an awaitable, with its outp
         expect(fiber\await($killed->exited(), 5))->toBe(128 + 9);
     });
 });
+
+/** True while any process is left in the session $sid. */
+function sessionAlive(int $sid): bool
+{
+    return trim((string) shell_exec('ps -o pid= -s ' . $sid . ' 2>/dev/null')) !== '';
+}
+
+it('hangs up a shell with a foreground program, everything it started, given as a string or a vector', function (string|array $command) {
+    run(function () use ($command) {
+        $s = new Surface(60, 6);
+        $pty = Pty::start($command, $s);
+        $s->input->write("sleep 100\r");
+        eventually(fn() => sessionAlive($pty->pid()) && str_contains((string) shell_exec('ps -o comm= -s ' . $pty->pid()), 'sleep'));
+        $started = microtime(true);
+        expect($pty->hangUp())->toBe(128 + 1)
+            ->and(microtime(true) - $started)->toBeLessThan(1.0)
+            ->and(sessionAlive($pty->pid()))->toBeFalse();
+    });
+})->with([
+    'string' => ['sh'],
+    'vector' => [['sh']],
+])->skip(PHP_OS_FAMILY !== 'Linux', 'reads the session from /proc');
+
+it('kills what ignores the hang-up after the grace period', function () {
+    run(function () {
+        $s = new Surface(60, 6);
+        $pty = Pty::start("trap '' HUP; echo ready; sleep 100", $s);
+        eventually(fn() => str_contains($s->text(), 'ready'));
+        expect($pty->hangUp(0.2))->toBe(128 + 9)->and(sessionAlive($pty->pid()))->toBeFalse();
+    });
+})->skip(PHP_OS_FAMILY !== 'Linux', 'reads the session from /proc');
+
+it('tells a program that was resized while starting about its size again once it writes', function () {
+    run(function () {
+        $s = new Surface(40, 5);
+        // the program only listens for SIGWINCH after a while, and says so
+        $pty = Pty::start("sleep 0.4; trap 'stty size' WINCH; echo listening; while :; do sleep 0.05; done", $s);
+        try {
+            sleep(0.15);
+            $s->resize(50, 8);
+            eventually(fn() => str_contains($s->text(), '8 50'));
+            expect($s->text())->toContain('listening');
+        } finally {
+            $pty->hangUp();
+        }
+    });
+});
+
+it('hangs up the programs still running when PHP exits', function () {
+    $script = 'require ' . var_export(dirname(__DIR__, 2) . '/vendor/autoload.php', true) . ';'
+        . 'fiber\run(function () { $pty = phasync\Tui\Pty::start("sh", new phasync\Tui\Surface());'
+        . '$pty->write("sleep 100\r"); fiber\sleep(0.3); echo $pty->pid(); exit(0); });';
+    $pid = (int) shell_exec(PHP_BINARY . ' -r ' . escapeshellarg($script));
+    expect($pid)->toBeGreaterThan(0);
+    $deadline = microtime(true) + 2;
+    while (sessionAlive($pid) && microtime(true) < $deadline) {
+        usleep(20000);
+    }
+    expect(sessionAlive($pid))->toBeFalse();
+})->skip(PHP_OS_FAMILY !== 'Linux', 'reads the session from /proc');

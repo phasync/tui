@@ -30,8 +30,18 @@ use function fiber\writable;
  * The end of the program is announced three ways: `$onExit` (given to `start()`) is called with
  * the exit status, `exited()` is an awaitable that resolves with it, and `wait()` waits for it.
  * Either way the program's last output is in the surface by then. A Pty you start is yours to
- * end: it runs until the program exits or you `kill()` it, and while it runs it keeps
- * `fiber\run()` from returning.
+ * end: it runs until the program exits or you end it, and while it runs it keeps `fiber\run()`
+ * from returning.
+ *
+ * **Ending it ends everything in it.** The program leads a session of its own on the pty, as a
+ * login shell does on a real terminal, and everything it starts belongs to that session: the
+ * jobs of a shell, an editor it runs, another multiplexer. `hangUp()` does what closing a
+ * terminal window does to all of them (SIGHUP, then SIGKILL for what is still there after a
+ * grace period); `kill()` sends a signal to all of them. So a shell that is running `sleep`,
+ * `vim` or a build in the foreground ends with its pty, whether the command was given as a
+ * string or as an argument vector. Ptys still running when the PHP process exits are hung up
+ * on the way out. (A program that starts a session of its own, as a daemon or a nested `Pty`
+ * does, is not part of this one; it is ended by whoever started it.)
  *
  * Everything runs in coroutines (`fiber\go()`), so `start()` and the other waiting methods must
  * be called inside `fiber\run()`; nothing blocks other coroutines.
@@ -56,6 +66,15 @@ final class Pty
     private bool $resizing = false;
     /** The wrapper has set the initial size: later sizes can be applied. */
     private bool $ready = false;
+    /** The program has written something (after the wrapper's marker). */
+    private bool $spoke = false;
+    /** The size changed before the program wrote anything: tell it again once it does. */
+    private bool $resizedEarly = false;
+    /** @var array<int, Pty> the ptys that are running, hung up when PHP exits */
+    private static array $running = [];
+    private static bool $shutdownRegistered = false;
+    /** @var array<int, true> process groups of the session seen so far */
+    private array $groups = [];
     private Signal $done;
     private Deferred $exited;
     private ?\Closure $onExit = null;
@@ -118,6 +137,28 @@ final class Pty
         stream_set_read_buffer($pty->master, 0);
         stream_set_write_buffer($pty->master, 0);
         $pty->pid = proc_get_status($process)['pid'];
+        self::$running[spl_object_id($pty)] = $pty;
+        if (!self::$shutdownRegistered) {
+            self::$shutdownRegistered = true;
+            register_shutdown_function(static function (): void {
+                // the process is ending without having ended these: do it now, without coroutines
+                foreach (self::$running as $pty) {
+                    $pty->signal(1);
+                }
+                $deadline = microtime(true) + 0.5;
+                while (self::$running !== [] && microtime(true) < $deadline) {
+                    foreach (self::$running as $id => $pty) {
+                        if (!proc_get_status($pty->process)['running'] && !$pty->anyLeft()) {
+                            unset(self::$running[$id]);
+                        }
+                    }
+                    usleep(10000);
+                }
+                foreach (self::$running as $pty) {
+                    $pty->signal(9);
+                }
+            });
+        }
 
         $surface->input->pipe(fn(string $bytes) => $pty->write($bytes));
         $pty->offResize = $surface->on('resize', fn(Resize $size) => $pty->resize($size->cols, $size->rows));
@@ -181,9 +222,23 @@ final class Pty
                         continue;
                     }
                 }
+                if (!$this->spoke) {
+                    $this->spoke = true;
+                    if ($this->resizedEarly) {
+                        // the size changed while the program was starting, maybe before it was
+                        // listening for SIGWINCH (vim installs its handler late): tell it again
+                        go(function (): void {
+                            while ($this->resizing && !$this->ended) {
+                                sleep(0.005);
+                            }
+                            $this->winch();
+                        });
+                    }
+                }
                 $surface->write($data);
             }
         } finally {
+            unset(self::$running[spl_object_id($this)]);
             $surface->input->pipe(null);
             ($this->offResize)();
             if (\is_resource($this->master)) {
@@ -252,20 +307,126 @@ final class Pty
     }
 
     /**
-     * Send a signal to the program (default SIGTERM). Use SIGHUP (1) for "the terminal went
-     * away", SIGKILL (9) for a program that does not listen.
+     * Send a signal (default SIGTERM) to the program and every process it started on this
+     * terminal: each process group of its session, so a shell's foreground job gets it too.
+     * SIGKILL (9) ends all of them for certain; to end the program the way a closed terminal
+     * window does, use `hangUp()`.
      */
     public function kill(int $signal = 15): void
     {
+        if (!$this->ended) {
+            $this->signal($signal);
+        }
+    }
+
+    /**
+     * End the program and everything it started, as closing its terminal window would: SIGHUP
+     * (and SIGCONT, to wake stopped jobs) to every process group of its session, then, for what
+     * is still running after $grace seconds, SIGKILL. Returns the exit status once the terminal
+     * has closed (also when it had ended before), or null if even that did not end it within a
+     * second (a process that left the session holding the terminal open). Must be called inside
+     * a coroutine; other coroutines run while it waits.
+     */
+    public function hangUp(float $grace = 0.5): ?int
+    {
         if ($this->ended) {
+            return $this->exitCode;
+        }
+        $this->signal(1);
+        $this->signal(\defined('SIGCONT') ? \SIGCONT : 18);
+        if ($this->wait($grace) === null) {
+            $this->signal(9);
+            $this->wait(1.0);
+        }
+        return $this->ended ? $this->exitCode : null;
+    }
+
+    /**
+     * Signal every process group of the program's session: those of the processes below the
+     * program now, and those seen before (a job whose shell has died is still in them).
+     */
+    private function signal(int $signal): void
+    {
+        if (!\function_exists('posix_kill')) {
+            proc_terminate($this->process, $signal);
             return;
         }
-        if (\function_exists('posix_kill')) {
-            // the program leads its own session and process group: signal all of it
-            @posix_kill(-$this->pid, $signal) || @posix_kill($this->pid, $signal);
-        } else {
-            proc_terminate($this->process, $signal);
+        foreach ($this->processGroups() as $group) {
+            $this->groups[$group] = true;
         }
+        foreach (array_keys($this->groups) as $group) {
+            @posix_kill(-$group, $signal);
+        }
+        @posix_kill($this->pid, $signal);
+    }
+
+    /** True while a process is left in a process group of the program's session. */
+    private function anyLeft(): bool
+    {
+        foreach (array_keys($this->groups) as $group) {
+            if (@posix_kill(-$group, 0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The process groups of the program and the processes below it that are in its session
+     * (Linux, from /proc; elsewhere only the program's own group, which it leads).
+     *
+     * @return list<int>
+     */
+    private function processGroups(): array
+    {
+        $groups = [$this->pid => true];
+        $todo = [$this->pid];
+        // processes end while we look: a file that is gone is not an error
+        set_error_handler(static fn(): bool => true);
+        try {
+            while (($pid = array_pop($todo)) !== null) {
+                foreach (glob("/proc/$pid/task/*/children", \GLOB_NOSORT) ?: [] as $file) {
+                    foreach (preg_split('/\s+/', (string) file_get_contents($file), -1, \PREG_SPLIT_NO_EMPTY) as $child) {
+                        $stat = file_get_contents("/proc/$child/stat");
+                        if ($stat === false || ($end = strrpos($stat, ')')) === false) {
+                            continue;
+                        }
+                        // after "pid (comm)": state ppid pgrp session ...
+                        $fields = explode(' ', substr($stat, $end + 2), 5);
+                        if ((int) ($fields[3] ?? 0) === $this->pid) {
+                            $groups[(int) $fields[2]] = true;
+                            $todo[] = (int) $child;
+                        }
+                    }
+                }
+            }
+        } finally {
+            restore_error_handler();
+        }
+        return array_keys($groups);
+    }
+
+    /** Send SIGWINCH to the terminal's foreground job, so it reads the size again. */
+    private function winch(): void
+    {
+        if ($this->ended || !\function_exists('posix_kill')) {
+            return;
+        }
+        $foreground = $this->pid;
+        set_error_handler(static fn(): bool => true);
+        try {
+            $stat = file_get_contents("/proc/{$this->pid}/stat");
+        } finally {
+            restore_error_handler();
+        }
+        if ($stat !== false && ($end = strrpos($stat, ')')) !== false) {
+            // state ppid pgrp session tty_nr tpgid
+            $tpgid = (int) (explode(' ', substr($stat, $end + 2), 7)[5] ?? 0);
+            if ($tpgid > 0) {
+                $foreground = $tpgid;
+            }
+        }
+        @posix_kill(-$foreground, \defined('SIGWINCH') ? \SIGWINCH : 28);
     }
 
     /**
@@ -303,11 +464,16 @@ final class Pty
 
     /**
      * Set the terminal size; the program gets SIGWINCH. Happens automatically when the surface
-     * is resized, so call it only for a pty whose surface you size differently.
+     * is resized, so call it only for a pty whose surface you size differently. A size set while
+     * the program is still starting (before its first output) is announced again with a second
+     * SIGWINCH when it first writes, for programs that install their handler late.
      */
     public function resize(int $cols, int $rows): void
     {
         $this->wantedSize = [max(1, $cols), max(1, $rows)];
+        if (!$this->spoke) {
+            $this->resizedEarly = true;
+        }
         if ($this->resizing || $this->ended || !$this->ready) {
             return;
         }
@@ -329,7 +495,12 @@ final class Pty
     public function device(): ?string
     {
         if ($this->slave === null && !$this->ended) {
-            $link = @readlink("/proc/{$this->pid}/fd/0");
+            set_error_handler(static fn(): bool => true);
+            try {
+                $link = readlink("/proc/{$this->pid}/fd/0");
+            } finally {
+                restore_error_handler();
+            }
             if ($link === false) {
                 $tty = trim((string) shell_exec('ps -o tty= -p ' . $this->pid . ' 2>/dev/null'));
                 $link = $tty !== '' && $tty !== '?' ? '/dev/' . $tty : false;

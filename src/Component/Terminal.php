@@ -65,18 +65,7 @@ final class Terminal extends Component
     protected function unmount(): void
     {
         // disposed: hang the program up, and kill it if it does not listen
-        $this->hangUp($this->pty);
-    }
-
-    private function hangUp(?Pty $pty): void
-    {
-        if ($pty !== null && $pty->isRunning()) {
-            $pty->kill(1);
-            if ($pty->wait(0.5) === null) {
-                $pty->kill(9);
-                $pty->wait(1.0);
-            }
-        }
+        $this->pty?->hangUp();
     }
 
     /**
@@ -94,7 +83,7 @@ final class Terminal extends Component
         }
         $old = $this->pty;
         $this->pty = null;
-        $this->hangUp($old);
+        $old?->hangUp();
         $this->surface->write("\ec");       // RIS: a fresh terminal for the new program
         $this->launch();
     }
