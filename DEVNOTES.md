@@ -3,18 +3,75 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
-## Status (0.0.1-beta2, in progress; TODO-0.0.1-beta2.md)
+## Status (0.0.1-beta2; TODO-0.0.1-beta2.md)
+
+All items of TODO-0.0.1-beta2.md done, in CHANGELOG.md; tests green with and without ext-phasync.
 
 - [x] Text: escape-aware width/truncate/pad, `wrap()` (char + word)
-- [x] Surface tree: parent()/viewport()/root()/area() (Rect), focus() through any host (pending
-      until hosted, latest request wins by a stamp), takeFocus(), hasFocus(), focusToward(), close()
-- [x] Layout: Split/Stack nest layouts directly (Host::nested(i) keeps the surface by position)
+- [x] Surface tree: parent()/viewport()/root()/area() (Rect), focus() through any host,
+      takeFocus(), hasFocus(), focusToward(), close(); click-to-focus inherited down the tree
+- [x] Layout: Split/Stack nest layouts directly; items()/host()
 - [x] Pty: onExit (start param) + exited() awaitable
-- [x] Device: 1003 union of the tree; detach closes root, root close detaches
-- [ ] Component: start(device), close → dispose, root failure disposes tree + closes + rethrows,
-      deferred first render of children, on()/events, Terminal exited()/restart
-- [ ] Log model (lines kept, relayout on resize, word wrap, setLines), TextInput history, ListView
-- [ ] docs, README, CHANGELOG, examples, Claude Code test, tag
+- [x] Device: 1003 union of the tree; detach closes the root, closing the root detaches
+- [x] Component: start(device), close -> dispose, root dispose closes, root failure disposes the
+      tree + closes + rethrows, failing child disposes its children, deferred first render
+- [x] Terminal exited()/restart(), Log model, TextInput history, ListView
+- [x] docs, README (first program tested by tests/Examples/ReadmeTest.php), CHANGELOG, examples,
+      Claude Code first-run test, tag 0.0.1-beta2
+
+## Design decisions (0.0.1-beta2)
+
+- **Focus by stamps.** `Surface::focus()` numbers each request (static clock). The chain from
+  the top host down is set silently, then the one level where the path changed dispatches
+  Focus(false) to the old branch and Focus(true) to the new one (each travels down its own focus
+  path), so every leaf gets exactly one event. A surface without a viewport records the stamp
+  (`focusWanted`); `Surface::host()` applies it when the host's `focusStamp` is older, so the
+  latest request wins when several surfaces wait to be shown. The root records a stamp too
+  (harmless: it is never hosted). Component::focusLater is gone.
+- **Mirrors.** A surface may still be hosted by several hosts (the compose property test does
+  this); `parent()` is the host that showed it last (`Surface::$views`, last entry).
+- **Nested layouts** get their surface from `Host::nested($i)` by position among the nested items
+  of the arranging layout (React-style, no keys): a component's render that builds new layout
+  objects each time keeps the same intermediate surfaces, so windows, focus and geometry survive.
+  Surfaces of nested layouts not placed by an arrange are given up (layout removed, windows
+  unhosted). Custom layouts use the same `Surface::nestedSurface($i, $layout)`.
+- **close() is a hang-up event**, not a state. Device detach -> root close (unless the detach came
+  from the close); every component listens to its surface's close and disposes; root dispose
+  closes first (terminal restored before children hang up). App-started Ptys do not listen.
+- **Root failure** = guard() for a parent-less component: record error, dispose (which closes),
+  rethrow. In start() that reaches the caller; in a coroutine fiber\run() rethrows it once all
+  else ended (fiber-interop rule: unawaited task exceptions are rethrown by run()); in a key
+  handler it reaches whoever delivered the key (FakeTerminal::press(), or the device's input
+  coroutine and so run()).
+- **First render of children** happens in the parent's renderNow() right after setLayout (sized
+  by fit); a fallback go() renders children no render placed. requestRender() before the first
+  render is ignored (the first render is coming).
+- **Terminal** hangs its program up in unmount() (not in run(): run() never starts when the
+  first render failed, which left ptys running for 30 s). onExit runs in a component go().
+- **Log** keeps `lines` + `open` (the unfinished last line) and writes them into its content
+  surface: character wrap is the emulator's own autowrap; word wrap writes `Text::wrap()` rows
+  joined by CRLF, and the open line is erased (CR, CUU, ED) and rewritten as it grows (a full
+  layout when it is taller than the window). A layout writes only the lines that fit in the
+  content's rows + scrollback (rows, not lines), prefixed by the SGRs of the lines left out. On
+  resize: the last QUICK_ROWS rows at once, the full layout 0.1 s later in a coroutine (a resize
+  storm costs one full layout).
+- **ListView** draws the selected row by re-applying the selected style (without its reset)
+  after every SGR in the label, so the label's colours stay under the inverse.
+- **1003**: the device walks the tree each frame (`mode(1003)` anywhere) and toggles `?1003h`;
+  leaving 1003 must send `?1002h` again (mouse modes are one setting in xterm and here).
+- **Claude Code test** runs it with HOME/CLAUDE_CONFIG_DIR/XDG_CONFIG_HOME in a temp dir (first
+  run: theme picker, login method), never touching the user's config. Ctrl-C twice does not end
+  its login screen (also under tmux), so the test disposes it.
+
+## Left for later versions
+
+- Word wrap does not break between CJK ideographs (UAX #14 line breaking); a run of CJK without
+  spaces is one word.
+- Log's open-line rewrite in word-wrap mode erases with the current pen (BCE): a background
+  colour left on by an earlier line shows in the erased cells until rewritten.
+- A pinned (scrolled-back) Log keeps its row index across a re-layout, not the same line.
+- Ctrl-C forwarding into Claude's login screen did not exit it under our emulator nor tmux;
+  not investigated further.
 
 ## Status (0.0.1-beta1)
 
@@ -34,8 +91,7 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
 
 ## Left for later versions (known limits)
 
-- Mouse: the device enables 1002 only; a program asking for 1003 (any motion) gets motion only
-  while a button is held. Passing the union of the tree's mouse modes up would fix it.
+- (fixed in beta2) Mouse 1003 passed through.
 - The Claude Code test stops at the folder-trust prompt (accepting it would write the user's
   Claude config); typing into its prompt, its bracketed paste and its redraw loop are covered
   only by the generic tests and by hand (`php examples/host.php claude`).
@@ -121,8 +177,7 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
   if the answer has `CSI ? n u`; the restore string always pops (`CSI < u`), harmless.
 - FakeTerminal pipes its surface's input straight to `receive()`, so input is synchronous;
   its read() only idles. `text()`/`dump()` refresh first; `waitFor()` for pty output.
-- Mouse: 1002 (button events) only; programs asking for 1003 get motion only while a
-  button is held. Not passing 1003 through is a known limit.
+- Mouse: 1002 (button events), and 1003 while any surface in the tree has it (beta2).
 
 ## Components
 

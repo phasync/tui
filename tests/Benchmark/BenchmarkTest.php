@@ -154,7 +154,7 @@ it('hosts Claude Code\'s first-run screens: keys, redraws, colours and resizes, 
                 expect($t->waitFor(fn() => $selected() !== $first && $theme() !== $before, 5))->toBeTrue();
                 $t->press('up');
                 expect($t->waitFor(fn() => $selected() === $first && $theme() === $before, 5))->toBeTrue();
-                expect($t->surface->dump())->toBe($root->dump());
+                expect($t->dump())->toBe($root->dump());   // drawn now, then compared (no output in between)
                 // a resize reaches it (SIGWINCH) and it redraws its rules for the new width
                 $t->resize(100, 32);
                 $rule = fn() => preg_match('/^ (╌+)$/mu', $s->text(), $m) ? mb_strlen($m[1]) : 0;
@@ -164,7 +164,7 @@ it('hosts Claude Code\'s first-run screens: keys, redraws, colours and resizes, 
                 expect($t->waitFor(fn() => str_contains($s->text(), 'Select login method'), 10))->toBeTrue();
                 $t->press('down');
                 expect($t->waitFor(fn() => str_starts_with((string) $selected(), '2.'), 5))->toBeTrue();
-                expect($t->surface->dump())->toBe($root->dump());
+                expect($t->dump())->toBe($root->dump());   // drawn now, then compared (no output in between)
                 // the shell next to it still works
                 $shell->focus();
                 $t->type("echo shell-ok\n");

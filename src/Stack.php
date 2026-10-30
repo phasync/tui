@@ -12,7 +12,7 @@ use phasync\Tui\Internal\Size;
  *     $root->setLayout($stack);
  *     $stack->add($dialog, width: 40, height: 10);                // centered on top
  *     $root->host($dialog)->setBorder(true)->setTitle('Save?');
- *     $root->focus($dialog);                                      // keys go to the dialog
+ *     $dialog->focus();                                           // keys go to the dialog
  *     ...
  *     $stack->remove($dialog);                                    // what was below shows again
  *

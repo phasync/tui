@@ -613,8 +613,11 @@ final class Surface implements \Stringable
     }
 
     /**
-     * @internal For layouts: the surface that shows $layout, nested as the item numbered $index
-     * of the layout of this surface. The same surface for the same index on every arrange.
+     * For layouts that nest layouts (as `Split` and `Stack` do): the surface that shows $layout,
+     * the nested layout numbered $index (0, 1, ... in the order of the arranging layout's items)
+     * on this surface. It is the same surface for the same number on every arrange, so a layout
+     * built anew keeps its windows and focus; `$layout` is set on it. Host it like any surface.
+     * Surfaces of nested layouts the arrange did not host are given up afterwards.
      */
     public function nestedSurface(int $index, Layout $layout): Surface
     {

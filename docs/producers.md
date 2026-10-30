@@ -31,17 +31,21 @@ PHP process are not passed on to the program.
 
 | Method | What it does |
 |---|---|
-| `Pty::start(string\|array $command, Surface $surface, ?string $cwd = null, array $env = []): Pty` | Start a command: a string runs with `/bin/sh -c`, an array is an argument vector. `$env` is added to the inherited environment. Throws `RuntimeException` if it cannot start. |
+| `Pty::start(string\|array $command, Surface $surface, ?string $cwd = null, array $env = [], ?Closure $onExit = null): Pty` | Start a command: a string runs with `/bin/sh -c`, an array is an argument vector. `$env` is added to the inherited environment. `$onExit(int $code, Pty $pty)` is called once when the program has ended and its output is in the surface. Throws `RuntimeException` if it cannot start. |
 | `pid(): int` | The program's process id. |
 | `isRunning(): bool` | True until the program has exited and its terminal has closed. |
 | `exitCode(): ?int` | The exit status once it has ended (128 + signal when killed by one), else null. |
 | `wait(float $timeout = PHP_FLOAT_MAX): ?int` | Wait until the program has ended and all its output is in the surface; null if the timeout passed first. |
+| `exited(): object` | An awaitable that resolves with the exit status at the same moment: `fiber\await($pty->exited())`, or race it against other work with `fiber\await_any()`. |
 | `kill(int $signal = 15)` | Send a signal to the program's process group. SIGHUP (1) for "the terminal went away", SIGKILL (9) for a program that does not listen. |
 | `write(string $bytes)` | Send bytes to the program as if typed, bypassing the surface's input. |
 | `resize(int $cols, int $rows)` | Set the terminal size. Happens by itself when the surface is resized; call it only for a pty whose surface you size differently. |
 | `device(): ?string` | The pty's slave device, such as `/dev/pts/3`. |
 
-The `Terminal` [component](components.md) wraps a Pty with a lifecycle.
+A Pty you start is yours: it runs (and keeps `fiber\run()` from returning) until the program
+exits or you `kill()` it; detaching the terminal does not end it. The `Terminal`
+[component](components.md) wraps a Pty with a lifecycle that does: disposing the component (and
+so quitting the program) hangs its program up.
 
 ## A PHP coroutine: `Surface::run()`
 

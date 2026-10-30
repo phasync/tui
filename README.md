@@ -5,30 +5,45 @@ window is a terminal, so a shell, `vim`, `htop` or Claude Code runs in a pane of
 exactly as in a terminal, next to widgets that are themselves programs writing to a terminal.
 
 ```php
-use phasync\Tui\{Key, Pty, Split, Surface, Tty};
+use phasync\Tui\{Component, Key, Layout, Split, Tty};
+use phasync\Tui\Component\{Log, Terminal, TextInput};
 
-$tty = new Tty();
-fiber\run(function () use ($tty) {
-    $root = new Surface();
-    $left = new Surface();
-    $right = new Surface();
-    $root->setLayout(Split::horizontal(separators: true)->add($left)->add($right));
-    $root->setFocusOnClick(true);
-    $root->on('key', function (Key $key) use ($tty) {
-        if ($key->is('ctrl+q')) {
-            $tty->detach();
-            return true;
-        }
-    });
+final class App extends Component
+{
+    protected function render(): Layout
+    {
+        $log = $this->child('log', fn() => new Log(wordWrap: true));
+        $input = $this->child('input', fn() => new TextInput(prompt: '> ', history: true,
+            onSubmit: function (string $line, TextInput $input) use ($log) {
+                $log->append("you said: $line\n");
+                $input->setValue('');
+            }));
+        $shell = $this->child('shell', fn() => new Terminal(getenv('SHELL') ?: '/bin/sh'));
+        $input->focus();
+        return Split::horizontal(separators: true)
+            ->add(Split::vertical()->add($log->surface)->add($input->surface, 1))
+            ->add($shell->surface, '50%');
+    }
 
-    $tty->attach($root);
-    $shell = Pty::start(getenv('SHELL') ?: '/bin/sh', $left);
-    $top = Pty::start('top', $right);
-    $tty->wait();
-    $shell->kill(1);
-    $top->kill(1);
-});
+    protected function onKey(Key $key): bool
+    {
+        match (true) {
+            $key->is('ctrl+q') => $this->dispose(),                        // quit
+            $key->is('alt+left') => $this->surface->focusToward('left'),
+            $key->is('alt+right') => $this->surface->focusToward('right'),
+            default => null,
+        };
+        return $key->is('ctrl+q') || $key->is('alt+left') || $key->is('alt+right');
+    }
+}
+
+fiber\run(fn() => (new App())->start(new Tty()));
 ```
+
+A chat-like log with an input line next to your shell, in any terminal size: the log keeps its
+text and wraps it again whenever the terminal is resized, the shell is told its new size.
+Alt-Left/Alt-Right move between them; Ctrl-Q quits, which hangs the shell up and gives the
+terminal back, and `fiber\run()` returns.
 
 PHP 8.3+, MIT. Runs on any [fiber-interop](https://packagist.org/packages/fiber-interop/api)
 runtime: phasync, Revolt/AMPHP, ReactPHP.
@@ -65,7 +80,12 @@ One primitive, one structure:
 5. **Layout** ([docs](docs/layout.md)): `Split` and `Stack` arrange a host's windows; resizing
    goes down to every pty.
 6. **Components** ([docs](docs/components.md)): `Component` adds a lifecycle, a coroutine, keyed
-   children and error boundaries; built-ins `Terminal`, `Log`, `TextInput`, `StatusBar`, `Box`.
+   children and error boundaries; built-ins `Terminal`, `Log`, `TextInput`, `ListView`,
+   `StatusBar`, `Box`.
+
+The surfaces form one tree, whatever is in it: every surface knows its `parent()` and its
+`area()` on the root, and focus (`focus()`, `focusNext()`, `focusToward('left')`) follows that
+tree through plain surfaces, nested layouts and components alike.
 
 ## A three-minute tour
 
@@ -115,7 +135,7 @@ $tty = new Tty();
 $tty->attach($root);
 $root->on('key', function (Key $key) use ($tty) {
     if ($key->is('ctrl+q')) {
-        $tty->detach();
+        $tty->detach();       // gives the terminal back (and closes the root)
         return true;          // handled: it goes no further down
     }
 });
@@ -139,24 +159,29 @@ final class App extends Component
     }
 }
 
-$app = (new App())->start();
-$tty->attach($app->surface);
+fiber\run(fn() => (new App())->start(new Tty()));     // until it quits
 ```
+
+**How a program ends.** `fiber\run()` returns once nothing runs any more. Quitting (disposing
+the root component, closing the root surface, or detaching the device; each leads to the others)
+disposes the component tree: `Terminal`s hang their programs up, coroutines are told to stop,
+the terminal is restored. An exception in the root component does the same and is then thrown
+to you, by `start()` or by `fiber\run()`. A `Pty` you start yourself is yours to end.
 
 **Test it headless.** `FakeTerminal` is a terminal device in memory; what it shows must equal
 the root's cells, and input is encoded as a real terminal would.
 
 ```php
-$terminal = new FakeTerminal(80, 24);
-$terminal->attach($app->surface);
+$app = (new App())->start($terminal = new FakeTerminal(80, 24));
 $terminal->type("hello\n");
 expect($terminal->text())->toContain('you said: hello');
+$terminal->detach();
 ```
 
 ## Examples
 
 - `examples/split-shells.php`: two shells side by side with a status bar, a tiny tmux. Ctrl-B Tab
-  switches, Ctrl-B q quits; it runs inside itself as tmux runs in tmux.
+  or Ctrl-B and an arrow switch, Ctrl-B q quits; it runs inside itself as tmux runs in tmux.
 - `examples/host.php <command...>`: any command in a window, e.g. `php examples/host.php claude`.
 - `examples/coroutine-pane.php`: a shell next to a PHP coroutine printing progress bars and
   colours (with `echo` under ext-phasync).
@@ -169,7 +194,7 @@ toolkit that paints cells; it has no terminal emulator and cannot host a program
 This library emulates: every window is a terminal, widgets are programs writing to one, and the
 emulator is checked against xterm behaviour, tmux reference captures and recorded output of real
 programs (`ls`, `vim`, `htop`, `less`, a symfony/console progress bar). The acceptance tests run
-Claude Code in a pane next to a shell, and `split-shells.php` nested three levels deep with
+Claude Code in a pane next to a shell (its first-run screens in a home of its own), and `split-shells.php` nested three levels deep with
 resizes, focus, paste, scrollback and copy working at every level.
 
 ## Development

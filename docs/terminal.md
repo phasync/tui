@@ -38,19 +38,49 @@ fiber\run(function () use ($tty) {
 - **Follows the size**, resizing the root, which re-lays its windows down to the ptys.
 - **Passes up** the root's title (OSC 2), bell and clipboard requests (OSC 52).
 - **Takes the terminal over**: raw mode, the alternate screen, mouse reporting (button events,
-  SGR encoding), bracketed paste and focus reporting, and the kitty keyboard protocol
+  SGR encoding, and motion without a button while a program anywhere in the tree asks for it
+  with mode 1003), bracketed paste and focus reporting, and the kitty keyboard protocol
   (disambiguated keys) when the terminal answers the query for it, so keys like Ctrl-I and
   Shift-Enter reach the programs in the windows as such. `detach()` restores all of it.
 
 | Method | What it does |
 |---|---|
 | `attach(Surface $root)` | Show `$root` and send it the input, until `detach()`. Throws `LogicException` when already attached. |
-| `detach()` | Give the terminal back: modes off, main screen, cursor shown, settings restored. Its coroutines end. Safe to call twice. |
+| `detach()` | Give the terminal back: modes off, main screen, cursor shown, settings restored. Its coroutines end, and the root is closed (`Surface::close()`), which disposes a component on it. Safe to call twice. |
 | `isAttached(): bool`, `root(): ?Surface` | |
 | `wait()` | Wait until `detach()` (returns at once when not attached). |
 | `refresh()` | Draw what changed now instead of at the next frame. |
 | `size(): array` | The terminal's size as `[cols, rows]`. |
 | `hasKittyKeyboard(): bool` | True once the terminal answered the kitty keyboard query. |
+
+## How a program ends
+
+`fiber\run()` returns when the function given to it has returned **and** every coroutine started
+inside it has ended. In a program built with this library, these keep it running:
+
+- an attached terminal device (its frame and input coroutines run until `detach()`);
+- every `Pty` whose program is still running (its output pump runs until the program exits);
+- every mounted component's coroutines (`run()`, `go()`), until it is disposed;
+- coroutines of your own.
+
+And this is what ends them:
+
+- **Quitting** is detaching the device, or closing the root surface, or disposing the root
+  component; each leads to the others. The component tree is disposed, so every `Terminal`
+  component hangs its program up (SIGHUP, then SIGKILL after half a second), every component's
+  coroutines are told to stop (`sleep()` returns false, `stopped()` resolves), and the device
+  gives the terminal back. A `Pty` you started yourself with `Pty::start()` is yours: kill it (or
+  let it exit) yourself.
+- **A failure** of the root component (an exception in its `mount()`, `render()`, handlers or
+  coroutines) ends the program the same way, then the exception is thrown: by `start()` when it
+  happened there, else by `fiber\run()`. A failure inside a child component is contained: the
+  child and its children are disposed (their programs hung up) and its rectangle shows the error.
+
+```php
+fiber\run(function () {
+    (new App())->start(new Tty());   // run() returns once the app quits (or rethrows its failure)
+});
+```
 
 ## Tty
 

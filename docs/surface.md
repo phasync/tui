@@ -102,8 +102,14 @@ removes it.
 - `title`: receives the new title
 - `bell`: the program rang the bell
 - `clipboard`: the program asked to copy text to the clipboard (OSC 52); receives the text
+- `close`: `close()` was called: the session on this surface is over
 - `key`, `mouse`, `paste`, `focus`: input events on their way through `dispatch()` (see
   [hosting](hosting.md)); a listener returning `true` takes the event.
+
+`close()` hangs a surface up, as a terminal window closing does: everything attached to it is
+told the session is over. A terminal device attached to it detaches, a component on it is
+disposed (with its children, whose programs are hung up). The cells stay. Detaching a terminal
+device closes its root.
 
 ## Input
 
@@ -155,14 +161,27 @@ A colour is an int: `Color::DEFAULT` (-1), 0-15 for the named colours (`Color::R
 `Color::rgb($r, $g, $b)` / `Color::hex('#ff8800')`. `Color::isRgb()`, `Color::toRgb()` (RGB of any
 colour, null for the default) and `Color::name()` (for display) complete it.
 
-## Measuring text: `Text`
+## Measuring and wrapping text: `Text`
 
-The widths the Surface lays text out with, for code that aligns text:
-`Text::width($text)` (cells), `Text::graphemes($text)` (grapheme clusters by UAX #29, also
-where the PCRE2 in use is older than 10.43 and would join consecutive emoji),
-`Text::clusters($text)` (list of `[grapheme, width]`),
-`Text::clusterWidth($grapheme)`, `Text::truncate($text, $width, $ellipsis = '…')`,
-`Text::pad($text, $width, $align = 'left'|'right'|'center')`.
+The widths the Surface lays text out with, for code that aligns or wraps text. Escape sequences
+(colours) and control characters in the text take no cells and are kept where they are, so
+styled text can be measured, cut and wrapped too.
+
+| Method | What it does |
+|---|---|
+| `Text::width(string $text): int` | The cells it takes: wide characters and emoji 2, combining marks 0, escape sequences 0 (`Text::width("\e[31mred\e[0m")` is 3). |
+| `Text::wrap(string $text, int $width, bool $words = false): list<string>` | Lay text out in rows of at most `$width` cells, as a terminal that wide shows it: by display width and grapheme cluster, a wide character that does not fit at the end of a row moving to the next, `"\n"` starting a new row. With `$words`, rows break between words (the spaces at a break are dropped; only a word longer than a row is broken). Escape sequences stay in their row, so the rows joined with `"\r\n"` show the same styles. |
+| `Text::truncate(string $text, int $width, string $ellipsis = '…'): string` | Cut to `$width` cells, the ellipsis in the last; escape sequences after the cut are kept (a closing reset still resets). |
+| `Text::pad(string $text, int $width, string $align = 'left'): string` | Pad with spaces (or cut) to exactly `$width`; `'left'`, `'right'` or `'center'`. |
+| `Text::graphemes(string $text): list<string>` | Grapheme clusters by UAX #29 (also where the PCRE2 in use is older than 10.43 and would join consecutive emoji). |
+| `Text::clusters(string $text): list<array{string,int}>` | The clusters with their widths. |
+| `Text::clusterWidth(string $grapheme): int` | The width of one cluster: 0, 1 or 2. |
+
+**Text that must fit a width that changes** (a chat history, a log, a help text) is kept as
+text and wrapped again for the width there is now, never laid out once: a Surface does not
+reflow (it is a terminal), so text written for 80 columns stays cut when it shrinks to 40. Keep
+the text in your component, and on every render (which runs after each resize) write
+`Text::wrap($text, $this->surface->cols(), true)`; `Component\Log` does exactly this for you.
 
 ## Performance
 
