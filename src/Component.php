@@ -1322,9 +1322,10 @@ abstract class Component extends Element
         $key = "\0dialog" . ++self::$dialogCount;
         $this->child($key, fn() => $dialog);
         $this->dialogs[$key] = [$dialog, $before];
-        $dialog->on('close', function () use ($key): void {
+        $dialog->on('close', function () use ($key, $dialog): void {
             [, $before] = $this->dialogs[$key] ?? [null, null];
             unset($this->dialogs[$key]);
+            $this->surface->unhost($dialog->surface);       // (at once; the render that follows draws what was under it)
             if ($before !== null && ($before->viewport() !== null || $before->parent() === null)) {
                 $before->focus();
             } else {

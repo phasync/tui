@@ -88,7 +88,7 @@ final class Stylesheet
             'Select::row:selected' => ['color' => '$accent', 'bold' => true],
             'Select:disabled' => ['dim' => true],
             'Select::filter' => ['color' => '$accent'],
-            'Dialog' => ['border' => 'round $accent', 'padding' => '0 1'],
+            'Dialog' => ['border' => 'round $accent', 'padding' => '0 1', 'align' => 'center'],
             'Dialog::title' => ['bold' => true],
             'Dialog::button' => ['color' => '$muted'],
             'Dialog::button:focused' => ['inverse' => true, 'bold' => true, 'color' => 'default'],
