@@ -36,8 +36,12 @@ Design for the general case; no API exists for one demo.
 
 ## Design principles
 
-- **Structurally better than what PHP has.** symfony/console, laravel/prompts and termwind print;
-  this library emulates. The yardsticks are the best of other languages: tmux and Zellij for
+- **Structurally better than what PHP has.** symfony/console, laravel/prompts and termwind print.
+  symfony/tui (2026, experimental; widgets with a CSS-like stylesheet and Twig templates on Revolt)
+  is a widget toolkit that paints cells: it has no terminal emulator and cannot host a program in a
+  window. This library emulates: every window is a terminal, and widgets are programs writing to
+  one. It also runs on any fiber-interop runtime, Revolt included. The yardsticks are the best of
+  other languages: tmux and Zellij for
   windowed terminals and layouts, Textual (Python) and Ink (Node) for the component model,
   Ratatui and Bubble Tea for how widgets and events are shaped. Take their best idea per layer and
   make it read like PHP, not like a port.
