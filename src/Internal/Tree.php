@@ -98,7 +98,7 @@ final class Tree
             $item->focusable = true;
             $border = $item->border === false ? 0 : 2;
             $item->measure = static function (int $cols, int $rows) use ($component, $border): ?array {
-                $n = $component->measure(max(0, $cols - $border), max(0, $rows - $border));
+                $n = $component->measureFor(max(0, $cols - $border), max(0, $rows - $border));
                 return $n === null ? null : [$n[0] + $border, $n[1] + $border];
             };
             return $item;

@@ -3,6 +3,64 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.2-beta1; TODO-0.0.2-beta1.md, SPEC section 8)
+
+- [x] 1. Element tree (src/Element.php, src/Element/*, src/Internal/{Tree,ElementLayout,LayoutItem}.php)
+- [x] 2. Reactive state (src/State.php; Component scheduler renderFrame())
+- [x] 3. Stylesheet (src/Stylesheet.php, src/ComputedStyle.php), :hover
+- [x] 4. Bindings + Help
+- [ ] 5. Widgets: Editor, Select (extends Table), Table, Dialog/Confirm
+- [ ] 6. Ansi::clearHome() (done), version check (done: Internal/Runtime), docs/components.md,
+      docs/widgets.md, README tour, CHANGELOG, examples, tag
+
+## Design decisions (0.0.2-beta1)
+
+- **Component extends Element.** Every component is an element; attributes (key, id, class,
+  style, width, height, disabled) live in one private array of Element, set with `with()` (and
+  by element constructors' named arguments). Public methods added to every component:
+  `with()`, `attribute()`, `measure()`, `types()`, `style()`, `stylesheet()`,
+  `setStylesheet()`, `bind()`, `bindingsInForce()`; protected `bindings()`, `call()`,
+  `dialog()`, `propsChanged()`; property `protected State $state`. None clashed with the
+  built-ins (checked).
+- **No `Component::set()`**: StatusBar has a public `set(string, string)` with a signature a
+  variadic `set(mixed ...)` in the base would break. `State::set(...)` instead
+  (`$this->state->set(a: 1)`), one way to do it.
+- **Element tree -> surfaces.** Each container element (Column/Row/Layers, not the root one) and
+  each Box/Text/Help gets a Surface kept by path (positions + class names, or `key`) in
+  Internal\Tree; the root container arranges the component surface itself. Each container is
+  an ElementLayout (Layout) that sizes ('auto' measures: text by wrapped lines, components by
+  `measure()`, null = '1fr'), hosts at the final geometry (hosting at 0,0 first and moving
+  blanked the host's own drawing), sets the nested layouts and paints text only when its
+  signature (size, style, content) changed. Component elements: started ones are placed as
+  they are; a `new X()` element is the child "\0<path or key>"; a later fresh instance of the
+  same class there gives its props (public non-readonly properties declared below Component)
+  and attributes to the kept one (`propsChanged()`), else replaces it.
+- **Focusable surfaces.** Text/Help surfaces and containers with no component below refuse the
+  focus (`Surface::setFocusable(false)`): rankFocus treats a never-focused, unfocusable window
+  as rank -1; focusNext/focusToward skip them. Without this the first Text of a Column took the
+  keys.
+- **Reactivity.** requestRender() puts the component in a static dirty set and spawns one
+  go(sleep(0)); the first such task to run renders the whole set, shallowest first, each at
+  most once (asked again during the frame -> next frame). Triggers: State writes (State moves
+  declared props into an array at watchFor() so __set sees every write), handlers returning
+  true, bound keys, `sleep()` (before waiting) and a go() task ending after it had suspended
+  (flag set after go() returns: a task that finished synchronously renders nothing), emit()
+  and call() (the closure's bound $this, by ReflectionFunction::getClosureThis(), renders).
+  Writes during the component's own render are ignored (no loops).
+- **Key order with bindings.** Capture as before for onKey() (root first) at components that
+  are not the key end; at the key end (no component further on the key path): own bindings,
+  own onKey(), then parents' bindings, nearest first. So a TextInput types 'q' that the root
+  binds, and the root's ctrl+q works while a Terminal is focused (it declines all keys).
+  Bound methods run synchronously (typing order), returning false = not taken.
+- **Styles.** Stylesheet selectors without combinators (inheritance of colours/attributes
+  covers it); parts `Type::part:state` for what widgets draw. Box focus border: Tree sets the
+  same style as normal and focus style and re-renders on Focus events of its surfaces, so a
+  Box in an unfocused pane is not drawn focused (the compositor's isFocused() is per host).
+- **:hover** only for components: any component's mouse listener records the pointer (root,
+  x, y); components whose computed style considered a :hover rule are kept in a WeakMap and
+  render again when their hover state flips. Such a component writes ?1003h to its surface
+  once so the device asks for motion reports (it then takes its mouse events itself).
+
 ## Status (0.0.1-beta5; TODO-0.0.1-beta5.md)
 
 All items of TODO-0.0.1-beta5.md done, in CHANGELOG.md; tests green with and without ext-phasync

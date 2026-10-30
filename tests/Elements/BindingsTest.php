@@ -20,7 +20,7 @@ final class Pane extends Component
 
     protected function bindings(): array
     {
-        return ['ctrl+s' => ['save', 'Save'], 'x' => 'cut', 'down' => 'next'];
+        return ['ctrl+s' => ['save', 'Save'], 'x' => ['cut', 'cut'], 'down' => 'next'];
     }
 
     public function save(): void
@@ -53,7 +53,7 @@ final class BoundApp extends Component
 
     protected function bindings(): array
     {
-        return ['ctrl+q' => ['quit', 'Quit'], 'q' => 'quit', 'down' => 'down'];
+        return ['ctrl+q' => ['quit', 'Quit'], 'q' => ['quit', 'quit'], 'down' => 'down'];
     }
 
     public function quit(): void
@@ -121,13 +121,13 @@ it('lists the keys in force in a Help element, following the focus', function ()
     mountOn(new BoundApp(), 60, 4, function (FakeTerminal $t, BoundApp $app) {
         $app->get('pane')->focus();
         frame();
-        expect($t->text())->toEndWith('ctrl+s Save  x cut  down next  ctrl+q Quit  q quit');
+        expect($t->text())->toEndWith('ctrl+s Save  x cut  ctrl+q Quit  q quit');     // (described ones)
         $app->get('input')->focus();
         frame();
-        expect($t->text())->toEndWith('ctrl+q Quit  q quit  down down');
+        expect($t->text())->toEndWith('ctrl+q Quit  q quit');
         $app->bind(['f1' => ['quit', 'Leave']]);
         frame();
-        expect($t->text())->toEndWith('ctrl+q Quit  q quit  down down  f1 Leave');
+        expect($t->text())->toEndWith('ctrl+q Quit  q quit  f1 Leave');
     });
 });
 

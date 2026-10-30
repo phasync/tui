@@ -12,9 +12,9 @@ use phasync\Tui\Element;
  *     new Column([$this->mainScreen(), new Help()])     // a footer like "ctrl+s save  esc cancel"
  *
  * It follows the focus by itself. With `$for`, the bindings of that component and its parents
- * instead. A binding's description is the one given in `bindings()` (`'ctrl+s' => ['save',
- * 'Save the file']`), else its method's name. Styled as type `Help`, with the parts `key` and
- * `action`.
+ * instead. It lists the bindings that have a description (`'ctrl+s' => ['save', 'Save']` in
+ * `bindings()` or `bind()`); keys bound without one (an editor's arrow keys) are left out.
+ * Styled as type `Help`, with the parts `key` and `action`.
  */
 final class Help extends Element
 {

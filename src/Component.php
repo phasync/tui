@@ -146,6 +146,8 @@ abstract class Component extends Element
     private ?Stylesheet $stylesheet = null;
     /** The style a parent's element tree gives this component to inherit. */
     private ?ComputedStyle $inherited = null;
+    /** @var array{array{int,int}, ?array}|null the room a parent's layout measured this component in, and the answer */
+    private ?array $measured = null;
     /** @var array<string, mixed> bindings of this instance over its class's (`bind()`) */
     private array $bound = [];
     /** @var array<string, array<string, mixed>> bindings for components of a class in the subtree */
@@ -244,9 +246,9 @@ abstract class Component extends Element
     }
 
     /**
-     * The keys of this component and the public methods they run: `['ctrl+s' => 'save', 'enter'
-     * => 'submit']`, a key in `Key::parse()` notation, a method name or `[method, description]`
-     * for `Help`. The application changes them with `bind()`. A bound method runs when the key
+     * The keys of this component and the public methods they run: `['ctrl+s' => ['save', 'Save'],
+     * 'enter' => 'submit']`, a key in `Key::parse()` notation and a method name, or `[method,
+     * description]` for a key that `Help` lists. The application changes them with `bind()`. A bound method runs when the key
      * reaches the component (see the class description on the order); one that returns false
      * did not take the key, which goes on. A render follows.
      *
@@ -315,7 +317,7 @@ abstract class Component extends Element
         $this->offs = [
             $s->on('key', fn(Key $e) => $this->key($e)),
             $s->on('mouse', fn(Mouse $e) => $this->pointer($e) || $this->modal($e) || $this->handle(fn() => $this->onMouse($e))),
-            $s->on('paste', fn(Paste $e) => ($this->dialogs === [] && $this->handle(fn() => $this->onPaste($e))) || $this->toUnshown($e)),
+            $s->on('paste', fn(Paste $e) => ($this->dialogs === [] && !$this->attribute('disabled') && $this->handle(fn() => $this->onPaste($e))) || $this->toUnshown($e)),
             $s->on('focus', function (Focus $e): void {
                 $this->handle(fn() => $this->onFocus($e));
                 $this->requestRender();
@@ -860,6 +862,10 @@ abstract class Component extends Element
         } elseif ($this->dialogs !== []) {
             $this->hostDialogs();
         }
+        if ($this->measured !== null && $this->measure(...$this->measured[0]) !== $this->measured[1]) {
+            $this->measured = null;
+            $this->parent?->requestRender();     // it needs another size: the parent lays it out again
+        }
         // children shown for the first time draw now, at the size the layout gave them
         foreach ($this->children as $child) {
             if (!$child->rendered && $child->surface->viewport() !== null) {
@@ -1051,6 +1057,19 @@ abstract class Component extends Element
         return $style;
     }
 
+    /**
+     * @internal `measure()` for a parent's layout: the answer is remembered, so that when it
+     * changes (an editor that grew a line) the parent lays its tree out again.
+     *
+     * @return array{int,int}|null
+     */
+    public function measureFor(int $cols, int $rows): ?array
+    {
+        $size = $this->measure($cols, $rows);
+        $this->measured = [[$cols, $rows], $size];
+        return $size;
+    }
+
     /** @internal The style the parent's element tree around this component gives it to inherit. */
     public function inheritStyle(ComputedStyle $parent): void
     {
@@ -1191,9 +1210,9 @@ abstract class Component extends Element
 
     /**
      * The keys in force for this component: `bindings()` with what `bind()` changed, as
-     * [method, description] by key notation (`ctrl+s`).
+     * [method, description or null] by key notation (`ctrl+s`).
      *
-     * @return array<string, array{string, string}>
+     * @return array<string, array{string, ?string}>
      */
     public function bindingsInForce(): array
     {
@@ -1214,7 +1233,7 @@ abstract class Component extends Element
 
     /**
      * @param array<string, mixed> $bindings
-     * @return array<string, array{string, string}|null>
+     * @return array<string, array{string, ?string}|null>
      */
     private static function normalize(array $bindings): array
     {
@@ -1224,9 +1243,9 @@ abstract class Component extends Element
             if ($action === null) {
                 $out[$key] = null;
             } elseif (\is_array($action)) {
-                $out[$key] = [(string) $action[0], (string) ($action[1] ?? $action[0])];
+                $out[$key] = [(string) $action[0], isset($action[1]) ? (string) $action[1] : null];
             } else {
-                $out[$key] = [(string) $action, (string) $action];
+                $out[$key] = [(string) $action, null];
             }
         }
         return $out;
@@ -1247,7 +1266,9 @@ abstract class Component extends Element
                 continue;
             }
             foreach ($c->bindingsInForce() as $key => [, $description]) {
-                $out[$key] ??= $description;
+                if ($description !== null) {
+                    $out[$key] ??= $description;
+                }
             }
             if ($c->dialogs !== []) {
                 break;      // (a dialog's keys only: the rest are not reachable)
