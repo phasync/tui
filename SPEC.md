@@ -278,7 +278,14 @@ size and its placement preference; it returns the rectangle to host at. Implemen
 value class (`Placement::for(anchor, root, desired, place)`), tested on a table of cases (bottom
 row, right edge, no room on either side, a terminal smaller than the overlay), used by `overlay()`
 and available to any widget that wants to decide for itself; the `area` event is what triggers a
-re-decision. Focus moves
+re-decision. **Resizes**, which happen at any time, go through the same path: the root's size
+changes, the layout re-lays the tree, anchors move or disappear, and overlays are re-placed *after
+the layout pass of the frame that handles the resize and before painting* (an anchor's rectangle
+is not final earlier), once per frame however many resizes arrived. An overlay keeps its state
+across re-placement (selection kept, the scroll offset adjusted so the selected row stays visible
+in the new height); one whose anchor is no longer shown closes, with its result cancelled. Test:
+open a dropdown at the bottom, shrink the terminal under it, grow it again; open a dialog, shrink
+the terminal below the dialog's size. Focus moves
 to the overlay by the surface tree's own rule; Escape, a click outside, or the anchor's component
 losing focus closes a non-modal overlay; a modal one takes all input until closed; closing returns
 the focus to where it was. The overlay follows its anchor when the anchor's area changes (resize,
