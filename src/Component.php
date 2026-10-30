@@ -90,7 +90,7 @@ abstract class Component
     private bool $renderPending = false;
     private ?Deferred $stopped = null;
     private ?Signal $wake = null;
-    /** @var array<int, \stdClass> running coroutines: {fiber, awaitable, done} */
+    /** @var array<int, \stdClass> running coroutines: {awaitable, done} */
     private array $tasks = [];
     private ?\Throwable $error = null;
     /** @var list<\Closure> */
@@ -262,11 +262,17 @@ abstract class Component
         $this->children = [];
         $this->stopped->settle(true, null);
         $this->wake->notify();
-        // wait for the coroutines, except the one calling dispose() (it cannot wait for itself)
-        $self = \Fiber::getCurrent();
+        // wait for the coroutines, except one of them calling dispose() (it cannot wait for
+        // itself): that one has its runTask() call below this one on the call stack
+        $calling = [];
+        foreach (debug_backtrace(\DEBUG_BACKTRACE_PROVIDE_OBJECT) as $frame) {
+            if ($frame['function'] === 'runTask' && ($frame['object'] ?? null) === $this) {
+                $calling[spl_object_id($frame['args'][0])] = true;
+            }
+        }
         $others = [];
-        foreach ($this->tasks as $entry) {
-            if ($entry->fiber !== $self) {
+        foreach ($this->tasks as $id => $entry) {
+            if (!isset($calling[$id])) {
                 $others[] = $entry->awaitable;
             }
         }
@@ -418,19 +424,21 @@ abstract class Component
     protected function go(\Closure $task): void
     {
         $entry = new \stdClass();
-        $entry->fiber = null;
         $entry->done = false;
-        $entry->awaitable = \fiber\go(function () use ($task, $entry): void {
-            $entry->fiber = \Fiber::getCurrent();
-            try {
-                $this->guard($task);
-            } finally {
-                $entry->done = true;
-                unset($this->tasks[spl_object_id($entry)]);
-            }
-        });
+        $entry->awaitable = \fiber\go(fn() => $this->runTask($entry, $task));
         if (!$entry->done) {
             $this->tasks[spl_object_id($entry)] = $entry;
+        }
+    }
+
+    /** The body of a coroutine started with go(); dispose() finds it on the call stack. */
+    private function runTask(\stdClass $entry, \Closure $task): void
+    {
+        try {
+            $this->guard($task);
+        } finally {
+            $entry->done = true;
+            unset($this->tasks[spl_object_id($entry)]);
         }
     }
 

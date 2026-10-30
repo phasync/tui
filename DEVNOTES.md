@@ -245,8 +245,10 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
 - Event hooks are surface input listeners registered at `start()`, so they run on the way
   down (capture order): the root component sees keys before its focused child.
 - `requestRender()` = one `go()` that `sleep(0)`s then renders: batching without a frame clock.
-- Disposal waits (await_all, 1 s) for the component's go() tasks except the calling fiber
-  (`Fiber::getCurrent()` comparison; plain PHP, no runtime type).
+- Disposal waits (await_all, 1 s) for the component's go() tasks except one that is calling
+  dispose() itself (beta3, spec 2995447: no `\Fiber` API, go() handles opaque): every task runs
+  in `Component::runTask($entry, ...)`, and dispose() finds the caller's entry among the
+  `runTask` frames of `debug_backtrace()`; plain PHP, no assumption about what a task is.
 - Error boundary: a failing child unhosts its windows, draws the error (again on resize) and is
   disposed in a coroutine; the root rethrows (so `Tty` restores the terminal on the way out).
 - `focus()` before the parent shows the child is remembered and applied after setLayout.
@@ -274,6 +276,13 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
   so the closure is wrapped in a nested `fiber\run()` (children finish inside the capture).
 
 ## fiber\ notes
+
+- **Finding (beta3):** fiber-interop/api has no way to ask "which task am I" (a current-task
+  handle comparable with what go() returned). The library needs it in one place, a component
+  disposing itself from one of its own coroutines (it must not wait for itself). Done without it
+  by finding the component's own task wrapper on the call stack (see Components). The smallest
+  addition that would do: `fiber\current(): ?object` returning the handle go() gave for the
+  running task, comparable by identity.
 
 - `fiber\Deferred` is marked `@internal` in fiber-interop/api 0.3.0 but SPEC.md names it; used
   only inside `Internal\Signal`. Any then-able would do, so replacing it is a 10-line change.

@@ -409,3 +409,32 @@ it('starts the program of a Terminal at the size of its pane', function () {
         $t->detach();
     });
 });
+
+it('disposes itself from its own coroutine without waiting for that coroutine', function () {
+    $app = new class extends Component {
+        public bool $unmounted = false;
+        public bool $otherEnded = false;
+        public bool $otherEndedFirst = false;
+
+        protected function run(): void
+        {
+            $this->go(function () {                 // another coroutine: told to stop, and waited for
+                $this->sleep(30);
+                fiber\sleep(0.05);
+                $this->otherEnded = true;
+            });
+            $this->sleep(0.01);
+            $this->dispose();                       // from inside run(): no wait for run() itself
+        }
+
+        protected function unmount(): void
+        {
+            $this->unmounted = true;
+            $this->otherEndedFirst = $this->otherEnded;
+        }
+    };
+    $start = microtime(true);
+    run(fn() => $app->start(new Surface(10, 2)));
+    expect($app->unmounted)->toBeTrue()->and($app->otherEndedFirst)->toBeTrue()
+        ->and(microtime(true) - $start)->toBeLessThan(0.5);
+});
