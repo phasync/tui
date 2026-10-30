@@ -148,3 +148,75 @@ it('focuses on click through nested layouts when set on the root', function () {
     $click(15, 0);
     expect($b->hasFocus())->toBeFalse()->and($c->parent()->hasFocus())->toBeTrue();
 });
+
+describe('focus follows the surface through re-arrangements', function () {
+    /** The layout of an app: a | (b over c), as nested layouts. */
+    $plain = fn(array $s) => Split::horizontal()->add($s['a'])->add(Split::vertical()->add($s['b'])->add($s['c']));
+    /** The same with a dialog over it: the plain layout is one level deeper now. */
+    $modal = fn(array $s) => (new Stack())->add($plain($s))->add($s['dialog'], 20, 4);
+
+    $surfaces = function (): array {
+        $s = ['events' => new ArrayObject()];
+        foreach (['a', 'b', 'c', 'dialog'] as $name) {
+            $s[$name] = new Surface();
+            $s[$name]->on('focus', function (Focus $f) use ($s, $name) {
+                $s['events'][] = ($f->focused ? '+' : '-') . $name;
+            });
+        }
+        return $s;
+    };
+
+    it('keeps the focused surface focused when it moves into a nested layout and back', function () use ($plain, $modal, $surfaces) {
+        $root = new Surface(60, 12);
+        $s = $surfaces();
+        $root->setLayout($plain($s));
+        $s['b']->focus();
+        $root->setLayout($modal($s));           // b is two levels deeper now, in new surfaces
+        expect($s['b']->hasFocus())->toBeTrue();
+        $root->setLayout($plain($s));
+        $root->dispatch(new phasync\Tui\Key('x'));
+        expect($s['b']->hasFocus())->toBeTrue()->and($s['b']->input->read())->toBe('x');
+    });
+
+    it('gives the focus back to the surface focused before, once the dialog is gone', function () use ($plain, $modal, $surfaces) {
+        $root = new Surface(60, 12);
+        $s = $surfaces();
+        $root->setLayout($plain($s));
+        $s['c']->focus();
+        $root->setLayout($modal($s));
+        $s['dialog']->focus();
+        $root->dispatch(new phasync\Tui\Key('y'));
+        expect($s['dialog']->input->read())->toBe('y');
+        $root->setLayout($plain($s));          // the dialog is gone
+        $root->dispatch(new phasync\Tui\Key('z'));
+        expect($s['c']->hasFocus())->toBeTrue()->and($s['c']->input->read())->toBe('z')
+            ->and($s['events']->getArrayCopy())->toBe(['+a', '-a', '+c', '-c', '+dialog', '-dialog', '+c']);
+    });
+
+    it('lets a focus() made before the re-arrangement win over it', function () use ($plain, $modal, $surfaces) {
+        $root = new Surface(60, 12);
+        $s = $surfaces();
+        $root->setLayout($modal($s));
+        $s['dialog']->focus();
+        $s['b']->focus();                       // asked for while the dialog is still up
+        $root->setLayout($plain($s));
+        $root->dispatch(new phasync\Tui\Key('k'));
+        expect($s['b']->hasFocus())->toBeTrue()->and($s['b']->input->read())->toBe('k')
+            ->and($s['dialog']->input->peek())->toBe('');
+    });
+
+    it('goes to the first window when the focused one goes and none was focused before', function () {
+        $root = new Surface(30, 4);
+        [$a, $b, $c] = [new Surface(), new Surface(), new Surface()];
+        $split = Split::horizontal()->add($a)->add($b)->add($c);
+        $root->setLayout($split);
+        $c->focus();
+        $split->remove($c);
+        expect($root->focused())->toBe($a);
+        $b->focus();
+        $split->add($c);
+        $c->focus();
+        $split->remove($c);
+        expect($root->focused())->toBe($b);     // the one focused before
+    });
+});

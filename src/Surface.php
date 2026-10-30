@@ -49,10 +49,16 @@ final class Surface implements \Stringable
     private ?Host $host = null;
     /** @var list<Viewport> the viewports this surface shows through, the one of its parent last */
     private array $views = [];
-    /** A focus() request made while not hosted, applied when it is. */
-    private int $focusWanted = 0;
-    /** Numbers focus requests, so the latest wins when several wait to be hosted. */
+    /** The number of the latest `focus()` of this surface (0: never focused). */
+    private int $focusStamp = 0;
+    /** The number of the latest `takeFocus()` of this surface. */
+    private int $keepStamp = 0;
+    /** @var list<Surface> for a root: the focus path its surfaces were last told about */
+    private array $announced = [];
+    /** Numbers focus requests: the latest one wins. */
     private static int $focusClock = 0;
+    /** Changes to the tree in progress; the focus settles when the outermost one ends. */
+    private static int $treeChanges = 0;
     /** @var array<string, array<int, \Closure>> */
     private array $listeners = [];
 
@@ -157,7 +163,9 @@ final class Surface implements \Stringable
         }
         $this->vt->version++;
         $this->vt->resize($cols, $rows);
-        $this->host?->arrange();
+        if ($this->host !== null) {
+            $this->changeTree(fn() => $this->host->arrange());
+        }
         $this->emit('resize', new Resize($this->vt->cols, $this->vt->rows));
         $this->emit('change', null);
     }
@@ -495,8 +503,8 @@ final class Surface implements \Stringable
      * the top-left corner at its own size; place it with $x/$y/$width/$height here or later on
      * the viewport, or let a layout (`setLayout()`) place it. A surface is hosted at most once
      * per host: hosting it again returns the same viewport (moved and resized if you pass
-     * geometry). The first surface hosted gets the focus, and so does one that asked for it with
-     * `focus()` before it was shown.
+     * geometry). Of its windows, the host focuses the one focused most recently (`focus()`, also
+     * when called before it was shown), or the first one when none was ever focused.
      *
      * The child's changes show on this surface (and on its host, up to the root): this surface
      * repaints them into its own cells by writing escape sequences to itself, when its cells are
@@ -511,22 +519,15 @@ final class Surface implements \Stringable
      */
     public function host(Surface $child, ?int $x = null, ?int $y = null, ?int $width = null, ?int $height = null): Viewport
     {
-        $view = $this->hosting()->host($child, $x, $y, $width, $height);
-        if ($child->focusWanted > 0 && $child->viewport() === $view) {
-            // focus() was called before it was shown
-            $stamp = $child->focusWanted;
-            $child->focusWanted = 0;
-            if ($stamp > $this->host->focusStamp) {
-                $child->focusWith($stamp);
-            }
-        }
-        return $view;
+        return $this->changeTree(fn() => $this->hosting()->host($child, $x, $y, $width, $height));
     }
 
     /** Stop showing $child; the area it covered is blanked. Nothing happens if it is not hosted here. */
     public function unhost(Surface $child): void
     {
-        $this->host?->unhost($child);
+        if ($this->host !== null) {
+            $this->changeTree(fn() => $this->host->unhost($child));
+        }
     }
 
     /** Bring the window of the hosted surface $child to the top, over all others. */
@@ -603,7 +604,7 @@ final class Surface implements \Stringable
     public function setLayout(?Layout $layout): void
     {
         $this->hosting()->layout = $layout;
-        $this->host->arrange();
+        $this->changeTree(fn() => $this->host->arrange());
     }
 
     /** The layout set with `setLayout()`, or null. */
@@ -635,52 +636,138 @@ final class Surface implements \Stringable
      * Give the focus to this surface: every host from the root down to it focuses the way to it,
      * so keys and pastes come here (or, when this surface hosts windows, go on to the one of them
      * it focuses). The surfaces losing the focus and those gaining it receive a `Focus` event (a
-     * program that enabled focus reporting reads `ESC [O` / `ESC [I`).
+     * program that enabled focus reporting reads `ESC [O` / `ESC [I`). It takes effect at once,
+     * for the very next key.
      *
-     * Works at any depth and through any hosts, components or not. Called on a surface that is
-     * not shown yet (a window a layout is about to place), it takes effect when it is hosted.
+     * The focus belongs to the surface, not to where it is: the surface focused last has it,
+     * wherever it is shown and however the windows are re-arranged. Called on a surface that is
+     * not shown yet (a window a layout is about to place), it takes effect when it is hosted; a
+     * surface moved to another host or into a new nested layout keeps it. When the focused
+     * surface is no longer shown, the focus goes back to the one focused before it that still is,
+     * else to the first window.
      */
     public function focus(): void
     {
-        $this->focusWith(++self::$focusClock);
+        $this->focusStamp = ++self::$focusClock;
+        $this->changeTree(static fn() => null);
     }
 
     /**
      * Focus this surface (as `focus()`) and keep the keys here: its own windows lose the focus,
-     * so keys and pastes go to this surface's producer and input listeners. For a program with
-     * a window over it (a pop-up on a pane) when the program, not the pop-up, should get the keys.
+     * so keys and pastes go to this surface's producer and input listeners, until one of them is
+     * focused again. For a program with a window over it (a pop-up on a pane) when the program,
+     * not the pop-up, should get the keys.
      */
     public function takeFocus(): void
     {
-        $this->focus();
-        $this->host?->setFocus(null, self::$focusClock);
+        $this->focusStamp = $this->keepStamp = ++self::$focusClock;
+        $this->changeTree(static fn() => null);
     }
 
-    /** @internal Focus this surface for the focus request numbered $stamp (see `focus()`). */
-    public function focusWith(int $stamp): void
+    /**
+     * @internal True if the latest focus request of all was for this surface (`focus()` or
+     * `takeFocus()`), so nothing has been focused since.
+     */
+    public function isLatestFocus(): bool
     {
-        // the levels from the top down: [host, the surface on the way here]
-        $chain = [];
-        $top = $this;
-        while (($v = $top->viewport()) !== null) {
-            array_unshift($chain, [$v->host(), $top]);
-            $top = $v->host();
-        }
-        // not shown yet (or shown on a host that is not): applied when it is hosted
-        $top->focusWanted = $stamp;
-        $changed = null;
-        foreach ($chain as [$host, $child]) {
-            if ($changed === null && $host->focused() !== $child) {
-                $changed = [$host->focused(), $child];
+        return $this->focusStamp > 0 && $this->focusStamp === self::$focusClock;
+    }
+
+    /**
+     * @internal Run $change to the tree (hosting, unhosting, arranging); when the outermost
+     * change ends, the focus of the tree settles: every host focuses the window whose subtree was
+     * focused last, and the surfaces that left or joined the focus path are told.
+     */
+    public function changeTree(\Closure $change): mixed
+    {
+        self::$treeChanges++;
+        try {
+            return $change();
+        } finally {
+            if (--self::$treeChanges === 0) {
+                $this->root()->settleFocus();
             }
-            $host->hosting()->setFocus($child, $stamp, false);
         }
-        if ($changed !== null) {
-            // the branch that left the focus path and the one that joined it are told, once:
-            // the event travels down each branch's own focus path
-            $changed[0]?->dispatch(new Focus(false));
-            $changed[1]->dispatch(new Focus(true));
+    }
+
+    /** Settle the focus of the tree below this root, and announce how the focus path changed. */
+    private function settleFocus(): void
+    {
+        $this->rankFocus();
+        $path = [$this];
+        for ($s = $this; ($next = $s->focused()) !== null; $s = $next) {
+            $path[] = $next;
         }
+        $old = $this->announced === [] ? [$this] : $this->announced;
+        $this->announced = $path;
+        // a surface on both paths (one moved to a new host) is not told anything
+        self::announce(array_values(array_filter($old, fn(Surface $s) => !\in_array($s, $path, true))), false);
+        self::announce(array_values(array_filter($path, fn(Surface $s) => !\in_array($s, $old, true))), true);
+    }
+
+    /**
+     * Point every host below this surface at the window whose subtree holds the latest focus
+     * request (staying where it is on a tie, the first window when none was ever focused; none
+     * when the host took the focus itself later). Returns the latest focus request in the subtree.
+     */
+    private function rankFocus(): int
+    {
+        $rank = $this->focusStamp;
+        $host = $this->host;
+        if ($host === null) {
+            return $rank;
+        }
+        $best = null;
+        $bestRank = -1;
+        $currentRank = -1;
+        foreach ($host->viewports as $v) {
+            $r = $v->source->rankFocus();
+            if ($r > $bestRank) {
+                $best = $v;
+                $bestRank = $r;
+            }
+            if ($v === $host->focus) {
+                $currentRank = $r;
+            }
+        }
+        if ($host->focus !== null && $currentRank === $bestRank) {
+            $best = $host->focus;
+        }
+        $host->setFocus($this->keepStamp > $bestRank ? null : $best);
+        return max($rank, $bestRank);
+    }
+
+    /**
+     * Tell $path (surfaces that left or joined a focus path, top first) that they lost or gained
+     * the focus: each one's listeners, top down (one returning true stops it), and the program of
+     * one that keeps the focus itself (the end of a path) if it asked for focus reports.
+     *
+     * @param list<Surface> $path
+     */
+    private static function announce(array $path, bool $focused): void
+    {
+        $event = new Focus($focused);
+        foreach ($path as $s) {
+            if ($s->emit('focus', $event)) {
+                return;
+            }
+            if ($s->focused() === null && $s->mode(1004)) {
+                $s->input->write($focused ? "\e[I" : "\e[O");
+            }
+        }
+    }
+
+    /**
+     * @internal A root is being hosted: it is no longer the top of a focus path of its own, so
+     * the surfaces it told they have the focus are told they lost it (they are told again if
+     * they are on the path of the tree it joins).
+     */
+    public function joinTree(): void
+    {
+        if (\count($this->announced) > 1) {
+            self::announce(\array_slice($this->announced, 1), false);
+        }
+        $this->announced = [];
     }
 
     /** True if keys go to this surface or through it: it is on the focus path from its root. */

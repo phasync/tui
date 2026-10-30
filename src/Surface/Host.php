@@ -4,7 +4,6 @@ namespace phasync\Tui\Surface;
 
 use phasync\Tui\Ansi;
 use phasync\Tui\Event;
-use phasync\Tui\Focus;
 use phasync\Tui\Key;
 use phasync\Tui\Layout;
 use phasync\Tui\Mouse;
@@ -32,8 +31,6 @@ final class Host
     public ?bool $clickFocus = null;
     /** @var list<Surface> the surfaces made for layouts nested in this host's layout, in order */
     private array $nested = [];
-    /** The number of the focus request that set the focus (0: the default focus). */
-    public int $focusStamp = 0;
 
     private bool $composing = false;
     /** The host's version after the last compose; rows changed after it were changed by its own producer. */
@@ -66,6 +63,9 @@ final class Host
                 throw new \InvalidArgumentException('A surface cannot host itself or a surface that hosts it');
             }
             $view = new Viewport($child, $this, $x ?? 0, $y ?? 0, $width ?? $child->cols(), $height ?? $child->rows());
+            if ($child->viewport() === null) {
+                $child->joinTree();
+            }
             $this->viewports[] = $view;
             $child->shownThrough($view, true);
             $this->offs[spl_object_id($view)] = [
@@ -78,12 +78,7 @@ final class Host
                 $child->on('clipboard', fn(string $text) => $this->surface->write(Ansi::clipboard($text))),
                 $child->on('bell', fn() => $this->surface->write("\x07")),
             ];
-            if ($this->focus === null) {
-                $this->focus = $view;
-                if ($child->title() !== '') {
-                    $this->surface->write(Ansi::title($child->title()));
-                }
-            }
+            // the focus settles when the change to the tree is complete (Surface::changeTree())
             $this->markDirty();
         } else {
             if ($x !== null || $y !== null) {
@@ -138,11 +133,7 @@ final class Host
         }
         $this->blank($view->rect());
         if ($this->focus === $view) {
-            $this->focus = null;
-            $next = end($this->viewports);
-            if ($next !== false) {
-                $this->setFocus($next->source);
-            }
+            $this->focus = null;    // settled again when the change to the tree is complete
         }
         $this->markDirty();
     }
@@ -257,23 +248,17 @@ final class Host
     // ------------------------------------------------------------------------------------------
     // Focus
 
-    /** Focus $child (null: the host itself); with $dispatch the old and new one get a Focus event. */
-    public function setFocus(?Surface $child, int $stamp = 0, bool $dispatch = true): void
+    /**
+     * Point the focus at $view (null: the host itself). Only the settling of the tree's focus
+     * calls this (Surface::changeTree()); it tells nobody, the settling does. The focused
+     * window's title becomes the host's.
+     */
+    public function setFocus(?Viewport $view): void
     {
-        $view = $child === null ? null : $this->find($child);
-        if ($child !== null && $view === null) {
-            throw new \InvalidArgumentException('Only a hosted surface can have the focus');
-        }
-        $this->focusStamp = max($this->focusStamp, $stamp);
         if ($view === $this->focus) {
             return;
         }
-        $old = $this->focus;
         $this->focus = $view;
-        if ($dispatch) {
-            $old?->source->dispatch(new Focus(false));
-            $view?->source->dispatch(new Focus(true));
-        }
         if ($view !== null) {
             $this->surface->write(Ansi::title($view->source->title()));
         }
