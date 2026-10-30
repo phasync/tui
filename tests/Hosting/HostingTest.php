@@ -155,7 +155,7 @@ describe('compositing', function () {
         $a->write("\e]2;first\x07");
         $b->write("\e]2;second\x07\x07\e]52;c;" . base64_encode('hi') . "\x07");
         expect($root->title())->toBe('first')->and($events)->toBe(['bell', 'copy hi']);
-        $root->focus($b);
+        $b->focus();
         expect($root->title())->toBe('second');
     });
 });
@@ -260,7 +260,7 @@ describe('input routing', function () {
         expect($root->focused())->toBe($a);
         $b->write("\e[?1h\e[?2004h");
         $root->dispatch(Key::parse('up'));
-        $root->focus($b);
+        $b->focus();
         $root->dispatch(Key::parse('up'));
         $root->dispatch(new Paste('p'));
         expect($a->input->peek())->toBe("\e[A")->and($b->input->peek())->toBe("\eOA\e[200~p\e[201~");
@@ -308,7 +308,7 @@ describe('input routing', function () {
         $root->host($b, 5, 0);
         $a->write("\e[?1004h");
         $b->write("\e[?1004h");
-        $root->focus($b);
+        $b->focus();
         $root->dispatch(new Focus(false));   // the terminal lost focus
         expect($a->input->peek())->toBe("\e[O")->and($b->input->peek())->toBe("\e[I\e[O");
     });
@@ -340,7 +340,7 @@ describe('input routing', function () {
         $src->write("\e[2;3H");
         $c = $root->activeCursor();
         expect([$c->x, $c->y, $c->visible])->toBe([8, 5, true]);
-        $root->focus(null);
+        $root->takeFocus();
         expect([$root->activeCursor()->x, $root->activeCursor()->y])->toBe([0, 0]);
     });
 });
@@ -457,7 +457,7 @@ it('composes incrementally exactly what a fresh host composes from scratch (prop
                 $fv->scrollTo($hv->top());
             }
         }
-        $f->focus($host->focused());
+        $host->focused()?->focus();
         // what the host's own producer wrote outside the windows
         for ($y = 0; $y < $host->rows(); $y++) {
             for ($x = 0; $x < $host->cols(); $x++) {
@@ -506,7 +506,7 @@ it('composes incrementally exactly what a fresh host composes from scratch (prop
                     $host->host($s, $x, $y, $w, $h)->setBorder(true, null, $focusStyle)->setTitle("w$si");
                     break;
                 case 11:
-                    $host->focus($s);
+                    $s->focus();
                     break;
                 case 12:
                     $host->write("\e[" . mt_rand(1, 10) . ';' . mt_rand(1, 24) . 'H' . str_repeat('#', mt_rand(1, 8)));

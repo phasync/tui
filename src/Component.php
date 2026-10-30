@@ -77,7 +77,6 @@ abstract class Component
     private ?array $used = null;
     private bool $mounted = false;
     private bool $renderPending = false;
-    private ?Component $focusLater = null;
     private ?Deferred $stopped = null;
     private ?Signal $wake = null;
     /** @var array<int, \stdClass> running coroutines: {fiber, awaitable, done} */
@@ -276,35 +275,19 @@ abstract class Component
 
     /**
      * Give the focus to this component: every host from the root down to it focuses the way to
-     * it, so keys and pastes come here. Called before the parent shows it (in the parent's
-     * `render()`), it takes effect when the layout `render()` returns is applied.
+     * it, so keys and pastes come here (and on to its focused child), through any hosts in
+     * between, components or plain surfaces (see `Surface::focus()`). Called before the parent
+     * shows it (in the parent's `render()`), it takes effect when the layout shows it.
      */
     public function focus(): void
     {
-        $component = $this;
-        while ($component->parent !== null) {
-            $host = $component->parent->surface;
-            if ($host->viewport($component->surface) !== null) {
-                $host->focus($component->surface);
-            } else {
-                // not shown yet (asked for in render()): focus it once the parent's layout shows it
-                $component->parent->focusLater = $this;
-            }
-            $component = $component->parent;
-        }
+        $this->surface->focus();
     }
 
     /** True if keys go to this component: it is on the focus path from the root. */
     public function hasFocus(): bool
     {
-        $component = $this;
-        while ($component->parent !== null) {
-            if ($component->parent->surface->focused() !== $component->surface) {
-                return false;
-            }
-            $component = $component->parent;
-        }
-        return true;
+        return $this->surface->hasFocus();
     }
 
     // ------------------------------------------------------------------------------------------
@@ -385,11 +368,6 @@ abstract class Component
         }
         if ($layout !== null) {
             $this->surface->setLayout($layout);
-            if ($this->focusLater !== null) {
-                $later = $this->focusLater;
-                $this->focusLater = null;
-                $later->focus();
-            }
             foreach ($this->children as $key => $child) {
                 if (!isset($used[$key])) {
                     unset($this->children[$key]);

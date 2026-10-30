@@ -114,7 +114,7 @@ it('hosts Claude Code in a pane next to a shell', function () {
                 $t->press('enter');
                 expect($claude->pty()->wait(10))->not->toBeNull();
             }
-            $root->focus($shell->surface);
+            $shell->focus();
             $t->type("echo shell-ok\n");
             expect($t->waitFor('shell-ok'))->toBeTrue();
         } finally {

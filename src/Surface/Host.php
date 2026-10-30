@@ -29,6 +29,10 @@ final class Host
     public bool $dirty = false;
     public ?Layout $layout = null;
     public bool $clickFocus = false;
+    /** @var list<Surface> the surfaces made for layouts nested in this host's layout, in order */
+    private array $nested = [];
+    /** The number of the focus request that set the focus (0: the default focus). */
+    public int $focusStamp = 0;
 
     private bool $composing = false;
     /** The host's version after the last compose; rows changed after it were changed by its own producer. */
@@ -62,6 +66,7 @@ final class Host
             }
             $view = new Viewport($child, $this, $x ?? 0, $y ?? 0, $width ?? $child->cols(), $height ?? $child->rows());
             $this->viewports[] = $view;
+            $child->shownThrough($view, true);
             $this->offs[spl_object_id($view)] = [
                 $child->on('change', fn() => $this->markDirty()),
                 $child->on('title', function (string $title) use ($view): void {
@@ -126,6 +131,7 @@ final class Host
         }
         unset($this->offs[$id]);
         $this->viewports = array_values(array_filter($this->viewports, fn(Viewport $v) => $v !== $view));
+        $child->shownThrough($view, false);
         if ($this->capture === $view) {
             $this->capture = $this->anchor = null;
         }
@@ -225,25 +231,49 @@ final class Host
                 $this->unhost($v->source);
             }
         }
+        // surfaces of nested layouts that the layout no longer has
+        foreach ($this->nested as $i => $surface) {
+            if (!isset($placed[spl_object_id($surface)])) {
+                unset($this->nested[$i]);
+                $surface->setLayout(null);
+                foreach ($surface->viewports() as $v) {
+                    $surface->unhost($v->source);
+                }
+            }
+        }
+        $this->nested = array_values($this->nested);
+    }
+
+    /**
+     * The surface for the $index-th layout nested in this host's layout: the same one on every
+     * arrange, so a layout made anew (by a component's render) keeps its windows and focus.
+     */
+    public function nested(int $index): Surface
+    {
+        return $this->nested[$index] ??= new Surface($this->vt->cols, $this->vt->rows, 0);
     }
 
     // ------------------------------------------------------------------------------------------
     // Focus
 
-    public function setFocus(?Surface $child): void
+    /** Focus $child (null: the host itself); with $dispatch the old and new one get a Focus event. */
+    public function setFocus(?Surface $child, int $stamp = 0, bool $dispatch = true): void
     {
         $view = $child === null ? null : $this->find($child);
         if ($child !== null && $view === null) {
             throw new \InvalidArgumentException('Only a hosted surface can have the focus');
         }
+        $this->focusStamp = max($this->focusStamp, $stamp);
         if ($view === $this->focus) {
             return;
         }
         $old = $this->focus;
         $this->focus = $view;
-        $old?->source->dispatch(new Focus(false));
+        if ($dispatch) {
+            $old?->source->dispatch(new Focus(false));
+            $view?->source->dispatch(new Focus(true));
+        }
         if ($view !== null) {
-            $view->source->dispatch(new Focus(true));
             $this->surface->write(Ansi::title($view->source->title()));
         }
         $this->markDirty();
@@ -287,11 +317,63 @@ final class Host
         if ($at === $next) {
             return false;
         }
-        $host = $this->surface;
-        foreach ($leaves[$next] as $surface) {
-            $host->focus($surface);
-            $host = $surface;
+        end($leaves[$next])->focus();
+        return true;
+    }
+
+    /**
+     * Focus the window next to the focused leaf in $direction, by the leaves' areas on the root:
+     * of those entirely on that side, the ones alongside the focused window (overlapping it
+     * across the direction) first, then the nearest, then the one best centred.
+     */
+    public function focusToward(string $direction): bool
+    {
+        $leaves = array_map(fn(array $path) => end($path), self::leaves($this->surface));
+        if ($leaves === []) {
+            return false;
         }
+        $path = self::focusPath($this->surface);
+        $current = $path === [] ? null : end($path);
+        if ($current === null || !\in_array($current, $leaves, true)) {
+            $leaves[0]->focus();
+            return true;
+        }
+        $from = $current->area();
+        $best = null;
+        $bestScore = null;
+        foreach ($leaves as $leaf) {
+            if ($leaf === $current) {
+                continue;
+            }
+            $to = $leaf->area();
+            if ($to->isEmpty()) {
+                continue;
+            }
+            $gap = match ($direction) {
+                'left' => $from->x - ($to->x + $to->width),
+                'right' => $to->x - ($from->x + $from->width),
+                'up' => $from->y - ($to->y + $to->height),
+                'down' => $to->y - ($from->y + $from->height),
+            };
+            if ($gap < 0) {
+                continue;       // not entirely on that side
+            }
+            $across = $direction === 'left' || $direction === 'right';
+            [$a1, $a2, $b1, $b2] = $across
+                ? [$from->y, $from->y + $from->height, $to->y, $to->y + $to->height]
+                : [$from->x, $from->x + $from->width, $to->x, $to->x + $to->width];
+            $overlap = min($a2, $b2) - max($a1, $b1);
+            $offCentre = abs(($a1 + $a2) - ($b1 + $b2));
+            $score = [$overlap > 0 ? 0 : 1, $gap, $offCentre];
+            if ($bestScore === null || $score < $bestScore) {
+                $best = $leaf;
+                $bestScore = $score;
+            }
+        }
+        if ($best === null) {
+            return false;
+        }
+        $best->focus();
         return true;
     }
 

@@ -47,6 +47,12 @@ final class Surface implements \Stringable
     private string $utf8Tail = '';
     private ?int $damageTaken = null;
     private ?Host $host = null;
+    /** @var list<Viewport> the viewports this surface shows through, the one of its parent last */
+    private array $views = [];
+    /** A focus() request made while not hosted, applied when it is. */
+    private int $focusWanted = 0;
+    /** Numbers focus requests, so the latest wins when several wait to be hosted. */
+    private static int $focusClock = 0;
     /** @var array<string, array<int, \Closure>> */
     private array $listeners = [];
 
@@ -392,6 +398,7 @@ final class Surface implements \Stringable
      * - `title`: receives the new title
      * - `bell`: the program rang the bell (BEL)
      * - `clipboard`: the program asked to copy text to the clipboard (OSC 52); receives the text
+     * - `close`: `close()` was called: the session on this surface is over
      *
      * Input listeners see the events given to `dispatch()` before they go further, and stop them
      * by returning true; this is how a program reacts to keys on any surface (a shortcut on the
@@ -463,6 +470,17 @@ final class Surface implements \Stringable
         return $type !== 'mouse' || $bytes !== '';
     }
 
+    /**
+     * Hang up: tell everything attached to this surface that the session on it is over, as a
+     * terminal window closing does. A terminal device attached to it detaches, a component on it
+     * is disposed (which ends the programs of its `Terminal`s); listeners of `close` are called.
+     * The cells stay as they are. Detaching a terminal device closes its root.
+     */
+    public function close(): void
+    {
+        $this->emit('close', null);
+    }
+
     /** True if the program asked for mouse reports (any of the modes 9, 1000, 1002, 1003). */
     public function wantsMouse(): bool
     {
@@ -477,7 +495,8 @@ final class Surface implements \Stringable
      * the top-left corner at its own size; place it with $x/$y/$width/$height here or later on
      * the viewport, or let a layout (`setLayout()`) place it. A surface is hosted at most once
      * per host: hosting it again returns the same viewport (moved and resized if you pass
-     * geometry). The first surface hosted gets the focus.
+     * geometry). The first surface hosted gets the focus, and so does one that asked for it with
+     * `focus()` before it was shown.
      *
      * The child's changes show on this surface (and on its host, up to the root): this surface
      * repaints them into its own cells by writing escape sequences to itself, when its cells are
@@ -485,11 +504,23 @@ final class Surface implements \Stringable
      * painted over by the window. Its title (while focused), bell and clipboard requests are
      * passed up the same way.
      *
+     * The surfaces form a tree: the child's `parent()` is now this surface. A surface shown on
+     * several hosts at once (a mirror) belongs to the one that hosted it last.
+     *
      * @throws \InvalidArgumentException when $child is this surface or hosts it
      */
     public function host(Surface $child, ?int $x = null, ?int $y = null, ?int $width = null, ?int $height = null): Viewport
     {
-        return $this->hosting()->host($child, $x, $y, $width, $height);
+        $view = $this->hosting()->host($child, $x, $y, $width, $height);
+        if ($child->focusWanted > 0 && $child->viewport() === $view) {
+            // focus() was called before it was shown
+            $stamp = $child->focusWanted;
+            $child->focusWanted = 0;
+            if ($stamp > $this->host->focusStamp) {
+                $child->focusWith($stamp);
+            }
+        }
+        return $view;
     }
 
     /** Stop showing $child; the area it covered is blanked. Nothing happens if it is not hosted here. */
@@ -504,9 +535,16 @@ final class Surface implements \Stringable
         $this->host?->raise($child);
     }
 
-    /** The viewport $child shows through on this surface, or null if it is not hosted here. */
-    public function viewport(Surface $child): ?Viewport
+    /**
+     * The viewport $child shows through on this surface, or null if it is not hosted here.
+     * Without an argument: the viewport this surface shows through on its host (`parent()`), or
+     * null when it is not hosted.
+     */
+    public function viewport(?Surface $child = null): ?Viewport
     {
+        if ($child === null) {
+            return $this->views === [] ? null : $this->views[\count($this->views) - 1];
+        }
         return $this->host?->find($child);
     }
 
@@ -518,6 +556,43 @@ final class Surface implements \Stringable
     public function viewports(): array
     {
         return $this->host?->viewports ?? [];
+    }
+
+    /** The surface that hosts this one, or null for a root (or a surface not shown anywhere). */
+    public function parent(): ?Surface
+    {
+        return $this->viewport()?->host();
+    }
+
+    /** The root of the tree this surface is in: the last `parent()` up, or this surface itself. */
+    public function root(): Surface
+    {
+        $s = $this;
+        while (($p = $s->parent()) !== null) {
+            $s = $p;
+        }
+        return $s;
+    }
+
+    /**
+     * Where this surface shows on its root: the rectangle of root cells its visible part covers
+     * (its window, clipped by every window it is in on the way up; empty when it is scrolled or
+     * moved out of view). For a root, the whole surface. Directional focus (`focusToward()`)
+     * uses it; use it to place a pop-up next to a window or to map root coordinates.
+     */
+    public function area(): Rect
+    {
+        $rect = new Rect(0, 0, $this->cols(), $this->rows());
+        $s = $this;
+        while (($v = $s->viewport()) !== null) {
+            $b = $v->hasBorder() ? 1 : 0;
+            $inner = new Rect($v->x() + $b, $v->y() + $b, $v->innerWidth(), $v->innerHeight());
+            $rect = (new Rect($inner->x + $rect->x - $v->left(), $inner->y + $rect->y - $v->top(), $rect->width, $rect->height))
+                ->intersect($inner);
+            $s = $v->host();
+            $rect = $rect->intersect(new Rect(0, 0, $s->cols(), $s->rows()));
+        }
+        return $rect;
     }
 
     /**
@@ -538,20 +613,84 @@ final class Surface implements \Stringable
     }
 
     /**
-     * Give the focus to the hosted surface $child (keys and pastes go to it), or take it back to
-     * this surface itself with null. The surface losing the focus and the one gaining it receive
-     * a `Focus` event (a program that enabled focus reporting reads `ESC [O` / `ESC [I`). The
-     * focus path runs from the root down through each host's focused surface; to focus a surface
-     * deeper down, focus each level, or use `focusNext()`.
-     *
-     * @throws \InvalidArgumentException when $child is not hosted here
+     * @internal For layouts: the surface that shows $layout, nested as the item numbered $index
+     * of the layout of this surface. The same surface for the same index on every arrange.
      */
-    public function focus(?Surface $child): void
+    public function nestedSurface(int $index, Layout $layout): Surface
     {
-        if ($child === null && $this->host === null) {
-            return;
+        $surface = $this->hosting()->nested($index);
+        if ($surface->layout() !== $layout) {
+            $surface->setLayout($layout);
         }
-        $this->hosting()->setFocus($child);
+        return $surface;
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Focus
+
+    /**
+     * Give the focus to this surface: every host from the root down to it focuses the way to it,
+     * so keys and pastes come here (or, when this surface hosts windows, go on to the one of them
+     * it focuses). The surfaces losing the focus and those gaining it receive a `Focus` event (a
+     * program that enabled focus reporting reads `ESC [O` / `ESC [I`).
+     *
+     * Works at any depth and through any hosts, components or not. Called on a surface that is
+     * not shown yet (a window a layout is about to place), it takes effect when it is hosted.
+     */
+    public function focus(): void
+    {
+        $this->focusWith(++self::$focusClock);
+    }
+
+    /**
+     * Focus this surface (as `focus()`) and keep the keys here: its own windows lose the focus,
+     * so keys and pastes go to this surface's producer and input listeners. For a program with
+     * a window over it (a pop-up on a pane) when the program, not the pop-up, should get the keys.
+     */
+    public function takeFocus(): void
+    {
+        $this->focus();
+        $this->host?->setFocus(null, self::$focusClock);
+    }
+
+    /** @internal Focus this surface for the focus request numbered $stamp (see `focus()`). */
+    public function focusWith(int $stamp): void
+    {
+        // the levels from the top down: [host, the surface on the way here]
+        $chain = [];
+        $top = $this;
+        while (($v = $top->viewport()) !== null) {
+            array_unshift($chain, [$v->host(), $top]);
+            $top = $v->host();
+        }
+        // not shown yet (or shown on a host that is not): applied when it is hosted
+        $top->focusWanted = $stamp;
+        $changed = null;
+        foreach ($chain as [$host, $child]) {
+            if ($changed === null && $host->focused() !== $child) {
+                $changed = [$host->focused(), $child];
+            }
+            $host->hosting()->setFocus($child, $stamp, false);
+        }
+        if ($changed !== null) {
+            // the branch that left the focus path and the one that joined it are told, once:
+            // the event travels down each branch's own focus path
+            $changed[0]?->dispatch(new Focus(false));
+            $changed[1]->dispatch(new Focus(true));
+        }
+    }
+
+    /** True if keys go to this surface or through it: it is on the focus path from its root. */
+    public function hasFocus(): bool
+    {
+        $s = $this;
+        while (($v = $s->viewport()) !== null) {
+            if (!$v->isFocused()) {
+                return false;
+            }
+            $s = $v->host();
+        }
+        return true;
     }
 
     /** The hosted surface that has this surface's focus, or null when this surface keeps it. */
@@ -569,6 +708,23 @@ final class Surface implements \Stringable
     public function focusNext(bool $backwards = false): bool
     {
         return $this->host?->focusNext($backwards) ?? false;
+    }
+
+    /**
+     * Move the focus to the window next to the focused one in $direction (`'left'`, `'right'`,
+     * `'up'` or `'down'`), by where the windows below this surface show on the screen (`area()`):
+     * the nearest one on that side, preferring one that lies alongside the focused window. Bind
+     * it to keys (Alt-arrows, or a prefix key and the arrows, as in tmux). Returns false when
+     * there is no window in that direction.
+     *
+     * @throws \InvalidArgumentException for another direction
+     */
+    public function focusToward(string $direction): bool
+    {
+        if (!\in_array($direction, ['left', 'right', 'up', 'down'], true)) {
+            throw new \InvalidArgumentException("Unknown direction '$direction'");
+        }
+        return $this->host?->focusToward($direction) ?? false;
     }
 
     /** Whether pressing a mouse button on a hosted surface focuses it (off by default). */
@@ -615,6 +771,15 @@ final class Surface implements \Stringable
             return new Cursor(0, 0, false, $c->shape, $c->blinking);
         }
         return new Cursor($at[0], $at[1], $c->visible, $c->shape, $c->blinking);
+    }
+
+    /** @internal Hosts tell a surface which viewports show it. */
+    public function shownThrough(Viewport $view, bool $shown): void
+    {
+        $this->views = array_values(array_filter($this->views, fn(Viewport $v) => $v !== $view));
+        if ($shown) {
+            $this->views[] = $view;
+        }
     }
 
     private function hosting(): Host
