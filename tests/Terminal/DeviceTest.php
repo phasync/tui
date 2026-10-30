@@ -82,6 +82,10 @@ it('shows exactly what the root holds: the library\'s output read back by its ow
             }
         }
         expectSameScreen($terminal, $root);
+        // the byte stream alone, written into a fresh Surface, gives the same cells
+        $fresh = new Surface(30, 8, 0);
+        $fresh->write($terminal->output());
+        expect($fresh->dump())->toBe($root->dump());
     });
 });
 
