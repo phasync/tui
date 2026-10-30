@@ -4,6 +4,7 @@ namespace phasync\Tui\Surface;
 
 use phasync\Tui\Color;
 use phasync\Tui\Style;
+use phasync\Tui\Text;
 
 /**
  * @internal The terminal state machine behind a Surface: the cells, cursor, modes and scrollback,
@@ -187,14 +188,10 @@ final class Emulator
             if ($i === 0 && $this->extendsLast($g)) {
                 continue;
             }
-            $cp = mb_ord($g, 'UTF-8');
-            $w = Width::of($cp);
+            $w = Text::clusterWidth($g);
             if ($w === 0) {
                 // a cluster of only combining characters with nothing to attach to
                 continue;
-            }
-            if ($w === 1 && str_contains($g, "\u{FE0F}") && Width::isEmoji($cp)) {
-                $w = 2;
             }
             $this->put($g, $w);
         }
@@ -605,10 +602,7 @@ final class Emulator
                 if ($this->lastChar !== null) {
                     $count = min($n, $this->cols * $this->rows);
                     $ch = $this->lastChar;
-                    $w = Width::of(mb_ord($ch, 'UTF-8'));
-                    if ($w === 1 && str_contains($ch, "\u{FE0F}") && Width::isEmoji(mb_ord($ch, 'UTF-8'))) {
-                        $w = 2;
-                    }
+                    $w = Text::clusterWidth($ch);
                     for ($i = 0; $i < $count; $i++) {
                         $this->put($ch, max(1, $w));
                     }

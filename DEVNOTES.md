@@ -9,7 +9,7 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
 
 - [x] Surface, VT parser (charm/parsing grammar), Ansi, tests incl. tmux reference + recorded programs
 - [x] Pty, Surface::run() coroutine producer (echo capture via ext-phasync sapi())
-- [ ] Viewport
+- [x] Viewport (+ Text width utility)
 - [ ] Screen + FakeTerminal + Tty + input decoder + key/mouse encoding
 - [ ] Layout (Split, Stack, focus)
 - [ ] Component + built-ins (Terminal, Log, TextInput, StatusBar, Box)
@@ -43,7 +43,7 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
 - xterm vs tmux differences found by the reference tests (Surface follows xterm): BS with
   wrap pending moves to cols-2; HPR/VPR exist; tmux capture shows raw ACS chars.
 - Not implemented (on purpose, rare): left/right margins (DECSLRM), double-width lines,
-  reverse wrap, 132-column mode, OSC 4/10/11 colour queries (no reply), DECRQSS.
+  reverse wrap, 132-column mode, OSC 4 palette queries (no reply), DECRQSS.
 - Speed: ~5 MB/s plain text, ~1.5-2 MB/s heavily coloured (PHP 8.5, no JIT). The ASCII fast path
   stores a row's share with array_splice.
 

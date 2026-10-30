@@ -420,6 +420,18 @@ final class Surface implements \Stringable
         return \function_exists('phasync\ext\sapi');
     }
 
+    /**
+     * @internal The cells of row $y as parallel arrays of graphemes ('' for a continuation) and
+     * styles, for renderers in this library (Viewport). Not part of the public API.
+     *
+     * @return array{list<string>, list<Style>}
+     */
+    public function rowData(int $y): array
+    {
+        $line = $this->row($y);
+        return [$line->chars, $line->styles];
+    }
+
     private function row(int $y): Line
     {
         $vt = $this->vt;
