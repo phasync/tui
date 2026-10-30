@@ -22,7 +22,6 @@ use phasync\Tui\Key;
 use phasync\Tui\Layout;
 use phasync\Tui\Split;
 use phasync\Tui\Style;
-use phasync\Tui\Surface;
 use phasync\Tui\Text;
 use phasync\Tui\Tty;
 
@@ -83,18 +82,8 @@ final class Graph extends Component
 
 final class Dashboard extends Component
 {
-    private Surface $graphs;
     private ?Log $events = null;
     private int $samples = 0;
-
-    public function __construct(private readonly Tty $tty)
-    {
-    }
-
-    protected function mount(): void
-    {
-        $this->graphs = new Surface();
-    }
 
     protected function render(): Layout
     {
@@ -111,11 +100,11 @@ final class Dashboard extends Component
             $this->samples++;
             return $walk = max(0, min(100, $walk + mt_rand(-80, 80) / 10));
         }, 100, 'pts', 0.1));
-        $events = $box('events', 'events', fn() => new Log());
+        $events = $box('events', 'events', fn() => new Log(wordWrap: true));
         $this->events = $events->content();
         $header = $this->child('header', fn() => new StatusBar(' dashboard', 'q: quit '));
-        $this->graphs->setLayout(Split::horizontal()->add($load->surface)->add($memory->surface)->add($random->surface));
-        return Split::vertical()->add($header->surface, 1)->add($this->graphs, '60%')->add($events->surface);
+        $graphs = Split::horizontal()->add($load->surface)->add($memory->surface)->add($random->surface);
+        return Split::vertical()->add($header->surface, 1)->add($graphs, '60%')->add($events->surface);
     }
 
     protected function run(): void
@@ -128,7 +117,7 @@ final class Dashboard extends Component
     protected function onKey(Key $key): bool
     {
         if ($key->is('q') || $key->is('ctrl+c')) {
-            $this->tty->detach();
+            $this->dispose();       // quit: the terminal is given back
             return true;
         }
         return false;
@@ -140,9 +129,4 @@ if (!$tty->isTerminal()) {
     fwrite(STDERR, "dashboard needs a terminal\n");
     exit(1);
 }
-fiber\run(function () use ($tty) {
-    $app = (new Dashboard($tty))->start();
-    $tty->attach($app->surface);
-    $tty->wait();
-    $app->dispose();
-});
+fiber\run(fn() => (new Dashboard())->start($tty));

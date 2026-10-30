@@ -47,6 +47,21 @@ it('runs split-shells: two shells, switching, quitting', function () {
     });
 });
 
+it('runs split-shells: arrows move the focus, and it ends when both shells have exited', function () {
+    example('split-shells.php', [], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor(fn() => substr_count($t->text(), '$') >= 2, 10))->toBeTrue();
+        $t->press('ctrl+b', 'right');
+        $t->type("echo on-the-right\n");
+        expect($t->waitFor('on-the-right'))->toBeTrue();
+        $right = implode("\n", array_map(fn($l) => mb_substr($l, 50), explode("\n", $t->text())));
+        expect($right)->toContain('on-the-right');
+        $t->type("exit\n");
+        $t->press('ctrl+b', 'left');
+        $t->type("exit\n");
+        expect($app->pty()->wait(5))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();
+    });
+});
+
 it('runs host.php with a command and closes with it', function () {
     example('host.php', ['sh', '-c', "printf '\\033]2;the title\\007hosted \\033[31mred\\033[0m\\n'; read x"], function (FakeTerminal $t, Terminal $app) {
         expect($t->waitFor('hosted red', 10))->toBeTrue()

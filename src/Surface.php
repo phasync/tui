@@ -727,10 +727,20 @@ final class Surface implements \Stringable
         return $this->host?->focusToward($direction) ?? false;
     }
 
-    /** Whether pressing a mouse button on a hosted surface focuses it (off by default). */
+    /**
+     * Whether pressing a mouse button on a window focuses it: on the windows of this surface and
+     * of every surface below it that has not been set otherwise (off by default). Set it on the
+     * root to have click-to-focus everywhere, nested layouts included.
+     */
     public function setFocusOnClick(bool $on): void
     {
         $this->hosting()->clickFocus = $on;
+    }
+
+    /** @internal True if a press on a window of this surface focuses it (set here or inherited). */
+    public function focusesOnClick(): bool
+    {
+        return $this->host?->clickFocus ?? $this->parent()?->focusesOnClick() ?? false;
     }
 
     /**

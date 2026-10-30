@@ -28,7 +28,8 @@ final class Host
     /** A hosted surface changed (or a viewport did) since the last compose. */
     public bool $dirty = false;
     public ?Layout $layout = null;
-    public bool $clickFocus = false;
+    /** A press on a window focuses it; null: as the host's host says. */
+    public ?bool $clickFocus = null;
     /** @var list<Surface> the surfaces made for layouts nested in this host's layout, in order */
     private array $nested = [];
     /** The number of the focus request that set the focus (0: the default focus). */
@@ -496,8 +497,8 @@ final class Host
         if ($view === null) {
             return false;
         }
-        if ($m->action === Mouse::PRESS && $this->clickFocus && $this->focus !== $view) {
-            $this->setFocus($view->source);
+        if ($m->action === Mouse::PRESS && $this->focus !== $view && ($this->clickFocus ?? $this->surface->focusesOnClick())) {
+            $view->source->focus();
         }
         if ($this->anchor !== null) {
             return $this->select($view, $m);

@@ -130,3 +130,21 @@ it('tells listeners when a surface is closed', function () {
     $s->close();
     expect($closed)->toBe(1);
 });
+
+it('focuses on click through nested layouts when set on the root', function () {
+    $root = new Surface(20, 4);
+    [$a, $b, $c] = [new Surface(), new Surface(), new Surface()];
+    $root->setLayout(Split::horizontal()->add($a)->add(Split::vertical()->add($b)->add($c)));
+    $root->setFocusOnClick(true);
+    $click = function (int $x, int $y) use ($root) {
+        $root->dispatch(new phasync\Tui\Mouse(phasync\Tui\Mouse::PRESS, $x, $y, phasync\Tui\Mouse::LEFT));
+        $root->dispatch(new phasync\Tui\Mouse(phasync\Tui\Mouse::RELEASE, $x, $y, phasync\Tui\Mouse::LEFT));
+    };
+    $click(15, 3);
+    expect($c->hasFocus())->toBeTrue();
+    $click(2, 0);
+    expect($a->hasFocus())->toBeTrue();
+    $c->parent()->setFocusOnClick(false);
+    $click(15, 0);
+    expect($b->hasFocus())->toBeFalse()->and($c->parent()->hasFocus())->toBeTrue();
+});

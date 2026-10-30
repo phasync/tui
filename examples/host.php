@@ -29,13 +29,13 @@ final class Host extends Component
     private bool $prefix = false;
 
     /** @param list<string> $command */
-    public function __construct(private readonly Tty $tty, private readonly array $command)
+    public function __construct(private readonly array $command)
     {
     }
 
     protected function render(): Layout
     {
-        $program = $this->child('program', fn() => new Terminal($this->command, onExit: fn() => $this->tty->detach()));
+        $program = $this->child('program', fn() => new Terminal($this->command, onExit: fn() => $this->dispose()));
         $status = $this->child('status', fn() => new StatusBar());
         $title = $program->surface->title();
         $status->set(' ' . implode(' ', $this->command) . ($title !== '' ? " — $title" : ''), $this->prefix ? '[prefix] q: quit  Ctrl-B: send Ctrl-B ' : 'Ctrl-B q: quit ');
@@ -58,7 +58,7 @@ final class Host extends Component
         } else {
             $this->prefix = false;
             if ($key->is('q')) {
-                $this->tty->detach();
+                $this->dispose();       // quit: the program is hung up, the terminal given back
             } elseif ($key->is('ctrl+b')) {
                 $this->surface->focused()?->dispatch($key);
             }
@@ -74,9 +74,4 @@ if (!$tty->isTerminal()) {
     fwrite(STDERR, "host.php needs a terminal\n");
     exit(1);
 }
-fiber\run(function () use ($tty, $command) {
-    $app = (new Host($tty, $command))->start();
-    $tty->attach($app->surface);
-    $tty->wait();
-    $app->dispose();
-});
+fiber\run(fn() => (new Host($command))->start($tty));
