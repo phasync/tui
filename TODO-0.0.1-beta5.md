@@ -18,10 +18,10 @@ rebuilds random layouts around a focused leaf and types after each.
 
 `fiber-interop/api` 0.3.1 adds `fiber\current()` (the handle `go()` returned for the running
 task; `await(current())` throws) and makes `fiber\Deferred` public (`resolve()`, `reject()`,
-`isSettled()`). Require `fiber-interop/api ^0.3.1`. If a `fiber-interop/phasync` newer than 0.4.0
-is on Packagist, require it too (it adds the adapter's `current()` for the stretch before a
-coroutine's first suspension, and lets phasync 2.0.7 install); otherwise keep 0.4.0 and note the
-limitation in DEVNOTES. Then `dispose()` waits for the component's coroutines *except the current
+`isSettled()`). Require `fiber-interop/api ^0.3.1` and `fiber-interop/phasync ^0.4.1` (the adapter's
+`current()` covers the stretch before a coroutine's first suspension, and its widened constraint
+lets phasync 2.0.7 install: until now Composer silently resolved phasync 2.0.4; after
+`composer update`, check `composer show phasync/phasync` says 2.0.7 and run the suite on it). Then `dispose()` waits for the component's coroutines *except the current
 one* (`$handle === fiber\current()`), with the timeout, so `unmount()` has run when `dispose()`
 returns in every case but the self-dispose, which is documented. Use `resolve()`/`reject()`
 instead of `settle()`. Keep the beta4 behaviour as the fallback only where `current()` is null.
