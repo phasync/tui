@@ -211,6 +211,72 @@ that contains a child's failure to its rectangle. Built-in components, minimal b
 `TextInput` (single line with editing keys and cursor), `StatusBar`, `Box` (border + title around
 a child). More widgets belong to applications or later versions.
 
+## 8. The components layer (phase 2, from 0.0.2)
+
+Phase 1 proved the base: a real terminal in every window. Phase 2 builds the layer applications
+are written in. Four decisions, then the widgets.
+
+### 8.1 Declarative rendering on the same ANSI path
+
+`render()` may still draw with `Ansi` (right for a graph), or **return an element tree** of plain
+PHP objects: `Column`/`Row` (the Splits), `Layers` (the Stack), `Box`, `Text`, and every widget
+below is an element. The library lays the tree out into the component's surface tree and paints
+each element **through `write()`**, exactly as any producer; the ANSI-only rule holds. Elements
+are cheap values rebuilt on every render; the library keys them (by position, or an explicit
+`key:`) so that the Surfaces, scroll positions, focus and child components behind them persist
+across renders, as Tether keys children. A child component is placed in the tree as an element
+(`$this->child('log', fn () => new Log())` returned where it goes). No markup parser in this
+phase; the tree is the model a Twig/HTML front-end can target later.
+
+### 8.2 Reactive: state changes re-render, nobody asks
+
+A component is rendered again in the next frame after: an event handler of its ran (key, mouse,
+focus, a child's event); one of its coroutines (`run()`, `go()`) resumed from a wait and returned
+to the scheduler; `$this->set(...)` or an assignment on `$this->state` (a small object the
+component owns, with typed public properties, whose writes mark the component dirty); a child
+emitted an event it listens to; its props changed (`propsChanged()`). Many changes in a tick are
+one render; renders are batched into the frame as today. Computed values are methods; there are
+no signals, observables or dependency tracking. Document the rule in one paragraph, and make
+`requestRender()` the rare explicit call it should be.
+
+### 8.3 A small stylesheet
+
+Elements take a `style:` (or `class:`) and the application a `Stylesheet`: properties `color`,
+`background`, `bold`, `dim`, `italic`, `underline`, `inverse`, `border` (style and colour),
+`padding`, `align`, `width`/`height` constraints where the element allows; selectors by element
+type, `.class`, `#id`, and states `:focused`, `:disabled`, `:selected`, `:hover` (mouse);
+theme variables (`$accent`) and a default theme that looks good on dark and light terminals;
+cascade: stylesheet rules → classes → inline. Not CSS layout; layout is the tree above.
+
+### 8.4 Key bindings as data
+
+A component declares `bindings(): array` (`['ctrl+s' => 'save', 'enter' => 'submit']`) mapping
+to its public methods; the application overrides per component class or instance; the library
+dispatches, and a `Help` element can list the active bindings. Handlers remain possible for
+anything a map can't express.
+
+### 8.5 Widgets, in this order
+
+Each one complete, documented, with its states styled and its keyboard and mouse behaviour the
+one a terminal user expects:
+1. `Editor`: TextInput grown up: multi-line, word wrap, undo/redo, kill ring, selection with
+   shift+arrows and mouse, bracketed paste, a `maxLines`/single-line mode that replaces TextInput.
+2. `Select` (the ListView grown up): header row, sortable columns, filter-as-you-type,
+   multi-select, `onSelect`/`onActivate`, keeps selection across `setItems()`.
+3. `Table`: columns with widths, alignment, truncation, horizontal scrolling of wide tables.
+4. `Dialog`: modal over a `Layers`, title, buttons, returns its result as an awaitable
+   (`$ok = await($this->dialog(new Confirm('Delete?')))`), Escape cancels, focus returns.
+5. `Form`: fields (`Editor`, `Checkbox`, `Radio`, `Select`, `Button`), tab order, validation
+   messages, submit.
+6. `Tabs`, `ProgressBar`, `Spinner` (driven from a coroutine), `Tree` (expand/collapse, lazy
+   children), `ScrollView` (any content larger than its box, both axes).
+7. `Split` separators draggable with the mouse; `Terminal` gets a raw-output tap (`onOutput`).
+8. `Markdown` viewer (headings, lists, code blocks with ANSI highlighting through a pluggable
+   highlighter, links), streaming-friendly: appending text re-renders only the tail.
+
+Also: `Ansi::clearHome()` and the small helpers users kept writing; a clear error when a program
+is started with a `fiber-interop/api` older than required.
+
 ## The benchmark: an advanced program in a window
 
 The library is judged first by hosting a demanding full-screen program in a window, with
