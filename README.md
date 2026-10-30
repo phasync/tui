@@ -173,7 +173,8 @@ the terminal is restored. An exception in the root component does the same and i
 to you, by `start()` or by `fiber\run()`. A `Pty` you start yourself is yours to end.
 
 **Test it headless.** `FakeTerminal` is a terminal device in memory; what it shows must equal
-the root's cells, and input is encoded as a real terminal would.
+the root's cells, and input is encoded as a real terminal would: `type()` for text, `press()`
+for keys by name, `feed()` for raw bytes as a terminal sends them.
 
 ```php
 $app = (new App())->start($terminal = new FakeTerminal(80, 24));

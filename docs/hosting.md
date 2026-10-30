@@ -55,7 +55,7 @@ producer writes under a window is painted over by the window.
 | `viewports(): list<Viewport>` | All windows, bottom first. |
 | `parent(): ?Surface` | The surface hosting this one; null for a root. |
 | `root(): Surface` | The top of the tree (this surface when it is not hosted). |
-| `area(): Rect` | Where this surface shows on the root: the rectangle its visible part covers, clipped by every window on the way up (empty when out of view). |
+| `area(): Rect` | Where this surface shows on the root: the rectangle its visible part covers, clipped by every window on the way up (empty when out of view). The `area` event (`on('area', fn(Rect $a) => ...)`) tells when it changes. |
 | `setLayout(?Layout $layout)`, `layout()` | Let a layout place the windows, now and on every resize (see [layout](layout.md)). |
 | `compose()` | Repaint what changed in hosted surfaces now (normally automatic). |
 | `needsCompose(): bool` | True while a hosted surface changed and the cells have not caught up. |
