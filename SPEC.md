@@ -255,7 +255,7 @@ to its public methods; the application overrides per component class or instance
 dispatches, and a `Help` element can list the active bindings. Handlers remain possible for
 anything a map can't express.
 
-### 8.6 Overlays: anything can float
+### 8.5 Overlays: anything can float
 
 A widget may show a surface on top of everything, outside its own rectangle and its parents'
 clipping: a dropdown's list, autocomplete under an `Editor`, a context menu, a tooltip, a command
@@ -272,7 +272,7 @@ scroll, layout rebuild) and closes when the anchor is no longer shown. `Dialog` 
 `place: 'center'` and `modal: true`; `Select`'s popup and `Editor`'s autocomplete are the first
 non-modal users.
 
-### 8.5 Widgets, in this order
+### 8.6 Widgets, in this order
 
 Each one complete, documented, with its states styled and its keyboard and mouse behaviour the
 one a terminal user expects:
