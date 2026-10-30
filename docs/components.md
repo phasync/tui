@@ -64,20 +64,26 @@ fiber\run(function () {
    first known; every later change of the area is followed by a render (and a change of size
    by `onResize()` first).
 5. `dispose()` ends it: children are disposed first, the `stopped()` awaitable resolves and
-   `sleep()` returns false, so the component's coroutines know they are to end. `dispose()`
-   returns at once, without waiting for them. The end follows: `unmount()` runs when the last
-   of its coroutines has returned and its children have ended (each the same way, so a parent
-   unmounts after its children), or after `$timeout` (one second) at the latest, when a
-   coroutine does not listen. `fiber\run()` returns only when everything has ended. The surface
-   keeps its last content. A component is disposed by its parent (when a render no longer asks
-   for it, or the parent ends), by `dispose()`, or when its surface is closed
-   (`Surface::close()`).
+   `sleep()` returns false, so the component's coroutines know they are to end, and it waits
+   for the end: `unmount()` runs when the last of its coroutines has returned and its children
+   have ended (each the same way, so a parent unmounts after its children), or after `$timeout`
+   (one second) at the latest, when a coroutine does not listen. **When `dispose()` returns,
+   `unmount()` has run** (a dialog closed in a key handler has let go of what it held).
+   `fiber\run()` returns only when everything has ended. The surface keeps its last content. A
+   component is disposed by its parent (when a render neither asks for it nor shows it, or the
+   parent ends), by `dispose()`, or when its surface is closed (`Surface::close()`); in these
+   other cases nothing waits (a render, or detaching the terminal, does not stall while a
+   component winds down), and the end follows the same way. A disposed child is forgotten at
+   once: `child($key)` gives null for it (or, with a factory, a new one).
 
    **Disposing from the component's own coroutine** (`$this->dispose()` in `run()` or a `go()`,
-   quitting the program from a child's coroutine, a `Terminal`'s `$onExit` closing its pane)
-   works the same: `dispose()` returns, the coroutine goes on with `isMounted()` false and
-   `sleep()` returning false, and `unmount()` runs once it has returned. Return soon after; do
-   not wait in it for the component's end (it cannot come while you wait).
+   quitting the program from a child's coroutine, a `Terminal`'s `$onExit` closing its pane):
+   `dispose()` cannot wait for the coroutine it is called from. It signals as above and
+   returns; the coroutine goes on with `isMounted()` false and `sleep()` returning false, and
+   `unmount()` runs once it has returned. Return soon after; do not wait in it for the
+   component's end (it cannot come while you wait). This holds for a coroutine of the component
+   or of any of its descendants; the library knows which coroutine runs from
+   `fiber\current()`.
 
 Coroutines are not cancelled from outside (fiber-interop has no cancellation): write loops as
 `while ($this->sleep(...))`, check `isMounted()`, or race a wait against `stopped()`:
@@ -166,21 +172,30 @@ window; a component not rendered yet gives them to its first child (as a `Box` d
 content). When the focused component is no longer shown, the component focused before it gets
 the focus back.
 
+The focus belongs to the surface, not to the layout objects around it: a `render()` that builds
+new `Stack`s and `Split`s every time, with new plain surfaces in them and the focused
+component's surface added directly with a border and title
+(`->add($this->dialog->surface, 40, 5, title: 'Name')`), keeps the keys on the focused
+component. `hasFocus()` reads the same path the keys take, so it is true exactly when the next
+key reaches the component (or goes through it).
+
 ## Methods
 
 | Method | What it does |
 |---|---|
 | `surface` | The component's surface (readonly; set by `start()`). |
 | `start(Surface\|TerminalDevice\|null $on = null): static` | Mount a root component, on a terminal device, a surface, or a new surface. Throws when already started; rethrows a failure of its first `mount()`/`render()` after disposing what was started. |
-| `dispose(float $timeout = 1.0)` | End the component (see the lifecycle): signals its coroutines and children and returns at once; `unmount()` follows when they have ended, `$timeout` seconds at the latest. For the root, its surface is closed first, which detaches the terminal. Safe to call twice. |
+| `dispose(float $timeout = 1.0)` | End the component (see the lifecycle): signals its coroutines and children and waits until they have ended, `$timeout` seconds at the latest; `unmount()` has run when it returns, except when called from a coroutine of the component or a descendant (it returns at once, and the end follows when that coroutine returns). For the root, its surface is closed first, which detaches the terminal. Safe to call twice. |
 | `isMounted(): bool` | True between start and dispose. |
 | `stopped(): object` | An awaitable that resolves on disposal. |
 | `requestRender()` | Ask for a render (batched). |
 | `focus()` | Give it the focus, and through it to the descendant it focused (see "Focus" above): every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). It takes effect at once, for the very next key, also for a component not shown yet (a dialog created in a key handler, shown by the render that follows). The focus stays with it through every re-render, also one that moves it into a different nested layout; when it is no longer shown, the component focused before it gets the focus back. |
-| `hasFocus(): bool` | True if keys go to it or through it to a descendant, also while it is not shown yet. |
+| `hasFocus(): bool` | True if keys go to it or through it to a descendant, also while it is not shown yet: it follows the path the keys take. False once disposed. |
+| `on(string $event, Closure $listener): Closure` | Listen to an event of the component (the built-ins document theirs: `Log` and `ListView` emit `scroll`); returns a function that removes the listener. See "Showing another component's state". |
 | `parent(): ?Component` | The parent, null for a root. |
 | `error(): ?Throwable` | The exception that ended it, if one did. |
-| `child(string $key, ?Closure $create = null): ?Component` (protected) | The child under `$key`, created with `$create` and started the first time it is asked for. Without `$create`: the child of that key, or null when there is none (`$this->child('dialog')?->dispose()` in a handler). After a render that returned a layout, children it did not ask for (either way) are disposed. |
+| `child(string $key, ?Closure $create = null): ?Component` (protected) | The child under `$key`, created with `$create` and started the first time it is asked for. Without `$create`: the child of that key, or null when there is none or it was disposed (`$this->child('dialog')?->dispose()` in a handler). After a render that returned a layout, children it neither asked for (either way) nor shows are disposed: one whose surface the layout shows is kept, however it got there. `$create` may return a component started already (another's child, given to a container): it is shown here and stays its owner's. |
+| `emit(string $event, mixed ...$data)` (protected) | Call the listeners of `$event` (see `on()`); document the events your component emits. `hasListeners(string $event): bool` tells whether anyone listens, to skip work only a listener needs. |
 | `go(Closure $task)` (protected) | Another coroutine of the component: contained like `run()`; the component's end waits for it. |
 | `sleep(float $seconds): bool` (protected) | Sleep, less if disposed meanwhile; returns `isMounted()`. |
 
@@ -195,6 +210,39 @@ protected function render(): ?Layout
 
 Children need not be direct: a layout can nest layouts (`Split::vertical()->add(Split::horizontal()
 ->add(...))`), or hold a plain surface with a layout of its own; focus goes through either.
+
+**A container given an existing child.** A component made with `child()` can be handed to a
+container such as `Box` (or one of yours that takes a component and calls `child($key, fn() =>
+$this->content)` in its `mount()`). The container shows it and passes keys to it; it stays
+yours: when the box goes, the child stays, with its content.
+
+```php
+$log = $this->child('log', fn() => new Log());
+return Split::vertical()->add($this->child('box', fn() => new Box($log, 'output'))->surface);
+```
+
+## Showing another component's state
+
+A `render()` that reads another component's state (a pane title with the lines a `Log` shows, a
+"12-30 of 200" next to a `ListView`) must run again when that state changes. The built-ins emit
+an event for what others commonly show; listen with `on()` and ask for a render (renders are
+batched, so a burst of events gives one):
+
+```php
+protected function mount(): void
+{
+    $this->log = $this->child('log', fn() => new Log());
+    $this->log->on('scroll', fn() => $this->requestRender());
+}
+
+protected function render(): ?Layout
+{
+    $title = sprintf('lines %d-%d of %d', $this->log->topLine() + 1, $this->log->bottomLine() + 1, count($this->log->lines()));
+    return (new Stack())->add($this->log->surface, title: $title);
+}
+```
+
+Your own components emit events with `emit()`; document which.
 
 ## Errors stay in their rectangle
 
@@ -265,7 +313,7 @@ moment later.)
 | Method | What it does |
 |---|---|
 | `append(string $text)` | Add text; `"\n"` ends a line, text without one continues the last line. Escape sequences style it. |
-| `setLines(array $lines)` | Replace all lines (without `"\n"`), laid out once: the way to filter, re-style, edit or re-sort what is shown. A view scrolled back stays on the line at its top if it is among the new lines, else it follows the end. |
+| `setLines(array $lines)` | Replace all lines (without `"\n"`), laid out once: the way to filter, re-style, edit or re-sort what is shown. A view following the end keeps following. One scrolled back stays on the line at its top: on the same text if it is among the new lines (filtering), else on the same line number (re-styling or editing lines in place; the last line if there are fewer now). |
 | `clear()` | Remove all text. |
 | `lines(): list<string>` | The lines as given (escape sequences included), oldest first; an unfinished last line included. |
 | `setWordWrap(bool $on)`, `wordWrap(): bool` | Wrap between words or at any character; lays out again. |
@@ -284,6 +332,11 @@ $bar->set(sprintf('line %d of %d', $log->topLine() + 1, count($log->lines())));
 
 The mouse wheel scrolls it and a drag selects and copies. A view scrolled back stays on the same
 line when the log is laid out again (a resize, a change of wrapping, `setLines()`).
+
+**Event `scroll`** (with the `Log`): the lines in view (`topLine()`, `bottomLine()`) or
+`isFollowing()` changed: by the wheel, a scroll call, text arriving while it follows the end,
+`setLines()`, a resize. `$log->on('scroll', fn() => $this->requestRender())` keeps a title or
+status line showing them current.
 
 **Filtering.** Keep the full list yourself and give the log what should show; `setLines()` lays it
 out once, and a reader scrolled back keeps their place when that line is still shown:
@@ -328,6 +381,10 @@ click selects a row and a click on the selected row activates it; the wheel scro
 | `items(): array` | Label by key. |
 | `selected(): int\|string\|null`, `selectedLabel(): ?string` | The selected key and label; null when empty. |
 | `select(int\|string $key): bool` | Select it and scroll it into view; false when there is no such key. |
+| `topIndex(): int`, `bottomIndex(): int` | The positions in `items()` (0 the first) of the first and last item in view: "12-30 of 200". |
+
+**Event `scroll`** (with the `ListView`): the items in view changed (the wheel, a selection
+moved out of view, new items, a resize).
 
 ```php
 $list = $this->child('members', fn() => new ListView(
@@ -346,4 +403,6 @@ One row with text on the left and right: `new StatusBar(string $left = '', strin
 
 A border with a title around another component: `new Box(Component $content, string $title =
 '', ?Style $style = null, ?Style $focusStyle = null)`; `content()`, `setTitle()`, `title()`. The
-border is drawn in `$focusStyle` while the content has the focus.
+border is drawn in `$focusStyle` while the content has the focus. The content is a new
+component (the box starts it; it ends with the box) or one you started with `child()` already
+(the box shows it; it stays yours, see "A container given an existing child").

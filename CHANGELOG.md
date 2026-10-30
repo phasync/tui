@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.0.1-beta5 (2026-10-30)
+
+**The focus stays on a dialog however `render()` rebuilds the layouts around it**
+
+- A `render()` that builds new layout objects every time (a new `Stack` holding a new `Split`
+  with a new plain `Surface`) and adds the dialog's surface directly
+  (`->add($this->dialog->surface, 40, 5, title: 'Name')`) no longer loses the dialog: keys
+  typed after the frame that shows it used to stop at the parent component while
+  `$dialog->hasFocus()` said true. The cause: a render disposed every child it had not asked
+  for with `child()`, also one it showed, so the dialog was disposed by the very render that
+  showed it. Now a render keeps every child whose surface its layout shows, however it got
+  there.
+- `Component::hasFocus()` reads the path the keys take (the surfaces' focus, and the child not
+  shown yet that a component passes keys to), so it is true exactly when the next key reaches
+  the component; it is false for a disposed component.
+- A window that was in a nested layout no longer stays hosted, and focused, in a part of the
+  tree that is no longer shown when a render drops that layout together with layouts nested in
+  it (`Surface::hasFocus()` said true for it).
+
+**`dispose()` waits for the end again**
+
+- When `Component::dispose()` returns, the component's coroutines have returned (or the
+  `$timeout` passed) and `unmount()` has run: a dialog closed in a key handler has let go of
+  what it held, a `Terminal` closed this way has ended its program. Called from one of the
+  component's own coroutines, or a descendant's (quitting from a child's `run()`, a
+  `Terminal`'s `$onExit`), it cannot wait for that coroutine: it returns at once as in beta4,
+  and `unmount()` follows when the coroutine returns. That is now found out with
+  `fiber\current()`, also when the coroutine disposes before it first waited.
+- A render that drops a child, a failing child, and detaching the terminal still do not wait.
+- A child that was disposed is forgotten at once: `child($key)` returns null for it (it used to
+  return the dead object until the next render), and `child($key, $create)` makes a new one, so
+  a dialog that closed itself can be opened again.
+- Requires `fiber-interop/api` ^0.3.1 (for `fiber\current()` and the public
+  `fiber\Deferred::resolve()`), and, for the tests, `fiber-interop/phasync` ^0.4.1, with which
+  phasync 2.0.7 installs (Composer had silently kept phasync 2.0.4).
+- `echo` capture in `Surface::run()` works with ext-phasync 2.0.7, whose `sapi()` takes a
+  `write()` method; with it, a coroutine's output went nowhere and `run()` failed with a
+  `ValueError`. An older ext-phasync now counts as absent (`Surface::canCaptureOutput()` false).
+
+**Showing another component's state: component events**
+
+- A component whose `render()` shows another's state (a pane title with the lines a `Log`
+  shows) can now be told when it changes: `Component::on($event, $listener)` listens to a
+  component's events, `emit()` sends them. `Log` emits `scroll` when the lines in view
+  (`topLine()`, `bottomLine()`) or `isFollowing()` change, by the wheel, a scroll call, text
+  arriving while it follows, `setLines()` or a resize; `ListView` emits `scroll` when the
+  items in view change, and tells which with the new `topIndex()` and `bottomIndex()`. The
+  pattern: `$log->on('scroll', fn() => $this->requestRender())`.
+
+**Small things, from use**
+
+- `Log::setLines()` with re-styled lines (every line's escape sequences changed, the text the
+  same) or a line edited in place no longer jumps to the end when the view is scrolled back: it
+  stays on the same text when that is still there, else on the same line number.
+- A component made with `child()` can be given to a `Box`, or to any container that takes a
+  component: `new Box($this->child('log', fn() => new Log()), 'output')` used to fail with
+  "already started". The container shows it and passes keys to it; it stays yours (it keeps its
+  content when the box goes).
+- `FakeTerminal::type()` says it is for text, and refuses control characters other than
+  `"\n"`, `"\r"` and `"\t"`, pointing to `press()` for arrows and function keys and `feed()`
+  for escape sequences: `type("\e[A")` used to arrive as an Escape key and three letters.
+- A window scrolled back now shows the new text when its scrollback is rewritten under the same
+  top row (it kept the old text; seen with `Log::setLines()` while scrolled back).
+- A window with a border that is one cell wide shows its left border and no longer writes a
+  cell past its edge (a PHP warning in the compositor).
+- The acceptance tests (Claude Code, vim/htop/less in panes, split-shells nested) are green.
+
 ## 0.0.1-beta4 (2026-10-30)
 
 **A dialog focused before it is shown keeps the keyboard, down to its text field**

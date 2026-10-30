@@ -141,7 +141,7 @@ call (a bracketed paste may span calls), and a lone ESC at the end is the Escape
 | `waitFor(string\|Closure $condition, float $timeout = 5.0): bool` | Wait until the screen contains the text (or the closure, given the terminal, returns true), drawing as it goes. |
 | `resize(int $cols, int $rows)` | As when the user resizes the window. |
 | `press(Key\|string ...$keys)` | Press keys: `Key` objects or notations (`'ctrl+c'`, `'enter'`, `'a'`). |
-| `type(string $text)` | One key per character; `"\n"` is Enter. |
+| `type(string $text)` | Text: one key per character; `"\n"` is Enter, `"\t"` Tab. For text only: arrows, function keys and modified keys go through `press()`, escape sequences through `feed()`; other control characters are refused (`InvalidArgumentException`). |
 | `paste(string $text)` | A bracketed paste. |
 | `mouse(Mouse $event)`, `click($x, $y, $button = Mouse::LEFT)`, `drag($x1, $y1, $x2, $y2)`, `scroll($x, $y, $clicks)` | Mouse input at terminal coordinates; negative clicks scroll up. |
 | `focus(bool $focused)` | The terminal window gains or loses focus. |
