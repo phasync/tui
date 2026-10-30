@@ -38,6 +38,31 @@
   follows the end. The view stays on that line while text arrives and across resizes.
   `scrollTo()`/`scrollBy()` stay, documented as row-based (for paging by the window's height).
 
+**`dispose()` returns at once, and the component ends after its coroutines**
+
+- `Component::dispose()` no longer waits for the component's coroutines: it tells them to end
+  (`stopped()`, `sleep()` returning false) and returns. `unmount()` runs when the last of them
+  has returned and the children have ended, a parent after its children, and `$timeout`
+  seconds after the dispose at the latest. `fiber\run()` still returns only when everything has
+  ended. Code that disposes its own component from one of its coroutines (quitting from a
+  child's `run()`, a `Terminal`'s `$onExit` closing its pane) goes on with `isMounted()` false,
+  and `unmount()` follows once it has returned: return soon, and do not wait there for the
+  component's end.
+- A key handler that closes a dialog, or a render that drops a child, no longer stalls (keys,
+  frames) while that component's coroutines wind down; it used to block for as long as they
+  took, up to the timeout.
+- The library no longer looks at the call stack (`debug_backtrace()`) to find out which
+  coroutine disposes a component.
+
+**Small things**
+
+- `child($key)` without a factory returns the child of that key, or null when there is none
+  (it used to throw): `$this->child('dialog')?->dispose()` in a key handler. A render that asks
+  for a key this way keeps that child, as one with a factory does.
+- `FakeTerminal::feed()` is documented as the way to send raw bytes as a terminal sends them
+  (escape sequences, SGR mouse, bracketed pastes, focus reports), next to `type()` for text and
+  `press()` for keys: one call is one read followed by a pause.
+
 ## 0.0.1-beta3 (2026-10-30)
 
 **A program starts at the size of its pane**

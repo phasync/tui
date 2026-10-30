@@ -64,10 +64,20 @@ fiber\run(function () {
    first known; every later change of the area is followed by a render (and a change of size
    by `onResize()` first).
 5. `dispose()` ends it: children are disposed first, the `stopped()` awaitable resolves and
-   `sleep()` returns false, disposal waits up to a second for the component's coroutines to
-   return, then `unmount()` runs. The surface keeps its last content. A component is disposed by
-   its parent (when a render no longer asks for it, or the parent ends), by `dispose()`, or when
-   its surface is closed (`Surface::close()`).
+   `sleep()` returns false, so the component's coroutines know they are to end. `dispose()`
+   returns at once, without waiting for them. The end follows: `unmount()` runs when the last
+   of its coroutines has returned and its children have ended (each the same way, so a parent
+   unmounts after its children), or after `$timeout` (one second) at the latest, when a
+   coroutine does not listen. `fiber\run()` returns only when everything has ended. The surface
+   keeps its last content. A component is disposed by its parent (when a render no longer asks
+   for it, or the parent ends), by `dispose()`, or when its surface is closed
+   (`Surface::close()`).
+
+   **Disposing from the component's own coroutine** (`$this->dispose()` in `run()` or a `go()`,
+   quitting the program from a child's coroutine, a `Terminal`'s `$onExit` closing its pane)
+   works the same: `dispose()` returns, the coroutine goes on with `isMounted()` false and
+   `sleep()` returning false, and `unmount()` runs once it has returned. Return soon after; do
+   not wait in it for the component's end (it cannot come while you wait).
 
 Coroutines are not cancelled from outside (fiber-interop has no cancellation): write loops as
 `while ($this->sleep(...))`, check `isMounted()`, or race a wait against `stopped()`:
@@ -104,7 +114,7 @@ and the coroutines of mounted components and your own.
 | `sized(): void` | Once, when the component has its real size, right before the first render: start work that depends on the rectangle here. |
 | `render(): ?Layout` | Draw into `$this->surface` and return null, or return a layout of child components' surfaces. |
 | `run(): void` | The component's coroutine, started after the first render. |
-| `unmount(): void` | Once, after disposal, when the coroutines have ended. |
+| `unmount(): void` | Once, after disposal, when the coroutines have returned and the children have ended. |
 | `onKey(Key $key): bool` | A key reached the surface; return true if handled. |
 | `onMouse(Mouse $mouse): bool` | A mouse event, in the component's coordinates; true if handled. |
 | `onPaste(Paste $paste): bool` | Text pasted while the component is on the focus path; true if handled. |
@@ -162,7 +172,7 @@ the focus back.
 |---|---|
 | `surface` | The component's surface (readonly; set by `start()`). |
 | `start(Surface\|TerminalDevice\|null $on = null): static` | Mount a root component, on a terminal device, a surface, or a new surface. Throws when already started; rethrows a failure of its first `mount()`/`render()` after disposing what was started. |
-| `dispose(float $timeout = 1.0)` | End the component (see the lifecycle); for the root, its surface is closed first, which detaches the terminal. Safe to call twice. |
+| `dispose(float $timeout = 1.0)` | End the component (see the lifecycle): signals its coroutines and children and returns at once; `unmount()` follows when they have ended, `$timeout` seconds at the latest. For the root, its surface is closed first, which detaches the terminal. Safe to call twice. |
 | `isMounted(): bool` | True between start and dispose. |
 | `stopped(): object` | An awaitable that resolves on disposal. |
 | `requestRender()` | Ask for a render (batched). |
@@ -170,8 +180,8 @@ the focus back.
 | `hasFocus(): bool` | True if keys go to it or through it to a descendant, also while it is not shown yet. |
 | `parent(): ?Component` | The parent, null for a root. |
 | `error(): ?Throwable` | The exception that ended it, if one did. |
-| `child(string $key, Closure $create): Component` (protected) | The child under `$key`, created with `$create` and started the first time it is asked for. After a render that returned a layout, children it did not ask for are disposed. |
-| `go(Closure $task)` (protected) | Another coroutine of the component: contained like `run()`, waited for on disposal. |
+| `child(string $key, ?Closure $create = null): ?Component` (protected) | The child under `$key`, created with `$create` and started the first time it is asked for. Without `$create`: the child of that key, or null when there is none (`$this->child('dialog')?->dispose()` in a handler). After a render that returned a layout, children it did not ask for (either way) are disposed. |
+| `go(Closure $task)` (protected) | Another coroutine of the component: contained like `run()`; the component's end waits for it. |
 | `sleep(float $seconds): bool` (protected) | Sleep, less if disposed meanwhile; returns `isMounted()`. |
 
 ```php

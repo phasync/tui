@@ -116,9 +116,21 @@ fiber\run(function () {
 });
 ```
 
-Input calls deliver at once: when `press()` returns, the root has dispatched the key. Input is
-encoded by the fake terminal's surface for the modes the device enabled, as a real xterm-class
-terminal would.
+Input calls deliver at once: when `press()` returns, the root has dispatched the key. There are
+three ways to send keys and text:
+
+```php
+$terminal->type("ls -l\n");                 // text, one key per character ("\n" is Enter)
+$terminal->press('ctrl+c', 'up', 'f5');     // keys by name
+$terminal->feed("\e[1;5A\e[<0;3;2M");        // raw bytes, exactly as a terminal sends them
+```
+
+`type()` and `press()` are encoded by the fake terminal's surface for the modes the device
+enabled (bracketed paste, SGR mouse, the kitty keyboard protocol), as a real xterm-class
+terminal would, and then decoded like real input. `feed()` skips the encoding: the bytes go to
+the decoder as they are, for sequences the other calls cannot express or bytes captured from a
+real terminal. Each `feed()` is one read followed by a pause: a sequence must be whole within the
+call (a bracketed paste may span calls), and a lone ESC at the end is the Escape key.
 
 | Method | What it does |
 |---|---|
@@ -133,4 +145,4 @@ terminal would.
 | `paste(string $text)` | A bracketed paste. |
 | `mouse(Mouse $event)`, `click($x, $y, $button = Mouse::LEFT)`, `drag($x1, $y1, $x2, $y2)`, `scroll($x, $y, $clicks)` | Mouse input at terminal coordinates; negative clicks scroll up. |
 | `focus(bool $focused)` | The terminal window gains or loses focus. |
-| `feed(string $bytes)` | Raw bytes, as if the terminal sent them. |
+| `feed(string $bytes)` | Raw bytes as the terminal sends them (UTF-8 text, CSI/SS3/kitty keys, SGR mouse, bracketed paste, focus reports); one call is one read followed by a pause. |

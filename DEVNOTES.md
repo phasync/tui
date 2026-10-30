@@ -3,6 +3,47 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.1-beta4; TODO-0.0.1-beta4.md)
+
+All items of TODO-0.0.1-beta4.md done, in CHANGELOG.md; tests green with and without ext-phasync.
+
+- [x] 1. One focus model before and after a component is shown (tests/Component/FocusModelTest.php)
+- [x] 2. `area` event on Surface; a component renders again when its area changed (AreaTest.php)
+- [x] 3. Log::scrollToLine(), topLine(), bottomLine(); scrollTo()/scrollBy() documented as rows
+- [x] 4. child($key) lookup; FakeTerminal::feed() documented + tested; dispose() without
+      debug_backtrace (DisposeTest.php); acceptance tests green (Benchmark/)
+
+## Design decisions (0.0.1-beta4)
+
+- **Focus, one rule for shown and unshown components.** The Surface tree's rule (a host focuses
+  the window whose subtree holds the latest request, unless its own takeFocus() is later) is
+  applied by Component to children not shown yet: `unshownFocus()` picks the unshown child whose
+  subtree (`focusRank()`: its surface's `latestFocus()` plus its own unshown children) is later
+  than everything the surface shows (`Surface::latestFocusBelow()`, keepStamp included). A
+  component's key/paste listener (after its onKey) passes the event to that child's surface,
+  where the same happens again, so keys reach the leaf the request names. `focus()` still stamps
+  the nearest shown ancestor first, so the keys arrive there on the surface path. No per-request
+  state (beta3's `focusPending` + `isLatestFocus()` are gone): when the render shows the
+  component, the same stamps give the same path. Fallback: a component not rendered yet with
+  nothing focused below passes keys to its first child (= the first window, as a host does);
+  Box adopts its content in mount() for that. `Component::hasFocus()` walks up the component
+  tree: on the surface path, no ancestor passing keys to another unshown child, and the top
+  (an unshown ancestor) is its parent's `unshownFocus()`.
+- **Area event.** `Surface::geometryChanged()` (static, @internal) is called by Host on
+  host/unhost/moved/changed (border, scroll, title) and by Surface::resize(); the check runs at
+  the end of the outermost `changeTree()` (or at once outside one): every surface with an `area`
+  listener (static WeakMap) compares `area()` with the one told last. Re-entrant changes by
+  listeners loop until quiet. Component listens and requestRender()s (batched). Cost: one area()
+  walk per listening surface per tree change.
+- **dispose() does not wait.** It settles stopped, wakes sleep(), disposes children (which
+  return at once too), and the end (`end()`: unmount, then settle `ended`) runs when the
+  component's coroutines are done (`idle` Deferred, settled by the last go() wrapper's finally)
+  and every child's `ended` resolved: directly when nothing is pending, else in a fiber\go()
+  that `await_all([idle, ...children ended], $timeout)`. Task handles are never awaited (that
+  would mark a failing root task as awaited and keep fiber\run() from rethrowing it), stored or
+  compared; only Deferreds of the library are awaited. So no self-wait is possible and no
+  current-task identity is needed.
+
 ## Status (0.0.1-beta3; TODO-0.0.1-beta3.md)
 
 All items of TODO-0.0.1-beta3.md done, in CHANGELOG.md; tests green with and without ext-phasync.
@@ -245,13 +286,11 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
 - Event hooks are surface input listeners registered at `start()`, so they run on the way
   down (capture order): the root component sees keys before its focused child.
 - `requestRender()` = one `go()` that `sleep(0)`s then renders: batching without a frame clock.
-- Disposal waits (await_all, 1 s) for the component's go() tasks except one that is calling
-  dispose() itself (beta3, spec 2995447: no `\Fiber` API, go() handles opaque): every task runs
-  in `Component::runTask($entry, ...)`, and dispose() finds the caller's entry among the
-  `runTask` frames of `debug_backtrace()`; plain PHP, no assumption about what a task is.
+- Disposal does not wait (beta4): unmount() follows when the component's go() tasks have
+  returned and its children have ended, at most $timeout later (see beta4 decisions).
 - Error boundary: a failing child unhosts its windows, draws the error (again on resize) and is
   disposed in a coroutine; the root rethrows (so `Tty` restores the terminal on the way out).
-- `focus()` before the parent shows the child is remembered and applied after setLayout.
+- `focus()` before the parent shows the child: see beta4 (one focus model).
 - Terminal: run() waits for the pty; a second go() sleeps until disposal, then SIGHUP, 0.5 s,
   SIGKILL. Log: its own content surface hosted with a Stack, so it scrolls by itself.
 
@@ -277,12 +316,15 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
 
 ## fiber\ notes
 
-- **Finding (beta3):** fiber-interop/api has no way to ask "which task am I" (a current-task
-  handle comparable with what go() returned). The library needs it in one place, a component
-  disposing itself from one of its own coroutines (it must not wait for itself). Done without it
-  by finding the component's own task wrapper on the call stack (see Components). The smallest
-  addition that would do: `fiber\current(): ?object` returning the handle go() gave for the
-  running task, comparable by identity.
+- **Finding (beta3, still open):** fiber-interop/api has no way to ask "which task am I" (a
+  current-task handle comparable with what go() returned). A component disposing itself from
+  one of its own coroutines must not wait for that coroutine. beta3 found the component's task
+  wrapper on the call stack (debug_backtrace), which is going beneath the API like
+  Fiber::getCurrent(); beta4 removed it: dispose() never waits, the component's end waits for
+  its coroutines in a coroutine of its own (see beta4 decisions). The cost: dispose() can no
+  longer promise that unmount() has run when it returns. The smallest addition that would let
+  it: `fiber\current(): ?object` returning the handle go() gave for the running task,
+  comparable by identity.
 
 - `fiber\Deferred` is marked `@internal` in fiber-interop/api 0.3.0 but SPEC.md names it; used
   only inside `Internal\Signal`. Any then-able would do, so replacing it is a 10-line change.

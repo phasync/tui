@@ -39,10 +39,11 @@ use function fiber\await_all;
  * render has placed it in a layout, so a child no render shows waits for the render that does.
  * The rule for component authors: **`mount()` sets up props and state; work that depends on the
  * rectangle (starting a program that reads its terminal size once, laying out text for the
- * width) starts in `sized()`**. `dispose()` ends it: children are disposed first,
- * the `stopped()` awaitable resolves and `sleep()` returns false so coroutines can end, disposal
- * waits up to a second for them, then `unmount()` runs. Coroutines are not cancelled from
- * outside: write loops as `while ($this->sleep(...))` or check `isMounted()`.
+ * width) starts in `sized()`**. `dispose()` ends it: children are disposed first, the
+ * `stopped()` awaitable resolves and `sleep()` returns false so coroutines can end; `dispose()`
+ * returns at once, and `unmount()` runs when the coroutines have returned and the children have
+ * ended (a second at the latest). Coroutines are not cancelled from outside: write loops as
+ * `while ($this->sleep(...))` or check `isMounted()`.
  *
  * **Ending.** A component is disposed by its parent, by `dispose()`, or when its surface is
  * closed (`Surface::close()`): detaching the terminal device closes the root, so quitting (a key
@@ -91,9 +92,14 @@ abstract class Component
     private bool $rendered = false;
     private bool $renderPending = false;
     private ?Deferred $stopped = null;
+    /** Resolves when the component has ended: disposed, coroutines and children ended, unmounted. */
+    private ?Deferred $ended = null;
+    /** After disposal: resolves when the last coroutine has returned. */
+    private ?Deferred $idle = null;
     private ?Signal $wake = null;
-    /** @var array<int, \stdClass> running coroutines: {awaitable, done} */
+    /** @var array<int, true> running coroutines, by number */
     private array $tasks = [];
+    private int $taskCount = 0;
     private ?\Throwable $error = null;
     /** @var list<\Closure> */
     private array $offs = [];
@@ -201,6 +207,7 @@ abstract class Component
         $this->surface = $surface;
         $this->mounted = true;
         $this->stopped = new Deferred();
+        $this->ended = new Deferred();
         $this->wake = new Signal();
         $s = $this->surface;
         $this->offs = [
@@ -243,10 +250,18 @@ abstract class Component
 
     /**
      * End the component: dispose its children (a `Terminal` hangs its program up), resolve
-     * `stopped()`, wake `sleep()`, wait up to $timeout seconds for its coroutines to return,
-     * then call `unmount()`. Its surface keeps its last content. For a root, the surface is
-     * closed first, which detaches a terminal device attached to it. Safe to call twice.
-     * Children are disposed by their parent.
+     * `stopped()` and wake `sleep()`, so its coroutines know they are to end. It returns at once
+     * and does not wait for them; the component's end follows: `unmount()` runs when its last
+     * coroutine has returned and its children have ended (each the same way), or after $timeout
+     * seconds at the latest, if a coroutine does not listen. For a root, the surface is closed
+     * first, which detaches a terminal device attached to it, and `fiber\run()` returns only
+     * after the end. The surface keeps its last content. Safe to call twice; children are
+     * disposed by their parent.
+     *
+     * A coroutine of the component may dispose it (`$this->dispose()` in `run()`, in a `go()`, or
+     * in a Terminal's `$onExit`): dispose() returns, the coroutine goes on with `isMounted()`
+     * false and `sleep()` returning false, and `unmount()` runs once it has returned. So return
+     * soon after, and do not wait in it for the component's end.
      */
     public function dispose(float $timeout = 1.0): void
     {
@@ -262,36 +277,44 @@ abstract class Component
             // the program ends: give the terminal back at once
             $this->surface->close();
         }
-        foreach (array_reverse($this->children) as $child) {
+        $children = array_reverse($this->children);
+        foreach ($children as $child) {
             $child->dispose($timeout);
         }
         $this->children = [];
         $this->stopped->settle(true, null);
         $this->wake->notify();
-        // wait for the coroutines, except one of them calling dispose() (it cannot wait for
-        // itself): that one has its runTask() call below this one on the call stack
-        $calling = [];
-        foreach (debug_backtrace(\DEBUG_BACKTRACE_PROVIDE_OBJECT) as $frame) {
-            if ($frame['function'] === 'runTask' && ($frame['object'] ?? null) === $this) {
-                $calling[spl_object_id($frame['args'][0])] = true;
-            }
+        // the end: once the coroutines (told to stop just now) and the children have ended
+        $waits = [];
+        if ($this->tasks !== []) {
+            $this->idle = new Deferred();
+            $waits[] = $this->idle;
         }
-        $others = [];
-        foreach ($this->tasks as $id => $entry) {
-            if (!isset($calling[$id])) {
-                $others[] = $entry->awaitable;
-            }
+        foreach ($children as $child) {
+            $waits[] = $child->ended;
         }
-        if ($others !== []) {
+        if ($waits === []) {
+            $this->end();
+            return;
+        }
+        \fiber\go(function () use ($waits, $timeout): void {
             try {
-                await_all($others, $timeout);
+                await_all($waits, $timeout);
             } catch (TimeoutException) {
                 // a coroutine that does not listen keeps running; it is the component's to fix
-            } catch (\Throwable) {
-                // errors of coroutines were already handled by their guard
             }
+            $this->end();
+        });
+    }
+
+    /** The end of a disposed component: unmount(), then its parent may end. */
+    private function end(): void
+    {
+        try {
+            $this->guard($this->unmount(...));
+        } finally {
+            $this->ended->settle(true, null);
         }
-        $this->guard($this->unmount(...));
     }
 
     /** True between `start()` and `dispose()`. */
@@ -450,19 +473,25 @@ abstract class Component
 
     /**
      * The child component under $key, made with $create (and started) the first time it is
-     * asked for. Use its `surface` in the layout `render()` returns.
+     * asked for. Use its `surface` in the layout `render()` returns. Without $create, the child
+     * of that key if there is one, else null: to reach a child from a handler
+     * (`$this->child('dialog')?->dispose()`) or to show it only while it exists. A render that
+     * asks for a key, either way, keeps that child.
      *
      * @template T of Component
-     * @param \Closure(): T $create
-     * @return T
+     * @param (\Closure(): T)|null $create
+     * @return ($create is null ? Component|null : T)
      */
-    protected function child(string $key, \Closure $create): Component
+    protected function child(string $key, ?\Closure $create = null): ?Component
     {
         if ($this->used !== null) {
             $this->used[$key] = true;
         }
         if (isset($this->children[$key])) {
             return $this->children[$key];
+        }
+        if ($create === null) {
+            return null;
         }
         $child = $create();
         if (!$child instanceof Component) {
@@ -476,28 +505,23 @@ abstract class Component
 
     /**
      * Start another coroutine that belongs to the component: an exception in it is contained
-     * like one in `run()`, and disposal waits for it. Make it end when `sleep()` returns false
-     * or `isMounted()` is false.
+     * like one in `run()`, and the component's end (`unmount()`) waits for it. Make it end when
+     * `sleep()` returns false or `isMounted()` is false.
      */
     protected function go(\Closure $task): void
     {
-        $entry = new \stdClass();
-        $entry->done = false;
-        $entry->awaitable = \fiber\go(fn() => $this->runTask($entry, $task));
-        if (!$entry->done) {
-            $this->tasks[spl_object_id($entry)] = $entry;
-        }
-    }
-
-    /** The body of a coroutine started with go(); dispose() finds it on the call stack. */
-    private function runTask(\stdClass $entry, \Closure $task): void
-    {
-        try {
-            $this->guard($task);
-        } finally {
-            $entry->done = true;
-            unset($this->tasks[spl_object_id($entry)]);
-        }
+        $id = ++$this->taskCount;
+        $this->tasks[$id] = true;
+        \fiber\go(function () use ($id, $task): void {
+            try {
+                $this->guard($task);
+            } finally {
+                unset($this->tasks[$id]);
+                if ($this->tasks === [] && $this->idle !== null) {
+                    $this->idle->settle(true, null);
+                }
+            }
+        });
     }
 
     /**

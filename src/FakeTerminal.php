@@ -26,8 +26,15 @@ use function fiber\sleep;
  * keyboard), the way a real xterm-class terminal would. So what the terminal shows must equal the
  * root's cells: the library's own output is checked by its own emulator.
  *
- * Input is delivered at once: when `press()` returns, the root has dispatched the key. Programs
- * in ptys answer later; `waitFor()` waits until the screen shows what you expect.
+ * Input, three ways, each delivered at once (when the call returns, the root has dispatched
+ * it; programs in ptys answer later, and `waitFor()` waits until the screen shows what you
+ * expect):
+ *
+ *     $terminal->type("ls -l\n");                 // text, one key per character
+ *     $terminal->press('ctrl+c', 'up', 'f5');     // keys by name
+ *     $terminal->feed("\e[1;5A\e[<0;3;2M");        // raw bytes, exactly as a terminal sends them
+ *
+ * `paste()`, `mouse()`, `click()`, `drag()`, `scroll()` and `focus()` send the other events.
  */
 final class FakeTerminal extends TerminalDevice
 {
@@ -209,7 +216,17 @@ final class FakeTerminal extends TerminalDevice
         $this->surface->dispatch(new Focus($focused));
     }
 
-    /** Raw bytes as input, as if the terminal sent them (a lone ESC at the end is the Escape key). */
+    /**
+     * Raw bytes as input, as the terminal would send them: text in UTF-8 and escape sequences
+     * (CSI and SS3 keys, kitty CSI-u keys, SGR mouse reports, bracketed pastes, focus reports),
+     * decoded by the same decoder as a real terminal's input. For input that `type()` and
+     * `press()` cannot express, or to replay bytes captured from a real terminal.
+     *
+     * Each call is one read from the terminal followed by a pause, as a real device sees it: a
+     * sequence must be whole within the call (an incomplete one is dropped, as after the escape
+     * timeout), except a bracketed paste, which may span calls. A lone ESC at the end is the
+     * Escape key, ESC and a character Alt and that character.
+     */
     public function feed(string $bytes): void
     {
         $this->receive($bytes, true);

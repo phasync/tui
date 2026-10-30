@@ -161,6 +161,31 @@ it('decodes input and dispatches it to the root and down the focus path', functi
     });
 });
 
+it('takes raw bytes as the terminal sends them with feed(), escape sequences included', function () {
+    onTerminal(20, 4, function (FakeTerminal $terminal, Surface $root) {
+        $seen = [];
+        $root->on('key', function (Key $k) use (&$seen) { $seen[] = (string) $k; });
+        $root->on('paste', function (Paste $p) use (&$seen) { $seen[] = "paste $p->text"; });
+        $root->on('mouse', function (Mouse $m) use (&$seen) { $seen[] = "mouse $m->action $m->x,$m->y"; });
+        $root->on('focus', function (Focus $f) use (&$seen) { $seen[] = $f->focused ? 'focus in' : 'focus out'; });
+        $terminal->feed("x\e[1;5A\eOP\e[97;5u\e[3~é");   // several in one read: text, CSI, SS3, kitty
+        $terminal->feed("\e[<0;5;3M\e[<0;5;3m");            // SGR mouse press and release
+        $terminal->feed("\e[200~a\r\nb\e[201~");             // bracketed paste
+        $terminal->feed("\e[200~split ");                    // a paste over two reads
+        $terminal->feed("paste\e[201~");
+        $terminal->feed("\e[O\e[I");                          // focus out, in
+        $terminal->feed("\ex");                              // Alt-x
+        $terminal->feed("\e");                               // a lone ESC, then a pause: Escape
+        expect($seen)->toBe([
+            'x', 'ctrl+up', 'f1', 'ctrl+a', 'delete', 'é',
+            'mouse ' . Mouse::PRESS . ' 4,2', 'mouse ' . Mouse::RELEASE . ' 4,2',
+            "paste a\nb", 'paste split paste',
+            'focus out', 'focus in',
+            'alt+x', 'escape',
+        ]);
+    });
+});
+
 it('passes focus reports to the focused program', function () {
     onTerminal(10, 2, function (FakeTerminal $terminal, Surface $root) {
         $a = new Surface(10, 2);

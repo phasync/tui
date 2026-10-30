@@ -83,6 +83,7 @@ final class Ticker extends Component
 {
     public int $ticks = 0;
     public bool $ended = false;
+    public ?bool $endedBeforeUnmount = null;
 
     protected function run(): void
     {
@@ -90,6 +91,11 @@ final class Ticker extends Component
             $this->ticks++;
         }
         $this->ended = true;
+    }
+
+    protected function unmount(): void
+    {
+        $this->endedBeforeUnmount = $this->ended;
     }
 }
 
@@ -162,16 +168,19 @@ it('lets a parent see keys before its children, and stop them', function () {
     });
 });
 
-it('ends coroutines on dispose and waits for them', function () {
+it('tells coroutines to end on dispose, and unmounts once they have', function () {
     run(function () {
         $ticker = (new Ticker())->start();
         sleep(0.05);
         expect($ticker->ticks)->toBeGreaterThan(0);
         $start = microtime(true);
-        $ticker->dispose();
+        $ticker->dispose();                         // returns at once, without waiting
+        expect($ticker->isMounted())->toBeFalse()
+            ->and($ticker->endedBeforeUnmount)->toBeNull();
+        sleep(0.01);
         expect($ticker->ended)->toBeTrue()
-            ->and(microtime(true) - $start)->toBeLessThan(0.5)
-            ->and($ticker->isMounted())->toBeFalse();
+            ->and($ticker->endedBeforeUnmount)->toBeTrue()
+            ->and(microtime(true) - $start)->toBeLessThan(0.5);
     });
 });
 
