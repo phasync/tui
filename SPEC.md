@@ -263,8 +263,16 @@ palette, and `Dialog` itself. One primitive, on the component:
 `$this->overlay($element, anchor: Rect|null, place: 'below'|'above'|'center'|Rect, modal: bool)`
 returns an `Overlay` handle (`close()`, `closed()` awaitable, `result`). The library hosts the
 element on the nearest `Layers` above the component (the root always has one) at absolute
-coordinates from the anchor, flips above/below when it would leave the screen, clips only to the
-screen, and orders later overlays above earlier ones, keeping the order across renders. Focus moves
+coordinates from the anchor, and orders later overlays above earlier ones, keeping the order across
+renders. **The root's rectangle is a hard boundary**: nothing of an overlay is ever placed outside
+it (in a nested instance the inner root's pane is that boundary, as in tmux). Placement, in
+order: the preferred side of the anchor if the overlay fits there; else the opposite side if it
+fits; else the side with more room, with the overlay **shrunk to that room** and its content
+scrolling (a dropdown of 30 items in 6 free rows shows 6 and scrolls; it never clips silently);
+horizontally the overlay is shifted left or right to stay inside, and narrowed only when wider
+than the root. Every overlay element therefore supports a height and width smaller than its
+content (a `ScrollView` inside, or the element's own scrolling), and is re-placed by the same rules
+when the root or the anchor changes. Focus moves
 to the overlay by the surface tree's own rule; Escape, a click outside, or the anchor's component
 losing focus closes a non-modal overlay; a modal one takes all input until closed; closing returns
 the focus to where it was. The overlay follows its anchor when the anchor's area changes (resize,
