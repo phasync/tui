@@ -1,0 +1,128 @@
+# phasync/tui: the byte stream a Surface accepts.
+#
+# This grammar is the definition of what the emulator understands: the VT500-series parser
+# (as documented by DEC and by Paul Williams' state diagram, which xterm follows) over UTF-8 text.
+# It is compiled with charm/parsing into AnsiParser.php next to this file:
+#
+#     vendor/bin/charm-compile src/Surface/ansi.cpeg -c AnsiParser -n 'phasync\Tui\Surface' \
+#         -o src/Surface/AnsiParser.php
+#
+# (composer run grammar does the same; a test fails when the committed class is out of date.)
+#
+# Input is a string of valid UTF-8: Surface::write() replaces malformed bytes with U+FFFD and
+# holds back a code point cut off at the end of a chunk. C1 controls are the code points
+# U+0080-U+009F, as in xterm's UTF-8 mode.
+#
+# Every rule below is total: given enough input, each sequence either completes, is cancelled
+# (CAN, SUB) or is aborted by the start of another sequence (ESC, a C1 control). A rule can only
+# fail because the chunk ended in the middle of a sequence; the lowest-priority Incomplete rule
+# then keeps that tail for the next write().
+#
+# The actions only hand complete items to the emulator ($state['vt'], an Emulator), which applies
+# them to the cells. Nothing is applied while a sequence is still being matched, so a sequence
+# that is retried with the next chunk never acts twice.
+
+Stream = Item* $
+
+Item = Text
+     | Control
+     | Csi
+     | Osc
+     | Dcs
+     | Str
+     | Esc
+     | C1
+     | Incomplete
+
+# A run of printable characters: everything except the C0 controls, DEL and the C1 controls.
+Text = /[^\x00-\x1f\x7f-\x{9f}]+/                   <? $state['vt']->print($_0); return true; ?>
+
+# C0 controls in the ground state. ESC starts a sequence; CAN, SUB and DEL do nothing here.
+Control = /[\x00-\x17\x19\x1c-\x1f]/                <? $state['vt']->execute($_0); return true; ?>
+        | /[\x18\x1a\x7f]/                          <? return true; ?>
+
+# Inside a sequence a C0 control is executed where it stands without ending the sequence, and
+# DEL is ignored. The actions get these characters back in their place and handle them.
+Embedded = /[\x00-\x17\x19\x1c-\x1f\x7f]/
+
+# --- CSI: ESC [ or U+009B, then parameters, intermediates and a final character ---------------
+#
+#     CSI  private-marker? parameters intermediates final
+#          [<=>?]          [0-9:;]*   [\x20-\x2f]*  [\x40-\x7e]
+#
+# The characters are collected in order (with any embedded controls); the emulator checks this
+# structure and ignores a sequence that does not follow it (a parameter character after an
+# intermediate, a private marker after a parameter, a non-ASCII character).
+Csi = /\x1b/ pre:Embedded* "[" body:CsiChar* end:CsiEnd   <? $state['vt']->csi($pre, $body, $end); return true; ?>
+    | /\x{9b}/ body:CsiChar* end:CsiEnd                   <? $state['vt']->csi([], $body, $end); return true; ?>
+
+CsiChar = /[\x20-\x3f]+/
+        | Embedded
+        | /[\x{a0}-\x{10ffff}]/
+
+# A final character dispatches. CAN and SUB cancel the sequence; ESC or a C1 control aborts it
+# and is not consumed, because it starts the next item. The empty string means "not dispatched".
+CsiEnd = /[\x40-\x7e]/
+       | /[\x18\x1a]/                               <? return ''; ?>
+       | &/[\x1b\x{80}-\x{9f}]/                     <? return ''; ?>
+
+# --- OSC: ESC ] or U+009D, a string, then BEL or ST (ESC \ or U+009C) ------------------------
+#
+# Control characters inside the string are ignored. CAN and SUB cancel it; ESC followed by
+# anything but a backslash, or a C1 control other than ST, aborts it without dispatching.
+Osc = /\x1b/ pre:Embedded* "]" text:OscText end:OscEnd    <? $state['vt']->osc($pre, $text, $end); return true; ?>
+    | /\x{9d}/ text:OscText end:OscEnd                    <? $state['vt']->osc([], $text, $end); return true; ?>
+
+OscText = /[^\x07\x18\x1a\x1b\x{80}-\x{9f}]*/
+
+OscEnd = /\x07|\x1b\\|\x{9c}/
+       | /[\x18\x1a]/                               <? return ''; ?>
+       | &/\x1b[^\\]|[\x{80}-\x{9b}\x{9d}-\x{9f}]/  <? return ''; ?>
+
+# --- DCS: ESC P or U+0090, a header and data up to ST -----------------------------------------
+# Parsed and ignored (sixel, tmux pass-through, XTGETTCAP and DECRQSS requests).
+Dcs = /\x1b/ pre:Embedded* "P" StrText StrEnd             <? $state['vt']->ignoredString($pre); return true; ?>
+    | /\x{90}/ StrText StrEnd                             <? return true; ?>
+
+# --- SOS, PM and APC: ESC X, ESC ^, ESC _ or U+0098, U+009E, U+009F, data up to ST ------------
+# Parsed and ignored.
+Str = /\x1b/ pre:Embedded* /[X^_]/ StrText StrEnd         <? $state['vt']->ignoredString($pre); return true; ?>
+    | /[\x{98}\x{9e}\x{9f}]/ StrText StrEnd               <? return true; ?>
+
+StrText = /[^\x18\x1a\x1b\x{80}-\x{9f}]*/
+
+StrEnd = /\x1b\\|\x{9c}/
+       | /[\x18\x1a]/
+       | &/\x1b[^\\]|[\x{80}-\x{9b}\x{9d}-\x{9f}]/
+
+# --- Other escape sequences: ESC, intermediates [\x20-\x2f]*, a final character ----------------
+#
+# Examples: ESC 7 (DECSC), ESC M (RI), ESC ( 0 (DEC line drawing into G0), ESC # 8 (DECALN).
+# Without intermediates the finals [ ] P X ^ _ introduce CSI and the strings above, so they are
+# not finals here: a cut-off "ESC [" matches nothing and is left to Incomplete.
+Esc = /\x1b/ pre:Embedded* inter:Intermediates end:EscEnd   <? $state['vt']->esc($pre, $inter, $end); return true; ?>
+    | /\x1b/ pre:Embedded* end:EscFinal                     <? $state['vt']->esc($pre, [], $end); return true; ?>
+
+Intermediates = /[\x20-\x2f]+/ (Embedded | /[\x20-\x2f]+/)*
+
+EscFinal = /[\x30-\x4f\x51-\x57\x59\x5a\x5c\x60-\x7e]/
+         | EscOther
+
+EscEnd = /[\x30-\x7e]/
+       | EscOther
+
+# A non-ASCII character ends the sequence unrecognised; CAN and SUB cancel it; ESC or a C1
+# control aborts it.
+EscOther = /[\x{a0}-\x{10ffff}]/                    <? return ''; ?>
+         | /[\x18\x1a]/                             <? return ''; ?>
+         | &/[\x1b\x{80}-\x{9f}]/                   <? return ''; ?>
+
+# --- C1 controls in the ground state (IND, NEL, HTS, RI; the rest are ignored) ----------------
+# The C1 forms of CSI, OSC, DCS, SOS, PM and APC are not listed: they start the rules above, and
+# when their sequence is cut off they are left to Incomplete.
+C1 = /[\x{80}-\x{8f}\x{91}-\x{97}\x{99}\x{9a}\x{9c}]/   <? $state['vt']->c1($_0); return true; ?>
+
+# --- A sequence cut off by the end of the chunk -----------------------------------------------
+# Only reached when every rule above failed, which (the rules being total) means the input ended
+# inside a sequence. The tail is kept and parsed again together with the next chunk.
+Incomplete = /[\x1b\x{90}\x{98}\x{9b}\x{9d}-\x{9f}][\s\S]*/ $   <? $state['vt']->incomplete($_0); return true; ?>

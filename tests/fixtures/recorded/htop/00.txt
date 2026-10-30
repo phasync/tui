@@ -1,0 +1,24 @@
+
+    0]   4]   8]  12]  16]  20] 24]      28]  32]  36]  40]  44]  48]  52]
+    1]   5]   9]  13]  17]  21] 25]      29]  33]  37]  41]  45]  49]  53]
+    2]   6]  10]  14]  18]  22] 26]      30]  34]  38]  42]  46]  50]  54]
+    3]   7]  11]  15]  19]  23] 27]      31]  35]  39]  43]  47]  51]  55]
+  Mem[|||||||||||||||||||||21.1G/62.8G] Tasks: 572, 2416 thr, 985 kthr; 2 runn
+  Swp[|||||||||||||||||||||7.76G/8.00G] Load average: 0.87 0.97 1.17
+                                        Uptime: 228 days(!), 22:45:31
+
+  [Main] [I/O]
+    PID USER       PRI  NI  VIRT   RES   SHR S  CPU%▽MEM%   TIME+  Command
+3112213 frode       20   0 13412  9392  3672 R  86.2  0.0  0:00.63 htop -d 100
+2714014 frode       20   0 4339M 46616 28812 R   9.6  0.1  9h37:05 /usr/bin/php8
+2816929 messagebus  20   0 2100M  131M  1932 S   4.8  0.2 22:43.71 /usr/sbin/mys
+2816944 messagebus  20   0 2100M  131M  1900 S   4.8  0.2  2:47.42 /usr/sbin/mys
+3385858 frode       20   0 4571M 33796 32576 S   4.8  0.1 19:01.35 /usr/bin/php8
+3385862 frode       20   0 4563M 11184 10764 S   4.8  0.0 56:54.53 /usr/bin/php8
+      1 root        20   0 24836 11540  6828 S   0.0  0.0  3h23:22 /usr/lib/syst
+   2492 messagebus  20   0 15792  3996  1608 S   0.0  0.0 35:09.82 @dbus-daemon
+   2505 root        20   0 21636  2660  2200 S   0.0  0.0  9:52.59 /usr/lib/syst
+   2518 root        20   0 17384   452   392 S   0.0  0.0  1:35.80 /usr/sbin/wpa
+   2625 root        20   0  107M   472   468 S   0.0  0.0  0:00.12 /usr/bin/pyth
+   2727 root        20   0  107M   472   468 S   0.0  0.0  0:00.00 /usr/bin/pyth
+F1Help  F2Setup F3SearchF4FilterF5Tree  F6SortByF7Nice -F8Nice +F9Kill  F10Quit

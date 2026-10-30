@@ -1,0 +1,55 @@
+{
+    "name": "phasync/tui",
+    "description": "Terminal UI library for PHP built on a real terminal emulator: surfaces, ptys, viewports, layouts and components.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "tui",
+        "terminal",
+        "ansi",
+        "vt100",
+        "pty",
+        "fiber",
+        "async"
+    ],
+    "authors": [
+        {
+            "name": "Frode Børli",
+            "email": "frode@ennerd.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.3",
+        "fiber-interop/api": "*"
+    },
+    "require-dev": {
+        "fiber-interop/phasync": "*",
+        "pestphp/pest": "*",
+        "charm/parsing": "dev-master"
+    },
+    "autoload": {
+        "psr-4": {
+            "phasync\\Tui\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "phasync\\Tui\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "scripts": {
+        "grammar": "charm-compile src/Surface/ansi.cpeg -q -c AnsiParser -n 'phasync\\Tui\\Surface' -o src/Surface/AnsiParser.php",
+        "test": "pest"
+    },
+    "suggest": {
+        "ext-phasync": "Captures echo output of Surface::run() coroutines (bundled with phasync/phasync)",
+        "ext-pcntl": "Immediate resize on SIGWINCH and terminal restore on SIGTERM"
+    }
+}

@@ -1,0 +1,14 @@
+[?1049h[22;0;0t[?1h=A terminal UI library for PHP, built bottom-up from one primitive: a Surface
+that is a terminal emulator. Everything that shows on screen is a Surface; a
+shell in a pty and a PHP coroutine that echoes are the same kind of producer,
+writing the same bytes into it.
+
+        Tabs    and   spaces,   wide 中文 characters, and accents: café, naïve.
+
+  1. Surface
+  2. Producers
+  3. Viewport
+  4. Screen
+  5. Layout
+  6. Component
+[7m/home/frode/dev/phasync/tui/tests/fixtures/programs/sample.txt (END)[27m[K

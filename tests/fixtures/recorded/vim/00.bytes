@@ -1,0 +1,10 @@
+[?1049h[22;0;0t[>4;2m[?1h=[?2004h[?1004h[1;24r[?12h[?12l[22;2t[22;1t[27m[23m[29m[m[H[2J[?25l[24;1H<v/phasync/tui/tests/fixtures/programs/sample.txt"</tui/tests/fixtures/programs/sample.txt" 13L, 421B[2;1H▽[6n[2;1H  [3;1HPzz\[0%m[6n[3;1H           [1;1H[>c]10;?]11;?[1;1HA terminal UI library for PHP, built bottom-up from one primitive: a Surface
+that is a terminal emulator. Everything that shows on screen is a Surface; a[2;77H[K[3;1Hshell in a pty and a PHP coroutine that echoes are the same kind of producer,[3;78H[K[4;1Hwriting the same bytes into it.[6;9HTabs    and   spaces,   wide 中文 characters, and accents: café[6;72H, naïve.
+
+  1. Surface
+  2. Producers
+  3. Viewport
+  4. Screen
+  5. Layout
+  6. Component
+[94m~                                                                               [15;1H~                                                                               [16;1H~                                                                               [17;1H~                                                                               [18;1H~                                                                               [19;1H~                                                                               [20;1H~                                                                               [21;1H~                                                                               [22;1H~                                                                               [23;1H~                                                                               [m[24;63H1,1[11CAll[1;1H[?25h[?4m[?12$p
