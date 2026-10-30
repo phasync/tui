@@ -4,6 +4,8 @@ namespace phasync\Tui;
 
 use phasync\Tui\Surface\AnsiParser;
 use phasync\Tui\Surface\Emulator;
+use phasync\Tui\Surface\Host;
+use phasync\Tui\Surface\InputEncoder;
 use phasync\Tui\Surface\Line;
 use phasync\Tui\Surface\SurfaceSapi;
 
@@ -28,6 +30,12 @@ use function fiber\go;
  * Use `Ansi` to build the escape sequences, `cell()`, `line()`, `runs()`, `text()` and `dump()`
  * to read the result, `damagedSince()` to find what changed, and `input` for what the producer
  * reads.
+ *
+ * A Surface can host other Surfaces (`host()`), each shown through a `Viewport`, to any depth:
+ * the screen of a program is a root Surface hosting windows, and a terminal device (`Tty`, or
+ * `FakeTerminal` for tests) attached to the root shows it on a real terminal. The host repaints
+ * what changed in its hosted surfaces into its own cells by writing escape sequences to itself,
+ * and passes input events (`dispatch()`) down to the focused one.
  */
 final class Surface implements \Stringable
 {
@@ -38,6 +46,7 @@ final class Surface implements \Stringable
     private AnsiParser $parser;
     private string $utf8Tail = '';
     private ?int $damageTaken = null;
+    private ?Host $host = null;
     /** @var array<string, array<int, \Closure>> */
     private array $listeners = [];
 
@@ -102,6 +111,7 @@ final class Surface implements \Stringable
         if ($source !== '') {
             $this->parser->parse($source, ['vt' => $vt]);
         }
+        $this->host?->wrote();
         $this->emit('change', null);
     }
 
@@ -141,7 +151,8 @@ final class Surface implements \Stringable
         }
         $this->vt->version++;
         $this->vt->resize($cols, $rows);
-        $this->emit('resize', [$this->vt->cols, $this->vt->rows]);
+        $this->host?->arrange();
+        $this->emit('resize', new Resize($this->vt->cols, $this->vt->rows));
         $this->emit('change', null);
     }
 
@@ -152,6 +163,7 @@ final class Surface implements \Stringable
      */
     public function cell(int $x, int $y): Cell
     {
+        $this->compose();
         $line = $this->row($y);
         if ($x < 0 || $x >= $this->vt->cols) {
             throw new \OutOfRangeException("Column $x is outside 0.." . ($this->vt->cols - 1));
@@ -168,6 +180,7 @@ final class Surface implements \Stringable
     /** The text of row $y without trailing blanks; negative rows read the scrollback. */
     public function line(int $y): string
     {
+        $this->compose();
         return rtrim(implode('', $this->row($y)->chars), ' ');
     }
 
@@ -179,6 +192,7 @@ final class Surface implements \Stringable
      */
     public function runs(int $y): array
     {
+        $this->compose();
         $line = $this->row($y);
         $runs = [];
         $start = 0;
@@ -212,6 +226,7 @@ final class Surface implements \Stringable
     /** The visible screen as text: every row without trailing blanks, joined with "\n". */
     public function text(): string
     {
+        $this->compose();
         $out = [];
         for ($y = 0; $y < $this->vt->rows; $y++) {
             $out[] = $this->line($y);
@@ -231,6 +246,7 @@ final class Surface implements \Stringable
      */
     public function dump(): string
     {
+        $this->compose();
         $out = [];
         for ($y = 0; $y < $this->vt->rows; $y++) {
             $runs = $this->runs($y);
@@ -296,14 +312,14 @@ final class Surface implements \Stringable
     /**
      * The kitty keyboard protocol flags the program enabled (`CSI > flags u`), 0 when it uses
      * legacy key encoding: 1 disambiguate escape codes, 2 report event types, 4 report alternate
-     * keys, 8 report all keys as escape codes, 16 report associated text. `sendKey()` honours them.
+     * keys, 8 report all keys as escape codes, 16 report associated text. `dispatch()` honours them.
      */
     public function keyboardFlags(): int
     {
         return $this->vt->keyboardFlags();
     }
 
-    /** The xterm modifyOtherKeys level the program set (`CSI > 4 ; n m`): 0, 1 or 2. `sendKey()` honours it. */
+    /** The xterm modifyOtherKeys level the program set (`CSI > 4 ; n m`): 0, 1 or 2. `dispatch()` honours it. */
     public function modifyOtherKeys(): int
     {
         return $this->vt->modifyOtherKeys;
@@ -331,6 +347,7 @@ final class Surface implements \Stringable
      */
     public function version(): int
     {
+        $this->compose();
         return $this->vt->version;
     }
 
@@ -341,6 +358,7 @@ final class Surface implements \Stringable
      */
     public function damagedSince(int $version): array
     {
+        $this->compose();
         $rows = [];
         foreach ($this->vt->rowVersion as $y => $v) {
             if ($v > $version) {
@@ -367,13 +385,23 @@ final class Surface implements \Stringable
     /**
      * Listen to an event of this surface; returns a closure that removes the listener.
      *
-     * - `change`: after every `write()` and `resize()`
-     * - `resize`: receives `[$cols, $rows]`
+     * - `change`: after every `write()` and `resize()`, and when a hosted surface changed (the
+     *   cells catch up when they are read, or with `compose()`)
+     * - `resize`: receives a `Resize`
      * - `title`: receives the new title
      * - `bell`: the program rang the bell (BEL)
      * - `clipboard`: the program asked to copy text to the clipboard (OSC 52); receives the text
      *
-     * @param \Closure(mixed $data): void $listener
+     * Input listeners see the events given to `dispatch()` before they go further, and stop them
+     * by returning true; this is how a program reacts to keys on any surface (a shortcut on the
+     * root, a key a widget handles itself):
+     *
+     * - `key`: receives a `Key`
+     * - `mouse`: receives a `Mouse`, in this surface's coordinates
+     * - `paste`: receives a `Paste`
+     * - `focus`: receives a `Focus` when this surface gains or loses the focus
+     *
+     * @param \Closure(mixed $data): mixed $listener
      */
     public function on(string $event, \Closure $listener): \Closure
     {
@@ -384,11 +412,213 @@ final class Surface implements \Stringable
         };
     }
 
-    private function emit(string $event, mixed $data): void
+    /** Call the listeners of $event; true as soon as one returns true. */
+    private function emit(string $event, mixed $data): bool
     {
         foreach ($this->listeners[$event] ?? [] as $listener) {
-            $listener($data);
+            if ($listener($data) === true) {
+                return true;
+            }
         }
+        return false;
+    }
+
+    /**
+     * Deliver an input event: a `Key`, `Mouse`, `Paste` or `Focus`, as a terminal device does
+     * with what the user types. The event goes to this surface's input listeners (`on('key')`
+     * and friends) first; one returning true takes it. Then, if this surface hosts others, it
+     * goes to the focused one (a mouse event to the one under the pointer, in its coordinates),
+     * and so on down. Where it ends, the surface encodes it to the bytes its producer expects,
+     * as xterm would for the modes the program set (application cursor keys, kitty keyboard
+     * flags, modifyOtherKeys, mouse mode and encoding, bracketed paste, focus reporting), and puts
+     * them on `input`.
+     *
+     * A host takes the mouse events a hosted program did not ask for: the wheel scrolls the
+     * window, a drag selects text and copies it to the clipboard (OSC 52, passed up to the
+     * terminal). Returns false only for a mouse event that nothing wanted.
+     */
+    public function dispatch(Event $event): bool
+    {
+        $type = match (true) {
+            $event instanceof Key => 'key',
+            $event instanceof Mouse => 'mouse',
+            $event instanceof Paste => 'paste',
+            $event instanceof Focus => 'focus',
+            default => throw new \InvalidArgumentException('Unknown event ' . $event::class),
+        };
+        if ($this->emit($type, $event)) {
+            return true;
+        }
+        if ($this->host !== null && $this->host->route($event)) {
+            return true;
+        }
+        $bytes = match ($type) {
+            'key' => InputEncoder::key($event, $this),
+            'paste' => InputEncoder::paste($event->text, $this),
+            'focus' => $this->mode(1004) ? ($event->focused ? "\e[I" : "\e[O") : '',
+            'mouse' => InputEncoder::mouse($event, $this),
+        };
+        $this->input->write($bytes);
+        return $type !== 'mouse' || $bytes !== '';
+    }
+
+    /** True if the program asked for mouse reports (any of the modes 9, 1000, 1002, 1003). */
+    public function wantsMouse(): bool
+    {
+        return $this->mode(1000) || $this->mode(1002) || $this->mode(1003) || $this->mode(9);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Hosting
+
+    /**
+     * Show $child on this surface and return its `Viewport`. Without geometry the child shows at
+     * the top-left corner at its own size; place it with $x/$y/$width/$height here or later on
+     * the viewport, or let a layout (`setLayout()`) place it. A surface is hosted at most once
+     * per host: hosting it again returns the same viewport (moved and resized if you pass
+     * geometry). The first surface hosted gets the focus.
+     *
+     * The child's changes show on this surface (and on its host, up to the root): this surface
+     * repaints them into its own cells by writing escape sequences to itself, when its cells are
+     * read or `compose()` is called. What this surface's own producer writes under a window is
+     * painted over by the window. Its title (while focused), bell and clipboard requests are
+     * passed up the same way.
+     *
+     * @throws \InvalidArgumentException when $child is this surface or hosts it
+     */
+    public function host(Surface $child, ?int $x = null, ?int $y = null, ?int $width = null, ?int $height = null): Viewport
+    {
+        return $this->hosting()->host($child, $x, $y, $width, $height);
+    }
+
+    /** Stop showing $child; the area it covered is blanked. Nothing happens if it is not hosted here. */
+    public function unhost(Surface $child): void
+    {
+        $this->host?->unhost($child);
+    }
+
+    /** Bring the window of the hosted surface $child to the top, over all others. */
+    public function raise(Surface $child): void
+    {
+        $this->host?->raise($child);
+    }
+
+    /** The viewport $child shows through on this surface, or null if it is not hosted here. */
+    public function viewport(Surface $child): ?Viewport
+    {
+        return $this->host?->find($child);
+    }
+
+    /**
+     * The viewports of the hosted surfaces, bottom first (later ones cover earlier ones).
+     *
+     * @return list<Viewport>
+     */
+    public function viewports(): array
+    {
+        return $this->host?->viewports ?? [];
+    }
+
+    /**
+     * Let $layout place the hosted surfaces (see `Split` and `Stack`), now and whenever this
+     * surface is resized. The layout owns the windows: surfaces it does not place are unhosted.
+     * Pass null to keep the windows where they are and stop arranging them.
+     */
+    public function setLayout(?Layout $layout): void
+    {
+        $this->hosting()->layout = $layout;
+        $this->host->arrange();
+    }
+
+    /** The layout set with `setLayout()`, or null. */
+    public function layout(): ?Layout
+    {
+        return $this->host?->layout;
+    }
+
+    /**
+     * Give the focus to the hosted surface $child (keys and pastes go to it), or take it back to
+     * this surface itself with null. The surface losing the focus and the one gaining it receive
+     * a `Focus` event (a program that enabled focus reporting reads `ESC [O` / `ESC [I`). The
+     * focus path runs from the root down through each host's focused surface; to focus a surface
+     * deeper down, focus each level, or use `focusNext()`.
+     *
+     * @throws \InvalidArgumentException when $child is not hosted here
+     */
+    public function focus(?Surface $child): void
+    {
+        if ($child === null && $this->host === null) {
+            return;
+        }
+        $this->hosting()->setFocus($child);
+    }
+
+    /** The hosted surface that has this surface's focus, or null when this surface keeps it. */
+    public function focused(): ?Surface
+    {
+        return $this->host?->focus?->source;
+    }
+
+    /**
+     * Move the focus to the next window in order (the previous one with $backwards): through
+     * every surface below this one that hosts nothing, depth first, in hosting order, wrapping
+     * around. Bind it to a key (Tab, or a prefix key when the windows are shells that need Tab).
+     * Returns false when there is no other window to go to.
+     */
+    public function focusNext(bool $backwards = false): bool
+    {
+        return $this->host?->focusNext($backwards) ?? false;
+    }
+
+    /** Whether pressing a mouse button on a hosted surface focuses it (off by default). */
+    public function setFocusOnClick(bool $on): void
+    {
+        $this->hosting()->clickFocus = $on;
+    }
+
+    /**
+     * Repaint what changed in the hosted surfaces into this surface now. Happens by itself
+     * whenever this surface's cells, damage or version are read, and a terminal device does it
+     * every frame; call it only to force the work at a moment of your choosing. While a hosted
+     * program is in the middle of a synchronized update (mode 2026) its window keeps the previous
+     * frame, for at most half a second.
+     */
+    public function compose(): void
+    {
+        if ($this->host !== null && $this->host->dirty) {
+            $this->host->compose();
+        }
+    }
+
+    /** True when a hosted surface changed and this surface's cells have not caught up yet. */
+    public function needsCompose(): bool
+    {
+        return $this->host !== null && $this->host->dirty;
+    }
+
+    /**
+     * The cursor a terminal showing this surface displays: that of the focused hosted surface
+     * (down the focus path), at its position on this surface, hidden when it is outside its
+     * window; this surface's own `cursor()` when it keeps the focus.
+     */
+    public function activeCursor(): Cursor
+    {
+        $view = $this->host?->focus;
+        if ($view === null) {
+            return $this->cursor();
+        }
+        $this->compose();
+        $c = $view->source->activeCursor();
+        $at = $view->toHost($c->x, $c->y);
+        if ($at === null) {
+            return new Cursor(0, 0, false, $c->shape, $c->blinking);
+        }
+        return new Cursor($at[0], $at[1], $c->visible, $c->shape, $c->blinking);
+    }
+
+    private function hosting(): Host
+    {
+        return $this->host ??= new Host($this, $this->vt, fn() => $this->emit('change', null));
     }
 
     /**
@@ -428,6 +658,7 @@ final class Surface implements \Stringable
      */
     public function rowData(int $y): array
     {
+        $this->compose();
         $line = $this->row($y);
         return [$line->chars, $line->styles];
     }

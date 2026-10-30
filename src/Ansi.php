@@ -155,6 +155,15 @@ final class Ansi
         return "\e]2;" . str_replace(["\x07", "\e"], '', $title) . "\x07";
     }
 
+    /**
+     * Ask the terminal to put $text on the system clipboard (OSC 52). A Surface passes it up to
+     * its host and the terminal device passes it to the real terminal.
+     */
+    public static function clipboard(string $text): string
+    {
+        return "\e]52;c;" . base64_encode($text) . "\x07";
+    }
+
     /** Switch to the alternate screen, saving the cursor (mode 1049), or back with false. */
     public static function altScreen(bool $on = true): string
     {

@@ -22,7 +22,7 @@ use function fiber\writable;
  * The program sees a real terminal of the surface's size: `TERM=xterm-256color`,
  * `COLORTERM=truecolor`, a controlling terminal (so Ctrl-C, job control and SIGWINCH work) and
  * the surface's size from the start. Its output is written into the surface as it arrives, and
- * everything written to the surface's `input` (keys from `Surface::sendKey()`, pastes, the
+ * everything written to the surface's `input` (keys and pastes from `Surface::dispatch()`, the
  * terminal's replies to queries) goes to the program. Resizing the surface resizes the
  * terminal, which sends SIGWINCH to the program.
  *
@@ -95,7 +95,7 @@ final class Pty
         $pty->pid = proc_get_status($process)['pid'];
 
         $surface->input->pipe(fn(string $bytes) => $pty->write($bytes));
-        $pty->offResize = $surface->on('resize', fn(array $size) => $pty->resize($size[0], $size[1]));
+        $pty->offResize = $surface->on('resize', fn(Resize $size) => $pty->resize($size->cols, $size->rows));
         go(fn() => $pty->pump($surface));
         return $pty;
     }

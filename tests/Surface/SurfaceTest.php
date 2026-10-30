@@ -1,5 +1,7 @@
 <?php
 
+use phasync\Tui\Resize;
+
 use phasync\Tui\Ansi;
 use phasync\Tui\Color;
 use phasync\Tui\Style;
@@ -171,7 +173,7 @@ describe('resizing', function () {
     it('reports the new size to resize listeners', function () {
         $s = new Surface(10, 4);
         $got = null;
-        $s->on('resize', function (array $size) use (&$got) { $got = $size; });
+        $s->on('resize', function (Resize $size) use (&$got) { $got = [$size->cols, $size->rows]; });
         $s->resize(7, 3);
         expect($got)->toBe([7, 3]);
     });

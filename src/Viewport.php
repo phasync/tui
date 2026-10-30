@@ -2,22 +2,29 @@
 
 namespace phasync\Tui;
 
+use phasync\Tui\Surface\Host;
+
 /**
- * A window onto a Surface: shows a rectangle of a source surface at a position on a target
- * surface (the screen, or any other surface), with optional border and title.
+ * Where a hosted Surface shows on its host: a rectangle of the host that shows a rectangle of the
+ * hosted surface (the *source*), with an optional border and title drawn by the host.
  *
- *     $log = new Surface(200, 50);              // may be larger than the window, both ways
- *     $view = new Viewport($log, x: 2, y: 1, width: 40, height: 10);
+ *     $root = new Surface(80, 24);
+ *     $log = new Surface(200, 50);                       // may be larger than the window, both ways
+ *     $view = $root->host($log, x: 2, y: 1, width: 40, height: 10);
  *     $view->setBorder(true)->setTitle('log');
- *     $view->paint($screenSurface);             // draws with escape sequences, like any producer
+ *     $view->scrollBy(-10);                              // look back into the scrollback
  *
- * Geometry (`x`, `y`, `width`, `height`) is the outer rectangle on the target, border included;
- * the source shows in the inner rectangle. Scrolling picks which source rows show: by default the
- * view *follows* the bottom of the source (new output stays in view); `scrollBy()`/`scrollTo()`
- * pin it to a position, also back into the scrollback (negative rows), and it stays on the same
- * text while more lines scroll in. `pan()` scrolls sideways when the source is wider.
+ * You get a viewport from `Surface::host()` (or from a layout, which hosts its surfaces for you)
+ * and never construct one. Geometry (`x`, `y`, `width`, `height`) is the outer rectangle on the
+ * host, border included; the source shows in the inner rectangle. With `setFit(true)` (layouts
+ * turn it on) the source is kept the size of the inner rectangle, so a program in it always fills
+ * the window and is told about every resize.
  *
- * A Screen paints its viewports for you; call `paint()` yourself to draw onto your own surface.
+ * Scrolling picks which source rows show: by default the view *follows* the bottom of the source
+ * (new output stays in view); `scrollBy()`/`scrollTo()` pin it to a position, also back into the
+ * scrollback (negative rows), and it stays on the same text while more lines scroll in. `pan()`
+ * scrolls sideways when the source is wider. The host scrolls a viewport with the mouse wheel and
+ * selects text in it with a mouse drag when the program in it has not asked for the mouse.
  */
 final class Viewport
 {
@@ -25,8 +32,10 @@ final class Viewport
     private int $y;
     private int $width;
     private int $height;
+    private bool $fit = false;
     private bool $border = false;
     private Style $borderStyle;
+    private ?Style $focusStyle = null;
     private string $title = '';
     private bool $following = true;
     /** Pinned top row in source coordinates (when not following). */
@@ -41,35 +50,44 @@ final class Viewport
     private ?string $paintedKey = null;
 
     /**
-     * @param Surface  $source the surface to show
-     * @param int      $x      left column on the target
-     * @param int      $y      top row on the target
-     * @param int|null $width  outer width, default the source's width (plus the border)
-     * @param int|null $height outer height, default the source's height (plus the border)
+     * @internal Viewports are made by `Surface::host()`.
      */
     public function __construct(
         /** The surface shown in this viewport. */
         public readonly Surface $source,
-        int $x = 0,
-        int $y = 0,
-        ?int $width = null,
-        ?int $height = null,
+        private readonly Host $owner,
+        int $x,
+        int $y,
+        int $width,
+        int $height,
     ) {
         $this->x = $x;
         $this->y = $y;
-        $this->width = max(0, $width ?? $source->cols());
-        $this->height = max(0, $height ?? $source->rows());
+        $this->width = max(0, $width);
+        $this->height = max(0, $height);
         $this->borderStyle = Style::plain();
         $this->seenScrolled = $source->linesScrolled();
     }
 
-    /** Left column of the outer rectangle on the target. */
+    /** The surface this viewport is on. */
+    public function host(): Surface
+    {
+        return $this->owner->surface;
+    }
+
+    /** True while the host's focus is on this viewport's surface. */
+    public function isFocused(): bool
+    {
+        return $this->owner->focus === $this;
+    }
+
+    /** Left column of the outer rectangle on the host. */
     public function x(): int
     {
         return $this->x;
     }
 
-    /** Top row of the outer rectangle on the target. */
+    /** Top row of the outer rectangle on the host. */
     public function y(): int
     {
         return $this->y;
@@ -99,35 +117,77 @@ final class Viewport
         return max(0, $this->height - ($this->border ? 2 : 0));
     }
 
-    /** Place the outer rectangle with its top-left corner at column $x, row $y of the target. */
+    /** Place the outer rectangle with its top-left corner at column $x, row $y of the host. */
     public function move(int $x, int $y): static
     {
-        $this->x = $x;
-        $this->y = $y;
-        return $this;
-    }
-
-    /** Set the outer size. The source keeps its size; see `Component` for windows that resize their surface. */
-    public function resize(int $width, int $height): static
-    {
-        $this->width = max(0, $width);
-        $this->height = max(0, $height);
-        return $this;
-    }
-
-    /**
-     * Draw a one-cell border around the inner area, in $style (for example a different color for
-     * the focused window), or remove it with false.
-     */
-    public function setBorder(bool $border, ?Style $style = null): static
-    {
-        $this->border = $border;
-        if ($style !== null) {
-            $this->borderStyle = $style;
+        if ($x !== $this->x || $y !== $this->y) {
+            $old = $this->rect();
+            $this->x = $x;
+            $this->y = $y;
+            $this->owner->moved($this, $old);
         }
         return $this;
     }
 
+    /**
+     * Set the outer size. The source keeps its size unless the viewport fits it (`setFit()`);
+     * a source larger than the inner area is clipped, a smaller one leaves blank space.
+     */
+    public function resize(int $width, int $height): static
+    {
+        $width = max(0, $width);
+        $height = max(0, $height);
+        if ($width !== $this->width || $height !== $this->height) {
+            $old = $this->rect();
+            $this->width = $width;
+            $this->height = $height;
+            $this->fitSource();
+            $this->owner->moved($this, $old);
+        }
+        return $this;
+    }
+
+    /**
+     * Keep the source the size of the inner area (true), so a program in it fills the window and
+     * follows its resizes, or leave the source's size alone (false, the default for viewports
+     * made with `Surface::host()`; layouts turn it on for the surfaces they arrange).
+     */
+    public function setFit(bool $fit): static
+    {
+        $this->fit = $fit;
+        $this->fitSource();
+        return $this;
+    }
+
+    /** True if the source is kept the size of the inner area (see `setFit()`). */
+    public function fits(): bool
+    {
+        return $this->fit;
+    }
+
+    private function fitSource(): void
+    {
+        if ($this->fit && $this->innerWidth() > 0 && $this->innerHeight() > 0) {
+            $this->source->resize($this->innerWidth(), $this->innerHeight());
+        }
+    }
+
+    /**
+     * Draw a one-cell border around the inner area in $style, and in $focusStyle while the
+     * viewport has the host's focus (so the user sees which window gets the keys); remove it with
+     * false. A fitted source is resized to the new inner area.
+     */
+    public function setBorder(bool $border, ?Style $style = null, ?Style $focusStyle = null): static
+    {
+        $this->border = $border;
+        $this->borderStyle = $style ?? $this->borderStyle;
+        $this->focusStyle = $focusStyle ?? $this->focusStyle;
+        $this->fitSource();
+        $this->owner->changed($this);
+        return $this;
+    }
+
+    /** True if the viewport draws a border. */
     public function hasBorder(): bool
     {
         return $this->border;
@@ -136,10 +196,14 @@ final class Viewport
     /** The title shown in the top border (only visible with a border). */
     public function setTitle(string $title): static
     {
-        $this->title = $title;
+        if ($title !== $this->title) {
+            $this->title = $title;
+            $this->owner->changed($this);
+        }
         return $this;
     }
 
+    /** The title set with `setTitle()`. */
     public function title(): string
     {
         return $this->title;
@@ -151,7 +215,10 @@ final class Viewport
     /** Follow the bottom of the source again, so new output is in view. */
     public function follow(): static
     {
-        $this->following = true;
+        if (!$this->following) {
+            $this->following = true;
+            $this->owner->changed($this);
+        }
         return $this;
     }
 
@@ -172,6 +239,7 @@ final class Viewport
         $row = max(-$this->source->scrollbackSize(), min($max, $row));
         $this->following = $row >= $max;
         $this->pinnedTop = $row;
+        $this->owner->changed($this);
         return $this;
     }
 
@@ -185,6 +253,7 @@ final class Viewport
     public function pan(int $col): static
     {
         $this->left = max(0, min($col, max(0, $this->source->cols() - $this->innerWidth())));
+        $this->owner->changed($this);
         return $this;
     }
 
@@ -215,11 +284,11 @@ final class Viewport
     {
         $scrolled = $this->source->linesScrolled();
         if ($scrolled !== $this->seenScrolled) {
+            $d = $scrolled - $this->seenScrolled;
             if (!$this->following) {
-                $this->pinnedTop = max(-$this->source->scrollbackSize(), $this->pinnedTop - ($scrolled - $this->seenScrolled));
+                $this->pinnedTop = max(-$this->source->scrollbackSize(), $this->pinnedTop - $d);
             }
             if ($this->selection !== null) {
-                $d = $scrolled - $this->seenScrolled;
                 $this->selection[1] -= $d;
                 $this->selection[3] -= $d;
             }
@@ -230,39 +299,65 @@ final class Viewport
     // ------------------------------------------------------------------------------------------
     // Coordinates and selection
 
-    /** True if column $x, row $y of the target is inside the outer rectangle. */
+    /** True if column $x, row $y of the host is inside the outer rectangle. */
     public function contains(int $x, int $y): bool
     {
         return $x >= $this->x && $x < $this->x + $this->width && $y >= $this->y && $y < $this->y + $this->height;
     }
 
     /**
-     * The source position [col, row] shown at target column $x, row $y, or null if that point
-     * is not in the inner area. Rows can be negative (scrollback).
+     * The source position [col, row] shown at host column $x, row $y, or null if that point is
+     * not in the inner area. Rows can be negative (scrollback). With $clamp a point outside is
+     * moved to the nearest inner cell instead (for a mouse dragged out of the window).
      *
      * @return array{int,int}|null
      */
-    public function toSource(int $x, int $y): ?array
+    public function toSource(int $x, int $y, bool $clamp = false): ?array
     {
         $b = $this->border ? 1 : 0;
         $ix = $x - $this->x - $b;
         $iy = $y - $this->y - $b;
-        if ($ix < 0 || $iy < 0 || $ix >= $this->innerWidth() || $iy >= $this->innerHeight()) {
+        $w = $this->innerWidth();
+        $h = $this->innerHeight();
+        if ($w === 0 || $h === 0) {
+            return null;
+        }
+        if ($clamp) {
+            $ix = max(0, min($w - 1, $ix));
+            $iy = max(0, min($h - 1, $iy));
+        } elseif ($ix < 0 || $iy < 0 || $ix >= $w || $iy >= $h) {
             return null;
         }
         return [$this->left + $ix, $this->top() + $iy];
     }
 
     /**
+     * The host position [x, y] where source column $col, row $row shows, or null if it is not in
+     * view.
+     *
+     * @return array{int,int}|null
+     */
+    public function toHost(int $col, int $row): ?array
+    {
+        $ix = $col - $this->left;
+        $iy = $row - $this->top();
+        if ($ix < 0 || $iy < 0 || $ix >= $this->innerWidth() || $iy >= $this->innerHeight()) {
+            return null;
+        }
+        $b = $this->border ? 1 : 0;
+        return [$this->x + $b + $ix, $this->y + $b + $iy];
+    }
+
+    /**
      * Select text from source position ($fromCol, $fromRow) to ($toCol, $toRow) inclusive, in
      * reading order as a terminal selects (rows may be negative). The selection is highlighted
-     * when painted; `selectedText()` returns its text.
+     * (inverse video) and `selectedText()` returns its text. The host does this for mouse drags.
      */
     public function select(int $fromCol, int $fromRow, int $toCol, int $toRow): static
     {
         $this->syncScrolled();
         $this->selection = [$fromCol, $fromRow, $toCol, $toRow];
-        $this->paintedKey = null;
+        $this->owner->changed($this);
         return $this;
     }
 
@@ -271,11 +366,12 @@ final class Viewport
     {
         if ($this->selection !== null) {
             $this->selection = null;
-            $this->paintedKey = null;
+            $this->owner->changed($this);
         }
         return $this;
     }
 
+    /** True while text is selected. */
     public function hasSelection(): bool
     {
         return $this->selection !== null;
@@ -298,8 +394,7 @@ final class Viewport
             [$chars] = $this->source->rowData($row);
             $from = $row === $r1 ? $c1 : 0;
             $to = $row === $r2 ? $c2 : \count($chars) - 1;
-            $text = rtrim(implode('', \array_slice($chars, $from, $to - $from + 1)), ' ');
-            $out .= $text;
+            $out .= rtrim(implode('', \array_slice($chars, $from, $to - $from + 1)), ' ');
             if ($row !== $r2 && !$this->source->isWrapped($row)) {
                 $out .= "\n";
             }
@@ -322,11 +417,23 @@ final class Viewport
     }
 
     // ------------------------------------------------------------------------------------------
-    // Painting
+    // Painting (by the host)
+
+    /** @internal @return array{int,int,int,int} x, y, width, height */
+    public function rect(): array
+    {
+        return [$this->x, $this->y, $this->width, $this->height];
+    }
+
+    /** @internal Paint everything again at the next compose. */
+    public function invalidate(): void
+    {
+        $this->paintedKey = null;
+    }
 
     /**
-     * The target rows that must be repainted because the source changed, the view scrolled or
-     * the geometry, border, title or selection changed since the last `paint()`.
+     * @internal The host rows that must be repainted because the source changed, the view
+     * scrolled or the geometry, border, title, focus or selection changed since the last paint.
      *
      * @return list<int>
      */
@@ -334,7 +441,7 @@ final class Viewport
     {
         $key = $this->paintKey();
         if ($key !== $this->paintedKey || $this->paintedVersion === null) {
-            return range($this->y, $this->y + $this->height - 1);
+            return $this->height > 0 ? range($this->y, $this->y + $this->height - 1) : [];
         }
         $b = $this->border ? 1 : 0;
         $top = $this->top();
@@ -351,98 +458,83 @@ final class Viewport
     /** Everything that, when changed, means a full repaint. */
     private function paintKey(): string
     {
+        $style = $this->isFocused() && $this->focusStyle !== null ? $this->focusStyle : $this->borderStyle;
         return implode(',', [$this->x, $this->y, $this->width, $this->height, $this->border ? 1 : 0,
-            spl_object_id($this->borderStyle), $this->title, $this->top(), $this->left, $this->source->cols(),
+            spl_object_id($style), $this->title, $this->top(), $this->left, $this->source->cols(),
             $this->source->rows(), json_encode($this->selection)]);
     }
 
     /**
-     * Draw the viewport onto $target with escape sequences: the border and title, and the source
-     * cells of the inner area. With $rows, only those target rows are drawn. Everything outside
-     * the target is clipped. The target's cursor and pen are left changed (the compositor does
-     * not care; restore them yourself if you draw onto a surface a program also writes to).
+     * @internal The escape sequences that draw the given host rows of this viewport (border,
+     * title and source cells), clipped to a host of $cols x $rows. The host writes them to itself.
      *
-     * @param list<int>|null $rows target rows to draw, all when null
+     * @param array<int, mixed> $wanted host rows to draw, as keys
      */
-    public function paint(Surface $target, ?array $rows = null): void
+    public function paint(array $wanted, int $cols, int $rows): string
     {
         $this->syncScrolled();
         $out = '';
         $x0 = $this->x;
         $y0 = $this->y;
-        $w = $this->width;
         $h = $this->height;
-        $tcols = $target->cols();
-        $trows = $target->rows();
         $clipL = max(0, $x0);
-        $clipR = min($tcols, $x0 + $w);  // exclusive
-        if ($clipL >= $clipR) {
-            $this->markPainted();
-            return;
-        }
-        $wanted = $rows === null ? null : array_flip($rows);
-        $b = $this->border ? 1 : 0;
-        $innerW = $this->innerWidth();
-        $top = $this->top();
-        $left = $this->left;
-        $selection = $this->selectionRange();
-        $minRow = -$this->source->scrollbackSize();
-        $srcRows = $this->source->rows();
-
-        for ($r = 0; $r < $h; $r++) {
-            $ty = $y0 + $r;
-            if ($ty < 0 || $ty >= $trows || ($wanted !== null && !isset($wanted[$ty]))) {
-                continue;
-            }
-            if ($b && ($r === 0 || $r === $h - 1)) {
-                $out .= $this->borderRow($r === 0, $clipL, $clipR, $ty);
-                continue;
-            }
-            // one row: optional left border, inner cells, optional right border
-            $chars = [];
-            $styles = [];
-            if ($b) {
-                $chars[] = '│';
-                $styles[] = $this->borderStyle;
-            }
-            $srcRow = $top + $r - $b;
-            if ($srcRow >= $minRow && $srcRow < $srcRows) {
-                [$rc, $rs] = $this->source->rowData($srcRow);
-            } else {
-                $rc = $rs = [];
-            }
+        $clipR = min($cols, $x0 + $this->width);  // exclusive
+        if ($clipL < $clipR) {
+            $b = $this->border ? 1 : 0;
+            $style = $this->isFocused() && $this->focusStyle !== null ? $this->focusStyle : $this->borderStyle;
+            $innerW = $this->innerWidth();
+            $top = $this->top();
+            $left = $this->left;
+            $selection = $this->selectionRange();
+            $minRow = -$this->source->scrollbackSize();
+            $srcRows = $this->source->rows();
             $plain = Style::plain();
-            for ($i = 0; $i < $innerW; $i++) {
-                $col = $left + $i;
-                $ch = $rc[$col] ?? ' ';
-                $st = $rs[$col] ?? $plain;
-                if ($ch === '' && $i === 0) {
-                    $ch = ' ';    // second half of a wide character cut at the left edge
-                } elseif ($ch !== '' && $i === $innerW - 1 && ($rc[$col + 1] ?? null) === '') {
-                    $ch = ' ';    // wide character cut at the right edge
+            for ($r = 0; $r < $h; $r++) {
+                $ty = $y0 + $r;
+                if ($ty < 0 || $ty >= $rows || !isset($wanted[$ty])) {
+                    continue;
                 }
-                if ($selection !== null && self::inSelection($selection, $col, $srcRow)) {
-                    $st = $st->has(Style::INVERSE) ? $st->without(Style::INVERSE) : $st->with(Style::INVERSE);
+                if ($b && ($r === 0 || $r === $h - 1)) {
+                    $out .= $this->borderRow($r === 0, $style, $clipL, $clipR, $ty);
+                    continue;
                 }
-                $chars[] = $ch;
-                $styles[] = $st;
+                $chars = [];
+                $styles = [];
+                if ($b) {
+                    $chars[] = '│';
+                    $styles[] = $style;
+                }
+                $srcRow = $top + $r - $b;
+                if ($srcRow >= $minRow && $srcRow < $srcRows) {
+                    [$rc, $rs] = $this->source->rowData($srcRow);
+                } else {
+                    $rc = $rs = [];
+                }
+                for ($i = 0; $i < $innerW; $i++) {
+                    $col = $left + $i;
+                    $ch = $rc[$col] ?? ' ';
+                    $st = $rs[$col] ?? $plain;
+                    if ($ch === '' && $i === 0) {
+                        $ch = ' ';    // second half of a wide character cut at the left edge
+                    } elseif ($ch !== '' && $i === $innerW - 1 && ($rc[$col + 1] ?? null) === '') {
+                        $ch = ' ';    // wide character cut at the right edge
+                    }
+                    if ($selection !== null && self::inSelection($selection, $col, $srcRow)) {
+                        $st = $st->has(Style::INVERSE) ? $st->without(Style::INVERSE) : $st->with(Style::INVERSE);
+                    }
+                    $chars[] = $ch;
+                    $styles[] = $st;
+                }
+                if ($b) {
+                    $chars[] = '│';
+                    $styles[] = $style;
+                }
+                $out .= self::rowAnsi($chars, $styles, $x0, $clipL, $clipR, $ty);
             }
-            if ($b) {
-                $chars[] = '│';
-                $styles[] = $this->borderStyle;
-            }
-            $out .= $this->rowAnsi($chars, $styles, $x0, $clipL, $clipR, $ty);
         }
-        if ($out !== '') {
-            $target->write("\e(B" . $out . "\e[0m");
-        }
-        $this->markPainted();
-    }
-
-    private function markPainted(): void
-    {
         $this->paintedVersion = $this->source->version();
         $this->paintedKey = $this->paintKey();
+        return $out;
     }
 
     /** @param array{int,int,int,int} $sel */
@@ -458,16 +550,15 @@ final class Viewport
         return !($row === $r2 && $col > $c2);
     }
 
-    private function borderRow(bool $isTop, int $clipL, int $clipR, int $ty): string
+    private function borderRow(bool $isTop, Style $style, int $clipL, int $clipR, int $ty): string
     {
         $w = $this->width;
         $chars = array_fill(0, $w, '─');
         $chars[0] = $isTop ? '┌' : '└';
         $chars[$w - 1] = $isTop ? '┐' : '┘';
         if ($isTop && $this->title !== '' && $w > 4) {
-            $title = ' ' . $this->title . ' ';
             $i = 1;
-            foreach (Text::clusters($title) as [$g, $gw]) {
+            foreach (Text::clusters(' ' . $this->title . ' ') as [$g, $gw]) {
                 if ($i + $gw > $w - 1) {
                     break;
                 }
@@ -478,17 +569,17 @@ final class Viewport
                 $i += $gw;
             }
         }
-        return $this->rowAnsi($chars, array_fill(0, $w, $this->borderStyle), $this->x, $clipL, $clipR, $ty);
+        return self::rowAnsi($chars, array_fill(0, $w, $style), $this->x, $clipL, $clipR, $ty);
     }
 
     /**
-     * Escape sequences that draw cells (a row starting at target column $x0) clipped to
+     * Escape sequences that draw cells (a row starting at host column $x0) clipped to
      * [$clipL, $clipR).
      *
      * @param list<string> $chars
      * @param list<Style>  $styles
      */
-    private function rowAnsi(array $chars, array $styles, int $x0, int $clipL, int $clipR, int $ty): string
+    private static function rowAnsi(array $chars, array $styles, int $x0, int $clipL, int $clipR, int $ty): string
     {
         $from = $clipL - $x0;
         $to = $clipR - $x0; // exclusive
@@ -500,11 +591,10 @@ final class Viewport
         for ($i = $from; $i < $to; $i++) {
             $ch = $chars[$i];
             if ($ch === '') {
-                if ($i === $from) {
-                    $ch = ' ';
-                } else {
+                if ($i !== $from) {
                     continue;
                 }
+                $ch = ' ';
             } elseif ($i === $to - 1 && ($chars[$i + 1] ?? null) === '') {
                 $ch = ' ';
             }

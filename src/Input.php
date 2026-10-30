@@ -6,15 +6,16 @@ use phasync\Tui\Internal\Signal;
 
 /**
  * The input channel of a Surface: the bytes its producer reads, as a program in a terminal reads
- * its stdin. Key presses, mouse reports and pastes sent to the Surface (`Surface::sendKey()` and
- * friends) and the terminal's answers to queries (cursor position, device attributes) arrive here,
- * already encoded the way a terminal program expects them.
+ * its stdin. Key presses, mouse reports and pastes given to the Surface (`Surface::dispatch()`)
+ * and the terminal's answers to queries (cursor position, device attributes) arrive here, already
+ * encoded the way a terminal program expects them.
  *
  * - A `Pty` attaches itself with `pipe()` and forwards everything to its process.
  * - A coroutine producer (`Surface::run()`) reads with `read()`, which waits for bytes without
  *   blocking other coroutines; decode them with `InputDecoder` if it wants `Key` events.
  *
- * `read()` must be called inside `fiber\run()` (the Screen runs everything there).
+ * `read()` must be called inside `fiber\run()`. Without a reader or a pipe, at most the newest
+ * 1 MiB is kept.
  */
 final class Input
 {
@@ -22,6 +23,7 @@ final class Input
     private bool $closed = false;
     private ?\Closure $sink = null;
     private Signal $signal;
+    private int $interrupts = 0;
 
     public function __construct()
     {
@@ -39,6 +41,9 @@ final class Input
             return;
         }
         $this->buffer .= $bytes;
+        if (\strlen($this->buffer) > 1 << 20) {
+            $this->buffer = substr($this->buffer, -(1 << 20));
+        }
         $this->signal->notify();
     }
 
@@ -49,7 +54,11 @@ final class Input
     public function read(int $max = 8192, float $timeout = \PHP_FLOAT_MAX): string
     {
         $deadline = $timeout === \PHP_FLOAT_MAX ? \PHP_FLOAT_MAX : microtime(true) + $timeout;
+        $interrupts = $this->interrupts;
         while ($this->buffer === '' && !$this->closed) {
+            if ($this->interrupts !== $interrupts) {
+                return '';
+            }
             $left = $deadline === \PHP_FLOAT_MAX ? \PHP_FLOAT_MAX : $deadline - microtime(true);
             if ($left <= 0 || !$this->signal->wait($left)) {
                 return '';
@@ -80,6 +89,13 @@ final class Input
             $this->buffer = '';
             $sink($bytes);
         }
+    }
+
+    /** Make the readers that are waiting right now return '' at once, without closing. */
+    public function interrupt(): void
+    {
+        $this->interrupts++;
+        $this->signal->notify();
     }
 
     /** End the channel: readers get the remaining bytes, then ''. Further writes are ignored. */
