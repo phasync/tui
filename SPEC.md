@@ -27,7 +27,7 @@ what and why in DEVNOTES.md and in the report, with the smallest `fiber\` additi
 do not quietly reach for phasync, and **do not work around the API's limits by going beneath it**:
 no `\Fiber` API (`Fiber::getCurrent()` and the like), no Swoole or Revolt calls, no assumption about
 what a task is. What `fiber\go()` returns is opaque: it is only ever passed to `await`, `await_all`
-or `await_any`, never inspected, compared or stored for its identity. A gap is a finding to report
+or `await_any`, or compared with `===` against `fiber\current()` (api 0.3.1), never inspected. A gap is a finding to report
 (the owner of `fiber-interop/api` would rather add the primitive than have libraries guess), and
 until it is filled the library does without, in the plain way, even at some cost.
 
