@@ -297,6 +297,56 @@ describe('built-ins', function () {
         });
     });
 
+    it('puts an existing child in a Box: the box shows it, its owner keeps it', function () {
+        $app = new class extends Component {
+            public bool $boxed = true;
+
+            protected function mount(): void
+            {
+                $this->child('input', fn() => new TextInput())->focus();
+            }
+
+            protected function render(): ?Layout
+            {
+                $input = $this->child('input', fn() => new TextInput());
+                if (!$this->boxed) {
+                    return Split::vertical()->add($input->surface);
+                }
+                // the child() made above, given to a container: no "already started"
+                return Split::vertical()->add($this->child('box', fn() => new Box($input, 'name'))->surface);
+            }
+
+            public function input(): TextInput
+            {
+                return $this->child('input');
+            }
+
+            public function box(): ?Box
+            {
+                return $this->child('box');
+            }
+        };
+        withApp($app, 12, 3, function (FakeTerminal $t, Component $app) {
+            sleep(0.01);
+            expect($t->text())->toBe("┌ name ────┐\n│          │\n└──────────┘")
+                ->and($app->box()->content())->toBe($app->input());
+            $t->type('ab');
+            expect($app->input()->value())->toBe('ab')
+                ->and($app->input()->hasFocus())->toBeTrue()
+                ->and($app->box()->hasFocus())->toBeTrue();
+            // the box goes, the input stays (it is the app's), shown without the border now
+            $box = $app->box();
+            $app->boxed = false;
+            $app->requestRender();
+            sleep(0.01);
+            expect($box->isMounted())->toBeFalse()
+                ->and($app->input()->isMounted())->toBeTrue()
+                ->and($t->text())->toStartWith('ab');
+            $t->type('c');
+            expect($app->input()->value())->toBe('abc');
+        });
+    });
+
     it('runs a program in a Terminal and hangs it up on dispose', function () {
         $exits = [];
         $term = new Terminal('printf "ready\n"; read x; echo "got $x"; exec sleep 30', onExit: function (int $code) use (&$exits) { $exits[] = $code; });

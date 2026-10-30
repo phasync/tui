@@ -95,7 +95,7 @@ describe('Log', function () {
         });
     });
 
-    it('keeps a view scrolled back on the same line when the lines are filtered, else goes to the end', function () {
+    it('keeps a view scrolled back on the same line when the lines are filtered, else on the same line number', function () {
         onScreen(new Log(), 20, 3, function (FakeTerminal $t, Log $log) {
             $all = array_map(fn($i) => ($i % 2 ? 'odd ' : 'even ') . $i, range(1, 30));
             $log->setLines($all);
@@ -103,10 +103,59 @@ describe('Log', function () {
             expect($t->text())->toBe("odd 19\neven 20\nodd 21");
             $log->setLines(array_values(array_filter($all, fn($l) => str_starts_with($l, 'odd'))));
             expect($t->text())->toBe("odd 19\nodd 21\nodd 23")->and($log->isFollowing())->toBeFalse();
+            // "odd 19" is gone: the view stays at line 9 rather than jumping to the end
             $log->setLines(array_values(array_filter($all, fn($l) => str_starts_with($l, 'even'))));
-            expect($log->isFollowing())->toBeTrue()->and($t->text())->toBe("even 28\neven 30\n");
+            expect($log->isFollowing())->toBeFalse()->and($t->text())->toBe("even 20\neven 22\neven 24");
+            $log->setLines($all);                   // "even 20" is there again
+            expect($t->text())->toBe("even 20\nodd 21\neven 22");
+            $log->follow();
             $log->setLines($all);                   // following: it keeps following
             expect($log->isFollowing())->toBeTrue()->and($t->text())->toBe("odd 29\neven 30\n");
+        });
+    });
+
+    it('keeps a view scrolled back in its place when setLines() re-styles the lines (regression)', function () {
+        onScreen(new Log(), 20, 3, function (FakeTerminal $t, Log $log) {
+            $plain = array_map(fn($i) => "line $i", range(1, 30));
+            $log->setLines($plain);
+            $log->scrollToLine(10);
+            expect($t->text())->toBe("line 11\nline 12\nline 13");
+            // every line gets a new style: no text is the same, the place is
+            $log->setLines(array_map(fn($l) => "\e[1m$l\e[0m", $plain));
+            expect($t->text())->toBe("line 11\nline 12\nline 13")
+                ->and($log->topLine())->toBe(10)->and($log->isFollowing())->toBeFalse();
+            // one line edited in place, the one at the top
+            $edited = $plain;
+            $edited[10] = 'line 11 (edited)';
+            $log->setLines($edited);
+            expect($t->text())->toBe("line 11 (edited)\nline 12\nline 13");
+        });
+    });
+
+    it('emits scroll when the lines in view change, for a component that shows them', function () {
+        onScreen(new Log(), 20, 3, function (FakeTerminal $t, Log $log) {
+            $seen = [];
+            $off = $log->on('scroll', function (Log $l) use (&$seen) {
+                $seen[] = [$l->topLine(), $l->bottomLine(), $l->isFollowing()];
+            });
+            $log->setLines(array_map(fn($i) => "line $i", range(1, 10)));
+            expect($seen)->toBe([[8, 9, true]]);
+            $log->append("line 11\n");              // following: the lines in view move
+            expect(end($seen))->toBe([9, 10, true]);
+            $log->scrollToLine(2);
+            expect(end($seen))->toBe([2, 4, false]);
+            $n = \count($seen);
+            $log->append("line 12\n");              // scrolled back: nothing in view changes
+            expect($seen)->toHaveCount($n);
+            $t->scroll(1, 1, -1);                   // the wheel, three rows up
+            expect(end($seen))->toBe([0, 2, false]);
+            $log->follow();
+            expect(end($seen))->toBe([10, 11, true]);
+            $t->resize(20, 4);
+            expect(end($seen))->toBe([9, 11, true]);
+            $off();
+            $log->scrollBy(-2);
+            expect(end($seen))->toBe([9, 11, true]);
         });
     });
 
@@ -275,6 +324,30 @@ describe('ListView', function () {
             expect($list->selected())->toBe('only')->and($list->select('missing'))->toBeFalse();
             $list->setItems([]);
             expect($list->selected())->toBeNull();
+        });
+    });
+
+    it('emits scroll when the items in view change, and says which they are', function () {
+        $items = array_map(fn($i) => "item $i", range(0, 19));
+        $list = new ListView($items);
+        $seen = [];
+        $list->on('scroll', function (ListView $l) use (&$seen) {
+            $seen[] = [$l->topIndex(), $l->bottomIndex()];
+        });
+        onScreen($list, 10, 5, function (FakeTerminal $t, ListView $list) use (&$seen) {
+            expect($seen)->toBe([[0, 4]]);          // the first render
+            $t->press('down', 'down');              // the selection stays in view: no scroll
+            sleep(0.01);
+            expect($seen)->toBe([[0, 4]]);
+            $list->select(9);
+            sleep(0.01);
+            expect(end($seen))->toBe([5, 9])->and($t->text())->toStartWith('item 5');
+            $t->scroll(1, 1, 1);                    // the wheel, three down
+            sleep(0.01);
+            expect(end($seen))->toBe([8, 12]);
+            $t->resize(10, 8);
+            sleep(0.01);
+            expect(end($seen))->toBe([8, 15]);
         });
     });
 });

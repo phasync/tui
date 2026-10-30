@@ -162,9 +162,23 @@ final class FakeTerminal extends TerminalDevice
         }
     }
 
-    /** Type text, one key per character (newlines as Enter). */
+    /**
+     * Type text: one key per character, as the user typing it; "\n" (or "\r") is Enter, "\t" Tab.
+     * For text only: arrows, function keys and keys with modifiers go through `press()`
+     * (`$t->press('up', 'ctrl+c', 'f5')`), and escape sequences as a terminal sends them through
+     * `feed()`. A control character other than those three (an ESC starting a sequence, a
+     * Ctrl-key byte) is refused, since it would arrive as a stray key rather than what was meant.
+     *
+     * @throws \InvalidArgumentException for a control character other than "\n", "\r" and "\t"
+     */
     public function type(string $text): void
     {
+        if (preg_match('/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/', $text, $m)) {
+            throw new \InvalidArgumentException(sprintf(
+                'type() is for text; control character 0x%02x: use press() for keys (\'up\', \'ctrl+c\') or feed() for escape sequences',
+                \ord($m[0]),
+            ));
+        }
         foreach (mb_str_split($text) as $ch) {
             $this->surface->dispatch(match ($ch) {
                 "\n", "\r" => new Key('enter'),

@@ -524,3 +524,33 @@ it('composes incrementally exactly what a fresh host composes from scratch (prop
         }
     }
 });
+
+it('paints a bordered window narrower or lower than its border (regression)', function () {
+    $src = vt('xyz', 3, 1);
+    $host = new Surface(6, 3);
+    $view = $host->host($src, 1, 0, 1, 3)->setBorder(true);
+    set_error_handler(fn(int $no, string $msg) => throw new ErrorException($msg, 0, $no));
+    try {
+        expect($host->line(0))->toBe(' ┌')                  // one cell wide: the left border only
+            ->and($host->line(1))->toBe(' │');
+        $view->resize(2, 1);
+        expect($host->line(0))->toBe(' ┌┐');
+        $src->write("\r1");
+        expect($host->line(0))->toBe(' ┌┐');
+    } finally {
+        restore_error_handler();
+    }
+});
+
+it('repaints a window scrolled back when its scrollback is rewritten under the same top row (regression)', function () {
+    $src = new Surface(6, 2, 100);
+    $src->write(implode("\r\n", array_map(fn($i) => "a$i", range(1, 10))));
+    $host = new Surface(6, 2);
+    $view = $host->host($src, 0, 0, 6, 2);
+    $view->scrollTo(-4);
+    expect($host->line(0))->toBe('a5');
+    // cleared and written again (as a log laid out anew does), then back to the same row
+    $src->write("\e[3J\e[H\e[2J" . implode("\r\n", array_map(fn($i) => "b$i", range(1, 10))));
+    $view->scrollTo(-4);
+    expect($host->line(0))->toBe('b5')->and($host->line(1))->toBe('b6');
+});

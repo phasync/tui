@@ -15,12 +15,18 @@ use phasync\Tui\Style;
  *
  * The border is drawn by the box's surface around the window that shows the content (see
  * `Viewport::setBorder()`), in $focusStyle while the content has the focus. The content gets
- * the area inside the border, and the focus when the box gets it.
+ * the area inside the border, and the focus when the box gets it. The content may be a
+ * component you made with `child()` already, to keep it when the box goes:
+ *
+ *     $log = $this->child('log', fn() => new Log());
+ *     $layout->add($this->child('box', fn() => new Box($log, 'files'))->surface);
  */
 final class Box extends Component
 {
     /**
-     * @param Component  $content    the component inside the border (started by the box)
+     * @param Component  $content    the component inside the border: a new one (the box starts
+     *                               it, and it ends with the box), or one started already, such as
+     *                               a child of yours (the box shows it; it stays yours)
      * @param string     $title      shown in the top border
      * @param Style|null $style      the border's style
      * @param Style|null $focusStyle the border's style while the content has the focus

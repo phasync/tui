@@ -186,6 +186,18 @@ it('takes raw bytes as the terminal sends them with feed(), escape sequences inc
     });
 });
 
+it('types text with type(), and refuses escape sequences and control bytes there', function () {
+    onTerminal(20, 4, function (FakeTerminal $terminal, Surface $root) {
+        $seen = [];
+        $root->on('key', function (Key $k) use (&$seen) { $seen[] = (string) $k; });
+        $terminal->type("a é\tb\n");
+        expect($seen)->toBe(['a', 'space', 'é', 'tab', 'b', 'enter']);
+        expect(fn() => $terminal->type("\e[A"))->toThrow(InvalidArgumentException::class, 'press()')
+            ->and(fn() => $terminal->type("\x03"))->toThrow(InvalidArgumentException::class)
+            ->and($seen)->toHaveCount(6);       // nothing of a refused call arrives
+    });
+});
+
 it('passes focus reports to the focused program', function () {
     onTerminal(10, 2, function (FakeTerminal $terminal, Surface $root) {
         $a = new Surface(10, 2);

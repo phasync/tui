@@ -29,6 +29,11 @@ use phasync\Tui\Text;
  * activates the selected item. The mouse: a click selects a row (a click on the selected row
  * activates it), the wheel scrolls. `$onSelect` is called whenever the selection changes,
  * `$onActivate` on Enter or the second click; both receive the key, the label and the list.
+ *
+ * **Events.** `scroll` (see `Component::on()`), with the list: the items in view changed
+ * (`topIndex()`, `bottomIndex()`), by the wheel, by a selection moved out of view, by new items
+ * or a resize. For a component that shows them ("12-30 of 200"):
+ * `$list->on('scroll', fn() => $this->requestRender())`.
  */
 final class ListView extends Component
 {
@@ -41,6 +46,8 @@ final class ListView extends Component
     /** The wheel moved the view away from the selection; the next move brings it back. */
     private bool $free = false;
     private Style $selectedStyle;
+    /** @var array{int,int}|null the items in view when `scroll` was emitted last */
+    private ?array $shown = null;
 
     /**
      * @param array<int|string, string> $items label by key, in order
@@ -124,6 +131,21 @@ final class ListView extends Component
         }
         $this->moveTo($at);
         return true;
+    }
+
+    /**
+     * The position in `items()` (0 the first) of the item on the top row: with `bottomIndex()`
+     * and `count($list->items())`, a "12-30 of 200" indicator. 0 for an empty list.
+     */
+    public function topIndex(): int
+    {
+        return $this->top;
+    }
+
+    /** The position in `items()` of the item on the last row in view (0 for an empty list). */
+    public function bottomIndex(): int
+    {
+        return max(0, min(\count($this->keys), $this->top + $this->surface->rows()) - 1);
     }
 
     private function moveTo(int $index): void
@@ -216,6 +238,10 @@ final class ListView extends Component
             $out .= "\e[0m";
         }
         $this->surface->write($out);
+        if ([$this->topIndex(), $this->bottomIndex()] !== $this->shown) {
+            $this->shown = [$this->topIndex(), $this->bottomIndex()];
+            $this->emit('scroll', $this);
+        }
         return null;
     }
 }

@@ -468,9 +468,13 @@ final class Viewport
     private function paintKey(): string
     {
         $style = $this->isFocused() && $this->focusStyle !== null ? $this->focusStyle : $this->borderStyle;
+        $top = $this->top();
+        // scrollback rows are not tracked as damage: a view showing them repaints when lines
+        // were added to the scrollback or it was cleared (ED 3), even if its top row is the same
+        $scrollback = $top < 0 ? $this->source->linesScrolled() . '/' . $this->source->scrollbackSize() : '';
         return implode(',', [$this->x, $this->y, $this->width, $this->height, $this->border ? 1 : 0,
-            spl_object_id($style), $this->title, $this->top(), $this->left, $this->source->cols(),
-            $this->source->rows(), json_encode($this->selection)]);
+            spl_object_id($style), $this->title, $top, $this->left, $this->source->cols(),
+            $this->source->rows(), json_encode($this->selection), $scrollback]);
     }
 
     /**
@@ -556,8 +560,8 @@ final class Viewport
                         $chars[] = $ch;
                         $styles[] = $st;
                     }
-                    if ($b) {
-                        $chars[] = '│';
+                    if ($b && $w > 1) {
+                        $chars[] = '│';     // (a window one cell wide has room for one side)
                         $styles[] = $style;
                     }
                 }
@@ -601,8 +605,10 @@ final class Viewport
     {
         $w = $this->width;
         $chars = array_fill(0, $w, '─');
+        if ($w > 1) {
+            $chars[$w - 1] = $isTop ? '┐' : '┘';
+        }
         $chars[0] = $isTop ? '┌' : '└';
-        $chars[$w - 1] = $isTop ? '┐' : '┘';
         if ($isTop && $this->title !== '' && $w > 4) {
             $i = 1;
             foreach (Text::clusters(' ' . $this->title . ' ') as [$g, $gw]) {

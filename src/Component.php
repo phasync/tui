@@ -75,6 +75,18 @@ use function fiber\current;
  * the component's surface (see `Surface::dispatch()`): a component sees them before its focused
  * child does, and returning true keeps them from going further. `onResize()` is told the new size.
  *
+ * **Showing another component's state.** A component whose `render()` reads the state of
+ * another (a pane title showing which lines of a `Log` are in view) listens to that component's
+ * events with `on()` and asks for a render; the built-ins say which events they emit (`Log` and
+ * `ListView`: `scroll`):
+ *
+ *     $log = $this->child('log', function () {
+ *         $log = new Log();
+ *         $log->on('scroll', fn() => $this->requestRender());
+ *         return $log;
+ *     });
+ *     // in render(): 'lines ' . ($log->topLine() + 1) . '-' . ($log->bottomLine() + 1)
+ *
  * **Errors.** An exception in a child's hooks, handlers or coroutines is contained to the child:
  * it is disposed with its children (their programs are hung up) and its rectangle shows the
  * error; the rest of the program keeps running. An exception in the root component ends the
@@ -87,7 +99,10 @@ abstract class Component
     public readonly Surface $surface;
 
     private ?Component $parent = null;
-    /** @var array<string, Component> */
+    /**
+     * @var array<string, Component> by key: the children this component owns, and components
+     * of another owner it shows (a container given an existing component)
+     */
     private array $children = [];
     /** @var list<Component> children disposed that have not ended yet: the end waits for them */
     private array $ending = [];
@@ -108,6 +123,10 @@ abstract class Component
     private ?\Throwable $error = null;
     /** @var list<\Closure> */
     private array $offs = [];
+    /** @var array<string, array<int, \Closure>> listeners of the component's events, by event */
+    private array $listeners = [];
+    /** @var \WeakMap<Surface, Component>|null the component on each surface that has one */
+    private static ?\WeakMap $onSurface = null;
 
     // ------------------------------------------------------------------------------------------
     // Hooks
@@ -210,6 +229,8 @@ abstract class Component
             $surface = $on ?? new Surface();
         }
         $this->surface = $surface;
+        self::$onSurface ??= new \WeakMap();
+        self::$onSurface[$surface] = $this;
         $this->mounted = true;
         $this->stopped = new Deferred();
         $this->ended = new Deferred();
@@ -290,7 +311,7 @@ abstract class Component
         if (\in_array($task, $this->tasks, true)) {
             return true;
         }
-        foreach ([...$this->children, ...$this->ending] as $child) {
+        foreach ([...$this->owned(), ...$this->ending] as $child) {
             if ($child->runs($task)) {
                 return true;
             }
@@ -324,9 +345,10 @@ abstract class Component
             }
             $this->parent->ending[] = $this;
         }
-        foreach (array_reverse($this->children) as $child) {
+        foreach (array_reverse($this->owned()) as $child) {
             $child->stop($timeout);
         }
+        $this->children = [];     // (those of another owner stay theirs)
         $this->stopped->resolve();
         $this->wake->notify();
         // the end: once the coroutines (told to stop just now) and the children have ended
@@ -350,6 +372,12 @@ abstract class Component
             }
             $this->end();
         });
+    }
+
+    /** @return list<Component> the children this component owns (not those it only shows) */
+    private function owned(): array
+    {
+        return array_values(array_filter($this->children, fn(Component $c) => $c->parent === $this));
     }
 
     /** The end of a disposed component: unmount(), then its parent may end. */
@@ -394,6 +422,43 @@ abstract class Component
     public function error(): ?\Throwable
     {
         return $this->error;
+    }
+
+    /**
+     * Listen to an event of this component: $listener is called with what the component passes
+     * (the built-ins pass themselves) every time it emits $event. Returns a function that removes
+     * the listener. Which events there are is up to the component; the built-ins document theirs
+     * (`Log` and `ListView` emit `scroll` when the part of their content in view changed). The
+     * use: a component that shows another's state in its `render()` listens and calls
+     * `requestRender()`. Input events are not component events: override `onKey()` and the
+     * other hooks, or listen on `$component->surface`.
+     *
+     * @param \Closure(mixed ...$data): mixed $listener
+     */
+    public function on(string $event, \Closure $listener): \Closure
+    {
+        $id = spl_object_id($listener);
+        $this->listeners[$event][$id] = $listener;
+        return function () use ($event, $id): void {
+            unset($this->listeners[$event][$id]);
+        };
+    }
+
+    /**
+     * Call the listeners of $event with $data (see `on()`): how a component tells others that
+     * something they may show changed. Document the events a component emits.
+     */
+    protected function emit(string $event, mixed ...$data): void
+    {
+        foreach ($this->listeners[$event] ?? [] as $listener) {
+            $listener(...$data);
+        }
+    }
+
+    /** True if something listens to $event: skip work that only a listener would need. */
+    protected function hasListeners(string $event): bool
+    {
+        return ($this->listeners[$event] ?? []) !== [];
     }
 
     /**
@@ -443,26 +508,29 @@ abstract class Component
 
     /**
      * True if keys go to this component (or through it to a descendant): it is on the focus path
-     * from the root, also while it is not shown yet (see `focus()`).
+     * from the root, also while it is not shown yet (see `focus()`). It reads the very path keys
+     * take, so it is true exactly when the next key would reach the component.
      */
     public function hasFocus(): bool
     {
-        if (!$this->mounted || !$this->surface->hasFocus()) {
+        if (!$this->mounted) {
             return false;
         }
-        // on the surface path from the top of its surface's tree; every ancestor must pass the
-        // keys this way, and the top (the root, or a component not shown yet) must get them
-        $top = $this->surface->root();
-        for ($c = $this; $c->parent !== null; $c = $c->parent) {
-            $passesTo = $c->parent->unshownFocus();
-            if ($c->surface === $top) {
-                return $passesTo === $c && $c->parent->hasFocus();
-            }
-            if ($passesTo !== null) {
-                return false;
-            }
+        // keys come down from the root of the tree the nearest shown component is in
+        $c = $this;
+        while ($c->surface->viewport() === null && $c->parent !== null) {
+            $c = $c->parent;
         }
-        return true;
+        // and take the way dispatch() gives them: at a component, to the child not shown yet it
+        // passes them to (see toUnshown()), else to the window its surface focuses
+        for ($s = $c->surface->root(); $s !== null; $s = $next?->surface ?? $s->focused()) {
+            if ($s === $this->surface) {
+                return true;
+            }
+            $on = self::$onSurface[$s] ?? null;
+            $next = $on !== null && $on->mounted ? $on->unshownFocus() : null;
+        }
+        return false;
     }
 
     /**
@@ -523,8 +591,19 @@ abstract class Component
      * The child component under $key, made with $create (and started) the first time it is
      * asked for. Use its `surface` in the layout `render()` returns. Without $create, the child
      * of that key if there is one, else null: to reach a child from a handler
-     * (`$this->child('dialog')?->dispose()`) or to show it only while it exists. A render that
-     * asks for a key, either way, keeps that child.
+     * (`$this->child('dialog')?->dispose()`) or to show it only while it exists. A child that
+     * was disposed is gone at once: `child($key)` gives null, and with $create a new one.
+     *
+     * After a render that returned a layout, the children it neither asked for (either way) nor
+     * shows are disposed; a child whose surface the layout shows is kept however it got there
+     * (`->add($this->dialog->surface)` keeps the dialog as `->add($this->child('dialog')->surface)`
+     * does).
+     *
+     * $create may also return a component that is started already, typically another
+     * component's child given to a container (`new Box($this->child('log', fn() => new Log()))`,
+     * whose `mount()` calls `child('content', fn() => $this->content)`): it is shown here and
+     * gets keys through here, but stays its owner's. This component does not dispose it, and its
+     * end does not wait for it.
      *
      * @template T of Component
      * @param (\Closure(): T)|null $create
@@ -536,7 +615,10 @@ abstract class Component
             $this->used[$key] = true;
         }
         if (isset($this->children[$key])) {
-            return $this->children[$key];
+            if ($this->children[$key]->mounted) {
+                return $this->children[$key];
+            }
+            unset($this->children[$key]);     // one of another owner's, disposed by it
         }
         if ($create === null) {
             return null;
@@ -544,6 +626,14 @@ abstract class Component
         $child = $create();
         if (!$child instanceof Component) {
             throw new \UnexpectedValueException("child('$key') must create a Component");
+        }
+        if ($child->stopped !== null) {
+            if (!$child->mounted) {
+                throw new \LogicException("child('$key'): " . $child::class . ' was disposed');
+            }
+            // started already (by its owner): shown here, and its owner's still
+            $this->children[$key] = $child;
+            return $child;
         }
         $child->parent = $this;
         $this->children[$key] = $child;
@@ -612,7 +702,11 @@ abstract class Component
         if ($layout !== null) {
             foreach ($this->children as $key => $child) {
                 if (!isset($used[$key]) && !$child->isShownIn($this->surface)) {
-                    $child->stop();         // a render does not wait for its coroutines
+                    if ($child->parent === $this) {
+                        $child->stop();     // a render does not wait for its coroutines
+                    } else {
+                        unset($this->children[$key]);     // another owner's: no longer shown here
+                    }
                 }
             }
         }
