@@ -36,12 +36,19 @@ A grid of cells with its own `cols` × `rows`, independent of the screen, plus s
   Scrolling off the top goes to scrollback (configurable limit, default a few thousand lines).
 - Replies: a Surface answers the few queries a program may send (DSR 5/6, DA primary) by handing
   the reply bytes to its producer (see `Input`). Title changes are observable.
-- Parsing must be efficient on large streams: find the next control byte with `strcspn`, copy
-  runs of printable text in one step, never copy the remainder of a large buffer per step.
-  `cat` of a 10 MB file into a Surface must run at a sensible fraction of the I/O speed.
-- Direct drawing, bypassing the parser, into the same cells: `put($x, $y, string $text, ?Style)`,
-  `fill(rect, char, Style)`, `clear()`, `scroll($n)`, `resize($cols, $rows)` (reflow is not
-  required; preserve what fits), `cell($x, $y)`, `line($y)` as text and as styled runs.
+- **ANSI is the only way to render into a Surface.** There is no direct cell-drawing API
+  (no `put()`/`fill()`): widgets, borders, graphs and the compositor's own drawing all go through
+  `write()` as escape sequences, so that every bug in the parser shows up at once in the library's
+  own output. Correctness of the emulator comes before everything else in this library; a sequence
+  that a real xterm handles must produce the same cells here. A small `Ansi` helper that *builds*
+  sequences (cursor to x,y; SGR for a style; erase) is welcome, as the producer side of the same
+  protocol.
+- Parse character by character, properly, with a real state machine (the VT500-style parser states:
+  ground, escape, CSI entry/param/intermediate, OSC/DCS string, …). Do not take shortcuts for
+  speed; PHP is fast enough when the parser is written well (a cursor into the chunk, no copying of
+  the remainder per step). Correctness first; measure later.
+- Reading the cells: `cell($x, $y)`, `line($y)` as text and as styled runs, `resize($cols, $rows)`
+  (reflow is not required; preserve what fits).
 - Damage tracking: which rows (or cells) changed since the last `takeDamage()`, so a compositor
   repaints only what changed.
 - Cursor: position, visibility, shape (as far as reported by the stream).
@@ -64,7 +71,8 @@ A grid of cells with its own `cols` × `rows`, independent of the screen, plus s
   and writes with `$surface->write()`. Document the difference plainly. Either way `symfony/console`
   or `laravel/prompts`-style ANSI output in the closure renders correctly, because the Surface is a
   terminal.
-- **Direct drawing**: the cell API above (graphs, tables, borders), used by widgets and apps.
+- **Program-generated output**: widgets and applications that draw (graphs, tables, borders)
+  produce escape sequences, with the `Ansi` helper, and `write()` them like any other producer.
 
 ## 3. Viewport
 
@@ -116,7 +124,8 @@ a child). More widgets belong to applications or later versions.
   `php -d extension=vendor/phasync/phasync/ext/phasync-8.5-nts-x86_64-glibc.so`). The VT parser has
   known-answer tests for every sequence class above and tests from recorded real program output
   (e.g. `ls --color`, a `symfony/console` progress bar, `vim` startup/exit, `htop` frames captured
-  with `script`). A throughput test for large streams.
+  with `script`), and tests comparing the Surface against a reference where one is available
+  (e.g. the same bytes through `tmux`/`script` and `tmux capture-pane`, if tmux is installed).
 - `examples/`: at least `split-shells.php` (two shells side by side, Tab to switch, status bar,
   resizes with the terminal, scrollback with the wheel), `coroutine-pane.php` (one pane a shell,
   one a PHP closure with `echo`, a progress bar and colors), `dashboard.php` (direct drawing).
@@ -129,4 +138,5 @@ a child). More widgets belong to applications or later versions.
 
 ## Non-goals (for now)
 
-Windows console, Unicode bidi, true reflow on resize, an HTML/CSS layer, a widget catalogue.
+Windows console, Unicode bidi, true reflow on resize, an HTML/CSS layer, a widget catalogue, a
+direct cell-drawing API (deliberately: not until the emulator is proven rock solid).
