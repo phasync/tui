@@ -50,3 +50,25 @@ it('runs the README\'s first program: resizes keep the text, focus moves, Ctrl-Q
     });
     expect(microtime(true) - $start)->toBeLessThan(5.0)->and($app->isMounted())->toBeFalse();
 });
+
+it('runs the README\'s screen from elements: typing, Tab, the dialog, the state shown', function () {
+    $readme = (string) file_get_contents(__DIR__ . '/../../README.md');
+    preg_match('/```php\n((?:(?!```).)*final class Profile.*?)```/s', $readme, $m);
+    expect($m[1])->toContain('fiber\run(fn() => $app->start(new Tty()));');
+    eval(preg_replace('/^fiber\\\\run\(.*$/m', '', $m[1]));
+    run(function () use (&$app) {
+        $app->start($t = new FakeTerminal(60, 9));
+        expect($t->text())->toContain('Profile')->toContain('not saved yet')
+            ->toContain('ctrl+s save  tab next field  ctrl+q quit');
+        $t->type('Ada');
+        $t->press('tab', 'down');
+        $t->press('ctrl+s');
+        sleep(0.02);
+        expect($t->text())->toContain('Save the profile?');
+        $t->press('enter');
+        sleep(0.02);
+        expect($t->text())->toContain('saved: Ada, ops');
+        $t->press('ctrl+q');
+        expect($t->isAttached())->toBeFalse();
+    });
+});

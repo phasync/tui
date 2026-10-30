@@ -164,8 +164,8 @@ final class ListView extends Component
 
     private function announce(?\Closure $callback): void
     {
-        if ($callback !== null && $this->index !== null) {
-            $callback($this->keys[$this->index], $this->labels[$this->index], $this);
+        if ($this->index !== null) {
+            $this->call($callback, $this->keys[$this->index], $this->labels[$this->index], $this);
         }
     }
 

@@ -27,7 +27,8 @@ use phasync\Tui\Text as TextUtil;
  *
  * `$buttons` maps each label to the answer it gives, in order; the first has the focus.
  * Left/Right and Tab/Shift-Tab move between them, Enter (or a click) presses one, Escape
- * cancels with the `$cancel` answer (null by default). The dialog is as large as its content
+ * cancels with the `$cancel` answer (null by default), which is also the answer when the
+ * dialog ends without one (its component was disposed, the program quit). The dialog is as large as its content
  * needs (a message wraps at 60 columns or the screen's width); give it a size with
  * `with(width: 50, height: 12)` for element content. Subclass it for dialogs of your own
  * (see `Confirm`); `close($answer)` ends it from code.
@@ -70,6 +71,14 @@ class Dialog extends Component
         }
         $this->emit('close', $this);
         $this->dispose();
+    }
+
+    /** Ended without an answer (its parent went, the program quit): the awaitable gets the `$cancel` answer. */
+    protected function unmount(): void
+    {
+        if (!$this->result()->isSettled()) {
+            $this->result()->resolve($this->cancel);
+        }
     }
 
     protected function bindings(): array

@@ -80,8 +80,11 @@ One primitive, one structure:
 5. **Layout** ([docs](docs/layout.md)): `Split` and `Stack` arrange a host's windows; resizing
    goes down to every pty.
 6. **Components** ([docs](docs/components.md)): `Component` adds a lifecycle, a coroutine, keyed
-   children and error boundaries; built-ins `Terminal`, `Log`, `TextInput`, `ListView`,
-   `StatusBar`, `Box`.
+   children and error boundaries; `render()` returns an element tree (`Column`, `Row`, `Layers`,
+   `Box`, `Text`, `Help`) that the library lays out into surfaces and paints through `write()`;
+   state that renders by itself, a stylesheet, key bindings as data. Built-ins `Terminal`,
+   `Log`, `TextInput`, `ListView`, `StatusBar`, `Box`.
+7. **Widgets** ([docs](docs/widgets.md)): `Editor`, `Select`, `Table`, `Dialog` and `Confirm`.
 
 The surfaces form one tree, whatever is in it: every surface knows its `parent()` and its
 `area()` on the root, and focus (`focus()`, `focusNext()`, `focusToward('left')`) follows that
@@ -165,6 +168,66 @@ final class App extends Component
 fiber\run(fn() => (new App())->start(new Tty()));     // until it quits
 ```
 
+**Screens from elements.** `render()` may return an element tree instead: the library lays it
+out into surfaces, keeps what is behind each element (focus, scroll, the child components)
+from render to render, and paints it with escape sequences like everything else. State
+renders by itself; keys are data; a dialog's answer is an awaitable.
+
+```php
+use phasync\Tui\{Component, Element, Stylesheet, Tty};
+use phasync\Tui\Component\{Confirm, Editor, Select};
+use phasync\Tui\Element\{Box, Column, Help, Row, Text};
+
+final class Profile extends Component
+{
+    protected function bindings(): array
+    {
+        return ['ctrl+s' => ['save', 'save'], 'tab' => ['next', 'next field'], 'ctrl+q' => ['quit', 'quit']];
+    }
+
+    protected function render(): Element
+    {
+        return new Column([
+            new Text('Profile', class: 'title'),
+            new Row([
+                new Box($this->child('name', fn() => new Editor(placeholder: 'your name', maxLines: 1)), 'Name'),
+                new Box($this->child('role', fn() => new Select(['dev' => 'Developer', 'ops' => 'Operations'])), 'Role', width: 20),
+            ]),
+            new Text($this->state->status ?? 'not saved yet', class: 'muted'),
+            new Help(),                                     // ctrl+s save  tab next field  ctrl+q quit
+        ]);
+    }
+
+    public function save(): void
+    {
+        $this->go(function () {
+            if (fiber\await($this->dialog(new Confirm('Save the profile?')))) {
+                $name = $this->child('name')->value();
+                $this->state->status = "saved: $name, " . $this->child('role')->selected();   // shows by itself
+            }
+        });
+    }
+
+    public function next(): void
+    {
+        $this->surface->focusNext();
+    }
+
+    public function quit(): void
+    {
+        $this->dispose();
+    }
+}
+
+$app = new Profile();
+$app->setStylesheet(Stylesheet::default()->with(['Text.title' => ['bold' => true, 'color' => '$accent']]));
+fiber\run(fn() => $app->start(new Tty()));
+```
+
+The name field types every letter (the focused widget comes first); Tab goes on to the role
+list, where Up/Down choose; Ctrl-S asks, and the answer arrives in the coroutine that awaits
+it. `examples/form.php` is a larger form.
+
 **How a program ends.** `fiber\run()` returns once nothing runs any more. Quitting (disposing
 the root component, closing the root surface, or detaching the device; each leads to the others)
 disposes the component tree: `Terminal`s hang their programs up with everything those started
@@ -191,6 +254,8 @@ $terminal->detach();
 - `examples/coroutine-pane.php`: a shell next to a PHP coroutine printing progress bars and
   colours (with `echo` under ext-phasync).
 - `examples/dashboard.php`: graphs and boxes drawn with escape sequences from coroutines.
+- `examples/form.php`: a form built from elements: one-line and multi-line editors, a pick list
+  with filtering and marks, a confirmation dialog, the keys in a footer.
 
 ## How it compares
 

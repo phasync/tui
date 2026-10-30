@@ -107,6 +107,7 @@ abstract class TerminalDevice
         if ($this->root !== null) {
             throw new \LogicException('This terminal already shows a surface; detach() it first');
         }
+        Internal\Runtime::check();
         $this->decoder = new InputDecoder();
         $this->wake = new Signal();
         $this->detached ??= new Signal();

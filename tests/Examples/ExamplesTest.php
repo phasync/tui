@@ -99,3 +99,19 @@ it('runs the dashboard', function () {
         expect($app->pty()->wait(5))->toBe(0);
     });
 });
+
+it('runs form: fields, the pick list, the confirmation, the footer of keys', function () {
+    example('form.php', [], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('Sign up', 10))->toBeTrue()
+            ->and($t->text())->toContain('your name')->toContain('ctrl+s save')->toContain('Languages');
+        $t->type('Ada');
+        $t->press('tab', 'tab');                    // the notes, then the languages
+        $t->press('space', 'down', 'space');        // PHP and Go
+        $t->press('ctrl+s');
+        expect($t->waitFor('Save this sign-up?'))->toBeTrue();
+        $t->press('enter');
+        expect($t->waitFor('Saved: Ada (php, go)'))->toBeTrue();
+        $t->press('ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();
+    });
+});

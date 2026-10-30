@@ -65,7 +65,7 @@ final class Terminal extends Component
             $exited->resolve($code);
             // a program ended by restart() is not announced
             if ($pty === $this->pty && $this->onExit !== null && $this->isMounted()) {
-                $this->go(fn() => ($this->onExit)($code, $this));
+                $this->go(fn() => $this->call($this->onExit, $code, $this));
             }
         });
     }

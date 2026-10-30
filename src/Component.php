@@ -20,16 +20,14 @@ use function fiber\current;
  *
  *     final class Clock extends Component
  *     {
- *         protected function render(): ?Layout
+ *         protected function render(): Element
  *         {
- *             $this->surface->write(Ansi::clearScreen() . Ansi::moveTo(0, 0) . date('H:i:s'));
- *             return null;                          // drew itself
+ *             return new Text(date('H:i:s'), style: ['bold' => true]);
  *         }
  *
  *         protected function run(): void
  *         {
- *             while ($this->sleep(1)) {             // false once disposed
- *                 $this->requestRender();
+ *             while ($this->sleep(1)) {             // false once disposed; each step renders
  *             }
  *         }
  *     }
@@ -58,26 +56,49 @@ use function fiber\current;
  * program up. Disposing the root component closes its surface, which detaches the device.
  * `fiber\run()` returns once the device is detached and every coroutine has ended.
  *
- * **Rendering.** `render()` either draws into `$this->surface` with escape sequences (the
- * surface is a terminal; see `Ansi`) and returns null, or returns a layout of child components'
- * surfaces. It runs after `sized()`, again whenever the component's area changed (its size, or
- * where it shows on the screen, `$this->surface->area()`: the terminal resized, a layout moved
- * or resized it, a window it is in moved), and after `requestRender()` (calls in the same moment
- * are batched into one render). So a render that reads its own rectangle is never stale. Children come from `child($key, $create)`: the
- * same key gives the same component on every render; after a render that returned a layout,
- * children it did not ask for are disposed. A child renders for the first time when the layout
- * that shows it has given it its size, so it never draws for a size it does not have.
+ * **Rendering.** `render()` returns an element tree (`Column`, `Row`, `Layers`, `Box`, `Text`,
+ * `Help` and components, see `Element`), or a layout of child components' surfaces, or draws
+ * into `$this->surface` with escape sequences (see `Ansi`) and returns null. Children come
+ * from `child($key, $create)` (the same key gives the same component on every render) or are
+ * placed in the tree with `new` (matched with the one at the same place, or of the same `key`,
+ * which keeps its state and takes the new props). After a render, children it neither asked
+ * for nor shows are disposed. A child renders for the first time when the layout that shows
+ * it has given it its size, so it never draws for a size it does not have.
  *
- *     protected function render(): ?Layout
+ *     protected function render(): Element
  *     {
- *         return Split::vertical()
- *             ->add($this->child('log', fn() => new Log())->surface)
- *             ->add($this->child('input', fn() => new TextInput())->surface, 1);
+ *         return new Column([
+ *             new Box($this->child('log', fn() => new Log()), 'log'),
+ *             $this->child('input', fn() => new Editor(maxLines: 1)),
+ *         ]);
  *     }
+ *
+ * **When it renders: by itself.** A component renders again in the next frame after its state
+ * changed (`$this->state`, see `State`), after one of its handlers took an event (`onKey()`
+ * and the others returning true, a bound key), after a step of one of its coroutines (each
+ * `sleep()`, and the end of a `go()` that waited), after a callback or listener it made ran (a
+ * closure of the component given to a child: `onSubmit`, `on('scroll', ...)`), when a parent's
+ * render gave it new props, and when its area changed (size or place). Everything that happens
+ * in one moment is one render, parents before their children. There are no signals or
+ * dependency tracking: computed values are methods that `render()` calls. `requestRender()`
+ * is for the rest (a change the component cannot see, such as data outside it).
+ *
+ * **Style.** Elements and components take `class:`, `id:` and `style:`; the stylesheet in force
+ * (`setStylesheet()` on the root, default `Stylesheet::default()`) gives each its colours,
+ * border and padding; `style()` gives a component that draws itself its own and its parts'.
+ *
+ * **Keys.** `bindings()` maps keys to public methods (`['ctrl+s' => 'save']`); the
+ * application changes them with `bind()`, and a `Help` element lists them. A key goes down the
+ * focus path: each component's `onKey()` on the way sees it first (the root's first); at the
+ * component it ends at (the focused one) its own bindings come first, then its `onKey()`, then
+ * the bindings of its parents, nearest first. A key nobody takes goes to the focused surface's
+ * program (a `Terminal`'s shell). So a text field types the letters an application binds, and
+ * an application's Ctrl-Q works wherever the focus is.
  *
  * **Events.** `onKey()`, `onMouse()`, `onPaste()` and `onFocus()` receive the events that reach
  * the component's surface (see `Surface::dispatch()`): a component sees them before its focused
  * child does, and returning true keeps them from going further. `onResize()` is told the new size.
+ * `dialog()` opens a modal `Dialog` over the component and gives its answer as an awaitable.
  *
  * **Showing another component's state.** A component whose `render()` reads the state of
  * another (a pane title showing which lines of a `Log` are in view) listens to that component's
@@ -802,7 +823,8 @@ abstract class Component extends Element
     /**
      * Start another coroutine that belongs to the component: an exception in it is contained
      * like one in `run()`, and the component's end (`unmount()`) waits for it. Make it end when
-     * `sleep()` returns false or `isMounted()` is false.
+     * `sleep()` returns false or `isMounted()` is false. When it ends after it waited (a fetch,
+     * an awaited dialog), the component renders.
      */
     protected function go(\Closure $task): void
     {
@@ -832,7 +854,8 @@ abstract class Component extends Element
 
     /**
      * Sleep up to $seconds, less if the component is disposed meanwhile; returns `isMounted()`.
-     * The loop of a component's coroutine: `while ($this->sleep(0.5)) { ... }`.
+     * The loop of a component's coroutine: `while ($this->sleep(0.5)) { ... }`. What the
+     * coroutine changed before it sleeps shows in the next frame (a render follows).
      */
     protected function sleep(float $seconds): bool
     {

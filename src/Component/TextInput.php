@@ -147,9 +147,7 @@ final class TextInput extends Component
                     $this->entries[] = $value;
                 }
                 $this->browsing = null;
-                if ($this->onSubmit !== null) {
-                    ($this->onSubmit)($value, $this);
-                }
+                $this->call($this->onSubmit, $value, $this);
                 return true;
             case $this->history && $key->is('up'):
                 if ($this->entries !== [] && $this->browsing !== 0) {
@@ -244,8 +242,8 @@ final class TextInput extends Component
 
     private function changed(bool $edit): void
     {
-        if ($edit && $this->onChange !== null) {
-            ($this->onChange)($this->value(), $this);
+        if ($edit) {
+            $this->call($this->onChange, $this->value(), $this);
         }
         $this->requestRender();
     }
