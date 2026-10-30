@@ -259,7 +259,18 @@ moment later.)
 | `clear()` | Remove all text. |
 | `lines(): list<string>` | The lines as given (escape sequences included), oldest first; an unfinished last line included. |
 | `setWordWrap(bool $on)`, `wordWrap(): bool` | Wrap between words or at any character; lays out again. |
-| `scrollBy(int $rows)`, `scrollTo(int $row)`, `follow()`, `isFollowing()` | Look back and follow the end again. |
+| `scrollToLine(int $line)` | Show line `$line` (an index into `lines()`, 0 the oldest kept) at the top: "go to line N". Clamped; near the end it shows the last lines and follows. |
+| `topLine(): int`, `bottomLine(): int` | The first and last line the view shows (in part), as indexes into `lines()`, also while it follows: "lines 120-160 of 300". |
+| `scrollBy(int $rows)`, `scrollTo(int $row)` | Scroll by rows of the laid-out text (a long line takes several, depending on the width): for paging by the window's height. `scrollTo()` row 0 is the top of the window when following, negative rows are older. |
+| `follow()`, `isFollowing()` | Follow the end again; true while it does. |
+
+**Lines, not rows.** An application addresses the text in lines, the numbers of `lines()`:
+which rows a line takes depends on the width and the wrapping, and stays the log's business.
+
+```php
+$log->scrollToLine($n - 1);                                       // go to line N
+$bar->set(sprintf('line %d of %d', $log->topLine() + 1, count($log->lines())));
+```
 
 The mouse wheel scrolls it and a drag selects and copies. A view scrolled back stays on the same
 line when the log is laid out again (a resize, a change of wrapping, `setLines()`).

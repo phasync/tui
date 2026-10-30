@@ -29,6 +29,15 @@
   the surface shows on its root changed (moved, resized, scrolled, hosted, unhosted), once per
   change of the tree.
 
+**Go to a line of a Log, and show which lines are in view**
+
+- `Log::scrollTo()` takes a row of the wrapped text, which an application could not compute
+  (a long line takes several rows, depending on the width), so "go to line N" and "line X of Y"
+  were impossible. New: `Log::scrollToLine(int $line)` shows a line (an index into `lines()`)
+  at the top, and `topLine()`/`bottomLine()` say which lines the view shows, also while it
+  follows the end. The view stays on that line while text arrives and across resizes.
+  `scrollTo()`/`scrollBy()` stay, documented as row-based (for paging by the window's height).
+
 ## 0.0.1-beta3 (2026-10-30)
 
 **A program starts at the size of its pane**

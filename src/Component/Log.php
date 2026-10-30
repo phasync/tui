@@ -23,10 +23,18 @@ use phasync\Tui\Viewport;
  * widens. The newest `$scrollback` lines are kept, and the view scrolls back `$scrollback` rows
  * (fewer lines than that when long lines take several rows).
  *
- * The view follows the end; the mouse wheel, `scrollBy()` or `scrollTo()` look back, and it
+ * The view follows the end; the mouse wheel, `scrollToLine()` or `scrollBy()` look back, and it
  * stays on the same lines while more text arrives until `follow()` (or scrolling back to the
  * end). Dragging the mouse selects and copies text, as in any window. A view scrolled back stays
  * on the same line when the log is laid out again (a resize, `setLines()`).
+ *
+ * **Lines, not rows.** Lines are numbered as in `lines()` (0 the oldest kept); a long line takes
+ * several rows of the window, depending on the width. `scrollToLine()`, `topLine()` and
+ * `bottomLine()` count lines, so "go to line N" and "line X of Y" need no knowledge of the
+ * layout; `scrollBy()`/`scrollTo()` count rows, for paging by the window's height:
+ *
+ *     $log->scrollToLine($n);
+ *     $status->set(sprintf('line %d of %d', $log->topLine() + 1, count($log->lines())));
  *
  * **Filtering and editing.** To change lines already shown (filter them, re-style the selected
  * message, re-sort), keep the full list yourself and give what should show to `setLines()`: it
@@ -66,7 +74,7 @@ final class Log extends Component
         // the text is laid out in a surface of its own, shown through a viewport that scrolls it
         $this->content = new Surface($this->surface->cols(), $this->surface->rows(), $this->scrollback);
         $this->surface->setLayout((new Stack())->add($this->content));
-        $this->content->on('resize', fn() => $this->layout(self::QUICK_ROWS, $this->topLine()));
+        $this->content->on('resize', fn() => $this->layout(self::QUICK_ROWS, $this->pinnedLine()));
         $this->layout();
     }
 
@@ -86,7 +94,7 @@ final class Log extends Component
             if ($this->wordWrap) {
                 // the open line is laid out again with what it gets
                 if ($this->openRows - 1 >= $this->content->rows()) {
-                    $top = $this->topLine();
+                    $top = $this->pinnedLine();
                     $this->open .= $first;
                     $dropped = $this->add($pieces);
                     $this->layout(null, $top === null || $top < $dropped ? null : $top - $dropped);
@@ -137,7 +145,7 @@ final class Log extends Component
      */
     public function setLines(array $lines): void
     {
-        $top = $this->topLine();
+        $top = $this->pinnedLine();
         $text = $top === null ? null : ([...$this->lines, $this->open][$top] ?? null);
         $this->lines = \array_slice(array_values(array_map('strval', $lines)), -max(1, $this->scrollback - 1));
         $this->open = '';
@@ -169,7 +177,7 @@ final class Log extends Component
     public function setWordWrap(bool $wordWrap): void
     {
         if ($wordWrap !== $this->wordWrap) {
-            $top = $this->topLine();
+            $top = $this->pinnedLine();
             $this->wordWrap = $wordWrap;
             $this->layout(null, $top);
         }
@@ -181,13 +189,59 @@ final class Log extends Component
         return $this->wordWrap;
     }
 
-    /** Scroll by $rows: negative looks back, positive forward. */
+    /**
+     * Show line $line (an index into `lines()`: 0 is the oldest line kept) at the top of the
+     * view: "go to line N". The view stays there while more text arrives, until `follow()`;
+     * near the end it shows the last lines and follows. Out-of-range numbers are clamped; a line
+     * older than the scrollback rows can show (when long lines take several rows) brings the
+     * oldest one that can.
+     */
+    public function scrollToLine(int $line): void
+    {
+        $last = \count($this->lines()) - 1;
+        if ($last < 0) {
+            return;
+        }
+        if ($this->fullLayoutPending) {
+            $this->layout();        // the rows of every line, not only those laid out after a resize
+        }
+        $rows = $this->lineRows($this->laidCols);
+        $line = max(0, min($line, $last));
+        $this->view()->scrollTo($rows[$line] ?? $rows[array_key_last($rows)]);
+    }
+
+    /**
+     * The line (an index into `lines()`) at the top of the view, also when it follows the end;
+     * for a long line that starts above the view, that line. With `bottomLine()` and
+     * `count($log->lines())`: a "lines 120-160 of 300" indicator. 0 for an empty log.
+     */
+    public function topLine(): int
+    {
+        return $this->lineAt($this->view()->top());
+    }
+
+    /** The last line (an index into `lines()`) the view shows, at least in part. 0 for an empty log. */
+    public function bottomLine(): int
+    {
+        $view = $this->view();
+        return $this->lineAt($view->top() + max(1, $view->innerHeight()) - 1);
+    }
+
+    /**
+     * Scroll by $rows of the laid-out text (a long line takes several rows): negative looks back,
+     * positive forward. For scrolling by the window's height (Page Up/Down); to go to a line use
+     * `scrollToLine()`.
+     */
     public function scrollBy(int $rows): void
     {
         $this->view()->scrollBy($rows);
     }
 
-    /** Show from row $row at the top: 0 is the first visible row, negative rows are older. */
+    /**
+     * Show from row $row of the laid-out text at the top: 0 is the top row of the window when it
+     * follows the end, negative rows are older. Rows depend on the width and the wrapping; to
+     * address text use `scrollToLine()`, `topLine()` and `bottomLine()`, which count lines.
+     */
     public function scrollTo(int $row): void
     {
         $this->view()->scrollTo($row);
@@ -236,7 +290,7 @@ final class Log extends Component
     }
 
     /** The line at the top of a view scrolled back (an index into lines + [open]), or null when following. */
-    private function topLine(): ?int
+    private function pinnedLine(): ?int
     {
         $view = $this->view();
         if ($view === null || $view->isFollowing()) {
@@ -249,6 +303,19 @@ final class Log extends Component
             }
         }
         return null;
+    }
+
+    /** The line (an index into `lines()`) that content row $row belongs to, the nearest one when none does. */
+    private function lineAt(int $row): int
+    {
+        $last = max(0, \count($this->lines()) - 1);
+        $rows = $this->lineRows($this->laidCols);       // newest first
+        foreach ($rows as $k => $start) {
+            if ($start <= $row) {
+                return min($k, $last);
+            }
+        }
+        return min((int) array_key_last($rows), $last);
     }
 
     /**
@@ -309,7 +376,7 @@ final class Log extends Component
             $this->sleep(0.1);
             $this->fullLayoutPending = false;
             if ($this->isMounted()) {
-                $this->layout(null, $this->topLine());
+                $this->layout(null, $this->pinnedLine());
             }
         });
     }

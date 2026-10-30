@@ -138,6 +138,46 @@ describe('Log', function () {
     });
 });
 
+describe('Log lines', function () {
+    it('goes to a line and tells which lines are shown, whatever the wrapping', function () {
+        onScreen(new Log(), 10, 3, function (FakeTerminal $t, Log $log) {
+            // lines 0-29; every third one takes two rows at 10 columns
+            $log->setLines(array_map(fn($i) => $i % 3 === 0 ? "L$i " . str_repeat('w', 10) : "L$i", range(0, 29)));
+            expect($log->topLine())->toBe(28)->and($log->bottomLine())->toBe(29)   // following the end
+                ->and($log->isFollowing())->toBeTrue();
+            $log->scrollToLine(10);
+            expect($t->text())->toStartWith("L10\nL11\nL12 www")
+                ->and($log->topLine())->toBe(10)->and($log->bottomLine())->toBe(12)
+                ->and($log->isFollowing())->toBeFalse();
+            $log->scrollToLine(12);                 // a line of two rows at the top
+            expect($t->text())->toStartWith("L12 wwwwww\nwwww\nL13")
+                ->and($log->topLine())->toBe(12)->and($log->bottomLine())->toBe(13);
+            $log->append("more\n");                // stays on its line while text arrives
+            expect($log->topLine())->toBe(12);
+            $t->resize(5, 3);                       // laid out again: still line 12 at the top
+            expect($log->topLine())->toBe(12)->and($t->text())->toStartWith('L12 w');
+            $t->resize(10, 3);
+            $log->scrollToLine(1000);               // clamped: the end, following again
+            expect($log->isFollowing())->toBeTrue()->and($log->bottomLine())->toBe(30);
+            $log->scrollToLine(-5);
+            expect($log->topLine())->toBe(0)->and($t->text())->toStartWith("L0 wwwwwww\nwww\nL1");
+        });
+    });
+
+    it('counts lines in word wrap mode and for an empty log', function () {
+        onScreen(new Log(wordWrap: true), 12, 2, function (FakeTerminal $t, Log $log) {
+            expect($log->topLine())->toBe(0)->and($log->bottomLine())->toBe(0);
+            $log->scrollToLine(3);                  // nothing to go to
+            $log->append("one two three four five\nsix\nseven eight nine ten\nend\n");
+            $log->scrollToLine(2);
+            expect($t->text())->toBe("seven eight\nnine ten")
+                ->and($log->topLine())->toBe(2)->and($log->bottomLine())->toBe(2);
+            $log->scrollBy(-1);                     // one row back: line 1 at the top, line 2 cut at the bottom
+            expect($log->topLine())->toBe(1)->and($log->bottomLine())->toBe(2);
+        });
+    });
+});
+
 describe('TextInput', function () {
     it('submits the text and walks through the history with Up and Down', function () {
         $submitted = [];
