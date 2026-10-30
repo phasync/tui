@@ -18,6 +18,9 @@ use phasync\Tui\Pty;
  *
  * The program gets the component's surface as its terminal: its size (and every resize, with
  * SIGWINCH), its keys and pastes when the component has the focus, the answers to its queries.
+ * It starts when the component has its real size (`sized()`: the render of the parent that shows
+ * it), so full-screen programs that read their size once at start (vim, htop, less) start at the
+ * size of their pane; a Terminal that no render shows has not started its program yet.
  *
  * When the program exits, the component stays as it is, showing the last output, and announces
  * it: `$onExit` is called with the exit status (in a coroutine of the component), and the
@@ -47,12 +50,17 @@ final class Terminal extends Component
 
     protected function mount(): void
     {
+        $this->exited = new Deferred();
+    }
+
+    protected function sized(): void
+    {
         $this->launch();
     }
 
     private function launch(): void
     {
-        $exited = $this->exited = new Deferred();
+        $exited = $this->exited;
         $this->pty = Pty::start($this->command, $this->surface, $this->cwd, $this->env, function (int $code, Pty $pty) use ($exited): void {
             $exited->settle(true, $code);
             // a program ended by restart() is not announced
@@ -82,9 +90,13 @@ final class Terminal extends Component
             throw new \LogicException('Only a mounted Terminal can restart its program');
         }
         $old = $this->pty;
+        if ($old === null) {
+            return;     // not started yet: it starts when it is sized
+        }
         $this->pty = null;
         $old?->hangUp();
         $this->surface->write("\ec");       // RIS: a fresh terminal for the new program
+        $this->exited = new Deferred();
         $this->launch();
     }
 
@@ -99,7 +111,7 @@ final class Terminal extends Component
         return $this->exited ?? throw new \LogicException('The Terminal has not been started');
     }
 
-    /** The pty the program runs in (for its pid, `kill()`, `write()`), or null before mounting. */
+    /** The pty the program runs in (for its pid, `kill()`, `write()`), or null before it started (see `sized()`). */
     public function pty(): ?Pty
     {
         return $this->pty;

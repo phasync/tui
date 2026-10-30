@@ -33,8 +33,13 @@ use function fiber\await_all;
  *     });
  *
  * **Lifecycle.** `start()` mounts a root component (a child is started by its parent's
- * `child()`): it gets its surface, `mount()` runs, the first `render()` follows once the size is
- * known, and `run()` starts as a coroutine. `dispose()` ends it: children are disposed first,
+ * `child()`): it gets its surface and `mount()` runs. Once it has its real size, `sized()` runs,
+ * then the first `render()`, then `run()` starts as a coroutine. A root has its size at once (a
+ * terminal device's, or that of the surface you give it); a child has it when its parent's
+ * render has placed it in a layout, so a child no render shows waits for the render that does.
+ * The rule for component authors: **`mount()` sets up props and state; work that depends on the
+ * rectangle (starting a program that reads its terminal size once, laying out text for the
+ * width) starts in `sized()`**. `dispose()` ends it: children are disposed first,
  * the `stopped()` awaitable resolves and `sleep()` returns false so coroutines can end, disposal
  * waits up to a second for them, then `unmount()` runs. Coroutines are not cancelled from
  * outside: write loops as `while ($this->sleep(...))` or check `isMounted()`.
@@ -90,12 +95,26 @@ abstract class Component
     private ?\Throwable $error = null;
     /** @var list<\Closure> */
     private array $offs = [];
+    /** A child focused before a render showed it: its keys go through this component meanwhile. */
+    private ?Component $focusPending = null;
 
     // ------------------------------------------------------------------------------------------
     // Hooks
 
-    /** Called once when the component is mounted, before the first render: set up state here. */
+    /**
+     * Called once when the component is mounted: set up props and state here, create children.
+     * The surface does not have its real size yet (a child is placed by its parent's next render).
+     */
     protected function mount(): void
+    {
+    }
+
+    /**
+     * Called once when the component has its real size (`$this->surface->cols()`/`rows()`), right
+     * before the first render: start what depends on the rectangle here, such as a program that
+     * reads its terminal size when it starts. Later sizes arrive with `onResize()`.
+     */
+    protected function sized(): void
     {
     }
 
@@ -181,9 +200,9 @@ abstract class Component
         $this->wake = new Signal();
         $s = $this->surface;
         $this->offs = [
-            $s->on('key', fn(Key $e) => $this->handle(fn() => $this->onKey($e))),
+            $s->on('key', fn(Key $e) => $this->handle(fn() => $this->onKey($e)) || $this->toPending($e)),
             $s->on('mouse', fn(Mouse $e) => $this->handle(fn() => $this->onMouse($e))),
-            $s->on('paste', fn(Paste $e) => $this->handle(fn() => $this->onPaste($e))),
+            $s->on('paste', fn(Paste $e) => $this->handle(fn() => $this->onPaste($e)) || $this->toPending($e)),
             $s->on('focus', function (Focus $e): void {
                 $this->handle(fn() => $this->onFocus($e));
                 $this->requestRender();
@@ -197,17 +216,12 @@ abstract class Component
         $this->guard($this->mount(...));
         if ($this->parent === null) {
             $this->firstRender();
-        } else {
-            // the parent renders it once its layout has sized it; if it does not show it, now
-            \fiber\go(function (): void {
-                \fiber\sleep(0);
-                $this->firstRender();
-            });
         }
+        // a child is sized and rendered by its parent's render that shows it
         return $this;
     }
 
-    /** The first render, then the coroutine; once. */
+    /** Sized, the first render, then the coroutine; once. */
     private function firstRender(): void
     {
         if ($this->rendered || !$this->mounted) {
@@ -215,6 +229,7 @@ abstract class Component
         }
         $this->rendered = true;
         $this->guard(function (): void {
+            $this->sized();
             $this->renderNow();
             $this->go($this->run(...));
         });
@@ -320,12 +335,44 @@ abstract class Component
     /**
      * Give the focus to this component: every host from the root down to it focuses the way to
      * it, so keys and pastes come here (and on to its focused child), through any hosts in
-     * between, components or plain surfaces (see `Surface::focus()`). Called before the parent
-     * shows it (in the parent's `render()`), it takes effect when the layout shows it.
+     * between, components or plain surfaces (see `Surface::focus()`). It takes effect at once:
+     * the very next key comes here, also when the component is not shown yet (a dialog created
+     * in a key handler, shown by the render that follows): until a render shows it, its keys and
+     * pastes go to it through its parent. The focus stays with it through every re-render.
      */
     public function focus(): void
     {
+        // not shown yet: the nearest ancestor that is takes its keys and passes them down
+        $this->focusPending = null;
+        $c = $this;
+        while ($c->parent !== null && $c->surface->viewport() === null) {
+            $c->parent->focusPending = $c;
+            $c = $c->parent;
+        }
+        if ($c !== $this) {
+            $c->surface->focus();
+        }
         $this->surface->focus();
+    }
+
+    /** Pass a key or paste to a child focused before it was shown; false when there is none. */
+    private function toPending(Key|Paste $event): bool
+    {
+        $child = $this->focusPending;
+        if ($child === null) {
+            return false;
+        }
+        // until it is shown, while it is mounted, and while nothing else has been focused since
+        $target = $child;
+        while ($target->focusPending !== null && $target->surface->viewport() === null) {
+            $target = $target->focusPending;
+        }
+        if (!$child->mounted || $child->surface->viewport() !== null || !$target->surface->isLatestFocus()) {
+            $this->focusPending = null;
+            return false;
+        }
+        $child->surface->dispatch($event);
+        return true;
     }
 
     /** True if keys go to this component: it is on the focus path from the root. */
@@ -413,9 +460,11 @@ abstract class Component
         if ($layout !== null) {
             $this->surface->setLayout($layout);
         }
-        // children made by this render draw for the first time, now that the layout sized them
+        // children shown for the first time draw now, at the size the layout gave them
         foreach ($this->children as $child) {
-            $child->firstRender();
+            if (!$child->rendered && $child->surface->viewport() !== null) {
+                $child->firstRender();
+            }
         }
         if ($layout !== null) {
             foreach ($this->children as $key => $child) {

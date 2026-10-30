@@ -250,3 +250,162 @@ it('focuses a component in a layout nested directly in another, across renders',
         $t->detach();
     });
 });
+
+/** a | (b over c) of TextInputs, and a dialog over all of it while it is open (Ctrl-O opens, Enter closes). */
+final class WithDialog extends Component
+{
+    public bool $open = false;
+    public bool $refocusOnClose = false;
+    /** @var array<string, Component\TextInput> */
+    public array $inputs = [];
+
+    public function input(string $key): Component\TextInput
+    {
+        return $this->inputs[$key] = $this->child($key, fn() => new Component\TextInput());
+    }
+
+    protected function render(): ?Layout
+    {
+        $plain = Split::horizontal()->add($this->input('a')->surface)
+            ->add(Split::vertical()->add($this->input('b')->surface)->add($this->input('c')->surface));
+        if (!$this->open) {
+            return $plain;
+        }
+        return (new Stack())->add($plain)->add($this->input('dialog')->surface, 20, 3, title: 'Name');
+    }
+
+    protected function onKey(phasync\Tui\Key $key): bool
+    {
+        if ($key->is('ctrl+o')) {
+            $this->open = true;
+            $this->input('dialog')->focus();        // before the render that shows it
+            $this->requestRender();
+            return true;
+        }
+        if ($this->open && $key->is('enter')) {
+            $this->open = false;
+            if ($this->refocusOnClose) {
+                $this->input('a')->focus();
+            }
+            $this->requestRender();
+            return true;
+        }
+        return false;
+    }
+}
+
+it('keeps the keyboard working after a modal over a nested layout opens and closes', function () {
+    run(function () {
+        $app = (new WithDialog())->start($t = new FakeTerminal(60, 10));
+        $app->inputs['c']->focus();
+        $t->type('one');
+        $t->press('ctrl+o');
+        sleep(0.01);
+        expect($t->text())->toContain('Name');
+        $t->type('dlg');
+        $t->press('enter');
+        sleep(0.01);
+        expect($t->text())->not->toContain('Name');
+        $t->type('two');                        // back where it was before the dialog
+        expect($app->inputs['c']->value())->toBe('onetwo')
+            ->and($app->inputs['dialog']->value())->toBe('dlg');
+        // and again, with several renders in between
+        $t->press('ctrl+o');
+        sleep(0.01);
+        $app->requestRender();
+        sleep(0.01);
+        $t->press('enter');
+        sleep(0.01);
+        $t->type('3');
+        expect($app->inputs['c']->value())->toBe('onetwo3');
+        $t->detach();
+    });
+});
+
+it('sends the keys typed right after a focus change to the new focus, before the render shows it', function () {
+    run(function () {
+        $app = (new WithDialog())->start($t = new FakeTerminal(60, 10));
+        $app->inputs['b']->focus();
+        $t->press('ctrl+o', 'x', 'y');          // no render in between: the dialog is not shown yet
+        expect($app->inputs['dialog']->value())->toBe('xy')->and($app->inputs['b']->value())->toBe('');
+        sleep(0.01);
+        $t->type('z');
+        $app->refocusOnClose = true;
+        $t->press('enter', 'q');                // the focus moves to a at once, the dialog is still up
+        expect($app->inputs['dialog']->value())->toBe('xyz')->and($app->inputs['a']->value())->toBe('q');
+        sleep(0.01);
+        expect($t->text())->not->toContain('Name');
+        $t->detach();
+    });
+});
+
+it('starts a component\'s work that depends on its size when it is sized, not at mount', function () {
+    $probe = new class extends Component {
+        public array $log = [];
+
+        protected function mount(): void
+        {
+            $this->log[] = 'mount ' . $this->surface->cols();
+        }
+
+        protected function sized(): void
+        {
+            $this->log[] = 'sized ' . $this->surface->cols();
+        }
+
+        protected function render(): ?Layout
+        {
+            $this->log[] = 'render ' . $this->surface->cols();
+            return null;
+        }
+    };
+    $app = new class ($probe) extends Component {
+        public bool $show = false;
+
+        public function __construct(private Component $probe)
+        {
+        }
+
+        protected function render(): ?Layout
+        {
+            $probe = $this->child('probe', fn() => $this->probe);
+            return $this->show ? Split::horizontal()->add(new Surface(), 10)->add($probe->surface) : Split::horizontal();
+        }
+
+        public function show(): void
+        {
+            $this->show = true;
+            $this->requestRender();
+        }
+    };
+    run(function () use ($app, $probe) {
+        $app->start($t = new FakeTerminal(30, 5));
+        sleep(0.01);
+        expect($probe->log)->toBe(['mount 80']);       // not shown yet: not sized
+        $app->show();
+        sleep(0.01);
+        expect($probe->log)->toBe(['mount 80', 'sized 20', 'render 20']);
+        $t->detach();
+    });
+});
+
+it('starts the program of a Terminal at the size of its pane', function () {
+    $app = new class extends Component {
+        public ?Terminal $term = null;
+
+        protected function render(): ?Layout
+        {
+            // a program started at another size would be resized at once, and say so
+            $this->term = $this->child('t', fn() => new Terminal("trap 'echo resized' WINCH; stty size; sleep 5"));
+            return Split::horizontal()->add(new Surface(), 13)->add($this->term->surface);
+        }
+    };
+    run(function () use ($app) {
+        $app->start($t = new FakeTerminal(70, 21));
+        expect($t->waitFor(fn() => $app->term->surface->line(0) !== '', 5))->toBeTrue()
+            ->and($app->term->surface->line(0))->toBe('21 57');
+        sleep(0.3);
+        expect($app->term->surface->text())->not->toContain('resized');
+        $t->detach();
+    });
+});
