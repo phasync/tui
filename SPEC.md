@@ -272,7 +272,13 @@ scrolling (a dropdown of 30 items in 6 free rows shows 6 and scrolls; it never c
 horizontally the overlay is shifted left or right to stay inside, and narrowed only when wider
 than the root. Every overlay element therefore supports a height and width smaller than its
 content (a `ScrollView` inside, or the element's own scrolling), and is re-placed by the same rules
-when the root or the anchor changes. Focus moves
+when the root or the anchor changes. The decision is a **pure function** of what a floater needs to
+know: the anchor's absolute rectangle (`Surface::area()`), the root's size, the overlay's desired
+size and its placement preference; it returns the rectangle to host at. Implement it as a small
+value class (`Placement::for(anchor, root, desired, place)`), tested on a table of cases (bottom
+row, right edge, no room on either side, a terminal smaller than the overlay), used by `overlay()`
+and available to any widget that wants to decide for itself; the `area` event is what triggers a
+re-decision. Focus moves
 to the overlay by the surface tree's own rule; Escape, a click outside, or the anchor's component
 losing focus closes a non-modal overlay; a modal one takes all input until closed; closing returns
 the focus to where it was. The overlay follows its anchor when the anchor's area changes (resize,
