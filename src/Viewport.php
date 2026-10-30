@@ -48,6 +48,9 @@ final class Viewport
     // what was painted last, to find what needs repainting
     private ?int $paintedVersion = null;
     private ?string $paintedKey = null;
+    private ?string $paintedGeometry = null;
+    /** @var array<int, array{list<string>, list<Style>}> the cells painted on each host row, outer width */
+    private array $frame = [];
 
     /**
      * @internal Viewports are made by `Surface::host()`.
@@ -264,6 +267,11 @@ final class Viewport
             return $this->bottomTop();
         }
         $this->syncScrolled();
+        if ($this->pinnedTop >= $this->bottomTop()) {
+            // the window grew or the source shrank: the pinned position is the bottom now
+            $this->following = true;
+            return $this->bottomTop();
+        }
         return $this->pinnedTop;
     }
 
@@ -425,10 +433,11 @@ final class Viewport
         return [$this->x, $this->y, $this->width, $this->height];
     }
 
-    /** @internal Paint everything again at the next compose. */
+    /** @internal Paint everything again, in full, at the next compose. */
     public function invalidate(): void
     {
         $this->paintedKey = null;
+        $this->frame = [];
     }
 
     /**
@@ -465,22 +474,43 @@ final class Viewport
     }
 
     /**
-     * @internal The escape sequences that draw the given host rows of this viewport (border,
-     * title and source cells), clipped to a host of $cols x $rows. The host writes them to itself.
+     * @internal Forget what was painted on these host rows: the host's own producer wrote there,
+     * so they are written again in full at the next paint.
      *
-     * @param array<int, mixed> $wanted host rows to draw, as keys
+     * @param iterable<int> $rows
      */
-    public function paint(array $wanted, int $cols, int $rows): string
+    public function forgetRows(iterable $rows): void
+    {
+        foreach ($rows as $y) {
+            unset($this->frame[$y]);
+        }
+    }
+
+    /**
+     * @internal The escape sequences that bring the given host rows of this viewport (border,
+     * title and source cells) up to date on a host of $cols x $rows: only the cells that differ
+     * from what this viewport painted before, in runs, and none that a window above covers.
+     *
+     * @param array<int, mixed>             $wanted host rows to consider, as keys
+     * @param list<array{int,int,int,int}> $covers rectangles of the windows above this one
+     */
+    public function paint(array $wanted, int $cols, int $rows, array $covers = []): string
     {
         // the version first: changes made while the rows are read are painted next time
         $version = $this->source->version();
         $this->syncScrolled();
+        $geometry = $this->x . ',' . $this->y . ',' . $this->width . ',' . $this->height;
+        if ($geometry !== $this->paintedGeometry) {
+            $this->frame = [];      // moved or resized: everything is new
+            $this->paintedGeometry = $geometry;
+        }
         $out = '';
         $x0 = $this->x;
         $y0 = $this->y;
         $h = $this->height;
+        $w = $this->width;
         $clipL = max(0, $x0);
-        $clipR = min($cols, $x0 + $this->width);  // exclusive
+        $clipR = min($cols, $x0 + $w);  // exclusive
         if ($clipL < $clipR) {
             $b = $this->border ? 1 : 0;
             $style = $this->isFocused() && $this->focusStyle !== null ? $this->focusStyle : $this->borderStyle;
@@ -497,41 +527,55 @@ final class Viewport
                     continue;
                 }
                 if ($b && ($r === 0 || $r === $h - 1)) {
-                    $out .= $this->borderRow($r === 0, $style, $clipL, $clipR, $ty);
-                    continue;
-                }
-                $chars = [];
-                $styles = [];
-                if ($b) {
-                    $chars[] = '│';
-                    $styles[] = $style;
-                }
-                $srcRow = $top + $r - $b;
-                if ($srcRow >= $minRow && $srcRow < $srcRows) {
-                    [$rc, $rs] = $this->source->rowData($srcRow);
+                    [$chars, $styles] = $this->borderRow($r === 0, $style);
                 } else {
-                    $rc = $rs = [];
-                }
-                for ($i = 0; $i < $innerW; $i++) {
-                    $col = $left + $i;
-                    $ch = $rc[$col] ?? ' ';
-                    $st = $rs[$col] ?? $plain;
-                    if ($ch === '' && $i === 0) {
-                        $ch = ' ';    // second half of a wide character cut at the left edge
-                    } elseif ($ch !== '' && $i === $innerW - 1 && ($rc[$col + 1] ?? null) === '') {
-                        $ch = ' ';    // wide character cut at the right edge
+                    $chars = [];
+                    $styles = [];
+                    if ($b) {
+                        $chars[] = '│';
+                        $styles[] = $style;
                     }
-                    if ($selection !== null && self::inSelection($selection, $col, $srcRow)) {
-                        $st = $st->has(Style::INVERSE) ? $st->without(Style::INVERSE) : $st->with(Style::INVERSE);
+                    $srcRow = $top + $r - $b;
+                    if ($srcRow >= $minRow && $srcRow < $srcRows) {
+                        [$rc, $rs] = $this->source->rowData($srcRow);
+                    } else {
+                        $rc = $rs = [];
                     }
-                    $chars[] = $ch;
-                    $styles[] = $st;
+                    for ($i = 0; $i < $innerW; $i++) {
+                        $col = $left + $i;
+                        $ch = $rc[$col] ?? ' ';
+                        $st = $rs[$col] ?? $plain;
+                        if ($ch === '' && $i === 0) {
+                            $ch = ' ';    // second half of a wide character cut at the left edge
+                        } elseif ($ch !== '' && $i === $innerW - 1 && ($rc[$col + 1] ?? null) === '') {
+                            $ch = ' ';    // wide character cut at the right edge
+                        }
+                        if ($selection !== null && self::inSelection($selection, $col, $srcRow)) {
+                            $st = $st->has(Style::INVERSE) ? $st->without(Style::INVERSE) : $st->with(Style::INVERSE);
+                        }
+                        $chars[] = $ch;
+                        $styles[] = $st;
+                    }
+                    if ($b) {
+                        $chars[] = '│';
+                        $styles[] = $style;
+                    }
                 }
-                if ($b) {
-                    $chars[] = '│';
-                    $styles[] = $style;
+                // the cells of this row that the host shows (inside the host, not under a window above)
+                $visible = array_fill(0, $w, false);
+                for ($i = $clipL - $x0; $i < $clipR - $x0; $i++) {
+                    $visible[$i] = true;
                 }
-                $out .= self::rowAnsi($chars, $styles, $x0, $clipL, $clipR, $ty);
+                foreach ($covers as [$cx, $cy, $cw, $ch]) {
+                    if ($ty >= $cy && $ty < $cy + $ch) {
+                        for ($x = max($x0, $cx); $x < min($x0 + $w, $cx + $cw); $x++) {
+                            $visible[$x - $x0] = false;
+                        }
+                    }
+                }
+                $old = $this->frame[$ty] ?? null;
+                $this->frame[$ty] = [$chars, $styles];
+                $out .= self::diffAnsi($chars, $styles, $old, $visible, $x0, $ty);
             }
         }
         $this->paintedVersion = $version;
@@ -552,7 +596,8 @@ final class Viewport
         return !($row === $r2 && $col > $c2);
     }
 
-    private function borderRow(bool $isTop, Style $style, int $clipL, int $clipR, int $ty): string
+    /** @return array{list<string>, list<Style>} the cells of the top or bottom border row */
+    private function borderRow(bool $isTop, Style $style): array
     {
         $w = $this->width;
         $chars = array_fill(0, $w, '─');
@@ -571,40 +616,65 @@ final class Viewport
                 $i += $gw;
             }
         }
-        return self::rowAnsi($chars, array_fill(0, $w, $style), $this->x, $clipL, $clipR, $ty);
+        return [$chars, array_fill(0, $w, $style)];
     }
 
     /**
-     * Escape sequences that draw cells (a row starting at host column $x0) clipped to
-     * [$clipL, $clipR).
+     * Escape sequences that write the cells of a row (starting at host column $x0) that differ
+     * from $old (all of them without $old) and are visible, as runs: a cursor move to each run,
+     * SGR where the style changes. A wide character whose other half cannot be shown becomes a
+     * blank.
      *
-     * @param list<string> $chars
-     * @param list<Style>  $styles
+     * @param list<string>                          $chars
+     * @param list<Style>                           $styles
+     * @param array{list<string>, list<Style>}|null $old
+     * @param list<bool>                            $visible
      */
-    private static function rowAnsi(array $chars, array $styles, int $x0, int $clipL, int $clipR, int $ty): string
+    private static function diffAnsi(array $chars, array $styles, ?array $old, array $visible, int $x0, int $ty): string
     {
-        $from = $clipL - $x0;
-        $to = $clipR - $x0; // exclusive
-        if ($from >= $to) {
+        $n = \count($chars);
+        $write = [];
+        for ($i = 0; $i < $n; $i++) {
+            if ($visible[$i] && ($old === null || $old[0][$i] !== $chars[$i] || $old[1][$i] !== $styles[$i])) {
+                $write[$i] = true;
+            }
+        }
+        if ($write === []) {
             return '';
         }
-        $out = Ansi::moveTo($clipL, $ty);
+        // a wide character is written whole: both halves when either changed
+        foreach (array_keys($write) as $i) {
+            if ($chars[$i] === '' && $i > 0 && $visible[$i - 1]) {
+                $write[$i - 1] = true;
+            } elseif (($chars[$i + 1] ?? null) === '' && ($visible[$i + 1] ?? false)) {
+                $write[$i + 1] = true;
+            }
+        }
+        $out = '';
         $style = null;
-        for ($i = $from; $i < $to; $i++) {
+        $at = -1;
+        for ($i = 0; $i < $n; $i++) {
+            if (!isset($write[$i])) {
+                continue;
+            }
             $ch = $chars[$i];
             if ($ch === '') {
-                if ($i !== $from) {
-                    continue;
+                if (isset($write[$i - 1])) {
+                    continue;       // written with its first half
                 }
-                $ch = ' ';
-            } elseif ($i === $to - 1 && ($chars[$i + 1] ?? null) === '') {
-                $ch = ' ';
+                $ch = ' ';          // its first half is not shown
+            } elseif (($chars[$i + 1] ?? null) === '' && !isset($write[$i + 1])) {
+                $ch = ' ';          // its second half is not shown
+            }
+            if ($at !== $i) {
+                $out .= Ansi::moveTo($x0 + $i, $ty);
             }
             if ($styles[$i] !== $style) {
                 $style = $styles[$i];
                 $out .= Ansi::style($style);
             }
             $out .= $ch;
+            $at = $i + ($ch === $chars[$i] && ($chars[$i + 1] ?? null) === '' ? 2 : 1);
         }
         return $out;
     }

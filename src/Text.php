@@ -36,10 +36,32 @@ final class Text
         if (!mb_check_encoding($text, 'UTF-8')) {
             $text = mb_scrub($text, 'UTF-8');
         }
+        $out = [];
+        foreach (self::graphemes($text) as $g) {
+            $out[] = [$g, self::clusterWidth($g)];
+        }
+        return $out;
+    }
+
+    /**
+     * $text (valid UTF-8) split into grapheme clusters by the Unicode rules (UAX #29), as the
+     * Surface lays text out: a letter with its combining marks, an emoji with its modifiers, a
+     * ZWJ sequence or a flag is one cluster.
+     *
+     * @return list<string>
+     */
+    public static function graphemes(string $text): array
+    {
         preg_match_all('/\X/u', $text, $m);
         $out = [];
         foreach ($m[0] as $g) {
-            $out[] = [$g, self::clusterWidth($g)];
+            // PCRE2 before 10.43 does not break between two pictographs (GB999): "👍👍" would be
+            // one cluster. Break before every pictograph that does not follow a ZWJ (GB11).
+            if (\strlen($g) > 4 && ($parts = @preg_split('/(?<!\x{200D})(?=\p{Extended_Pictographic})/u', $g, -1, \PREG_SPLIT_NO_EMPTY)) !== false) {
+                array_push($out, ...$parts);
+            } else {
+                $out[] = $g;
+            }
         }
         return $out;
     }

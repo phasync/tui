@@ -324,10 +324,9 @@ final class Host
                 }
             }
             $out = '';
-            /** @var list<array{Viewport, array<int,true>}> $painted */
-            $painted = [];
-            foreach ($this->viewports as $v) {
-                [$vx, $vy, $vw, $vh] = $v->rect();
+            $count = \count($this->viewports);
+            foreach ($this->viewports as $index => $v) {
+                [, $vy, , $vh] = $v->rect();
                 $age = $v->source->syncAge();
                 if ($age !== null && $age < self::SYNC_TIMEOUT) {
                     // the program is drawing a frame: show it once it is complete
@@ -338,26 +337,24 @@ final class Host
                 foreach ($v->damagedRows() as $y) {
                     $set[$y] = true;
                 }
+                $forget = [];
                 for ($y = max(0, $vy); $y < min($rows, $vy + $vh); $y++) {
                     if (isset($own[$y])) {
                         $set[$y] = true;
+                        $forget[] = $y;
                     }
                 }
-                // rows repainted by a window below that overlaps this one
-                foreach ($painted as [$below, $belowRows]) {
-                    [$bx, , $bw] = $below->rect();
-                    if ($bx < $vx + $vw && $vx < $bx + $bw) {
-                        foreach ($belowRows as $y => $_) {
-                            if ($y >= $vy && $y < $vy + $vh) {
-                                $set[$y] = true;
-                            }
-                        }
-                    }
+                $v->forgetRows($forget);
+                if ($set === []) {
+                    continue;
                 }
-                if ($set !== []) {
-                    $out .= $v->paint($set, $cols, $rows);
-                    $painted[] = [$v, $set];
+                // a window writes no cell that a window above it covers, so it never has to
+                // repaint the windows above
+                $covers = [];
+                for ($j = $index + 1; $j < $count; $j++) {
+                    $covers[] = $this->viewports[$j]->rect();
                 }
+                $out .= $v->paint($set, $cols, $rows, $covers);
             }
             if ($out !== '') {
                 $this->surface->write($this->wrap($out));

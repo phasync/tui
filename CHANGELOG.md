@@ -17,7 +17,8 @@ The first version: a terminal UI library built on a real terminal emulator.
   its `echo` with ext-phasync. `Input`, `InputDecoder`, and the `Key`, `Mouse`, `Paste`, `Focus`
   events.
 - **Hosting**: a Surface hosts Surfaces through `Viewport`s to any depth. Hosts composite by
-  writing escape sequences to themselves; input goes down the focus path and is encoded for each
+  writing escape sequences to themselves, always as a diff: only the cells that changed, in runs,
+  never those under a window above, so a busy pane costs its changed cells and an idle one nothing; input goes down the focus path and is encoded for each
   program's modes; mouse wheel scrolling and drag-to-select with copy (OSC 52) where a program did
   not ask for the mouse; titles, bells and clipboard requests go up.
 - **Terminal devices**: `Tty` attaches the real terminal to a root Surface (minimal redraws at up

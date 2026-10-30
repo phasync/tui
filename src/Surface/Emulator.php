@@ -185,8 +185,7 @@ final class Emulator
         }
         // grapheme clusters by Unicode rules (\X): combining marks, ZWJ sequences, variation
         // selectors, flags and Hangul syllables each become one cell or two
-        preg_match_all('/\X/u', $text, $m);
-        foreach ($m[0] as $i => $g) {
+        foreach (Text::graphemes($text) as $i => $g) {
             if ($i === 0 && $this->extendsLast($g)) {
                 continue;
             }
@@ -331,7 +330,7 @@ final class Emulator
         $width = ($line->chars[$x + 1] ?? null) === '' ? 2 : 1;
         $after = $x + $width;
         $adjacent = $this->wrapPending ? $after === $this->cols && $this->x === $this->cols - 1 : $this->x === $after;
-        if (!$adjacent || preg_match_all('/\X/u', $prev . $g) !== 1) {
+        if (!$adjacent || \count(Text::graphemes($prev . $g)) !== 1) {
             return false;
         }
         $line->chars[$x] = $prev . $g;

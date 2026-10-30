@@ -1,5 +1,6 @@
 <?php
 
+use phasync\Tui\Ansi;
 use phasync\Tui\Color;
 use phasync\Tui\Focus;
 use phasync\Tui\Key;
@@ -377,4 +378,149 @@ it('does not lose rows changed while a host reads them (regression)', function (
     $host->compose();
     $src->write("\r\ncd");
     expect($view->damagedRows())->toBe([1])->and($host->line(1))->toBe('cd');
+});
+
+describe('always a diff', function () {
+    /** What the compositor writes to bring $view up to date (the bytes it writes to the host). */
+    function compositorBytes(Surface $host, phasync\Tui\Viewport $view): string
+    {
+        return $view->paint(array_flip($view->damagedRows()), $host->cols(), $host->rows());
+    }
+
+    it('writes only the cells that changed, not the row', function () {
+        $host = new Surface(40, 5);
+        $src = vt(str_repeat('x', 30) . "\r\n" . str_repeat('y', 30), 30, 3);
+        $view = $host->host($src, 2, 1);
+        $host->compose();
+        $src->write("\e[1;10HZ");
+        $bytes = compositorBytes($host, $view);
+        expect($bytes)->toContain('Z')->not->toContain('x')
+            ->and(\strlen($bytes))->toBeLessThan(20);
+    });
+
+    it('writes runs of changed cells with one style change each', function () {
+        $host = new Surface(40, 2);
+        $src = new Surface(30, 1);
+        $view = $host->host($src);
+        $host->compose();
+        $src->write("\e[1;3H\e[31mabc\e[1;20H\e[32mdef");
+        $bytes = compositorBytes($host, $view);
+        expect(substr_count($bytes, 'H'))->toBe(2)->and($bytes)->toContain('abc')->toContain('def');
+    });
+
+    it('costs nothing for an idle window', function () {
+        $host = new Surface(20, 3);
+        $host->host(vt('idle', 10, 2));
+        $host->compose();
+        $version = $host->version();
+        $host->compose();
+        expect($host->version())->toBe($version);
+    });
+
+    it('writes nothing under a window above', function () {
+        $host = new Surface(10, 1);
+        $below = vt('aaaaaaaaaa', 10, 1);
+        $above = vt('BB', 2, 1);
+        $view = $host->host($below);
+        $host->host($above, 4, 0);
+        $host->compose();
+        $below->write("\e[1;1Hcccccccccc");
+        $bytes = $view->paint(array_flip($view->damagedRows()), 10, 1, [$host->viewport($above)->rect()]);
+        expect(substr_count($bytes, 'c'))->toBe(8);
+        // in place: the window above is not repainted, so it would show if it had been overwritten
+        $below->write("\e[1;1Hdddddddddd");
+        $host->compose();
+        expect($host->line(0))->toBe('ddddBBdddd');
+    });
+
+    it('repaints in full only when the geometry changes', function () {
+        $host = new Surface(20, 3);
+        $src = vt('hello', 10, 1);
+        $view = $host->host($src);
+        $host->compose();
+        $view->setTitle('t');           // a border was not set: nothing to write
+        expect(compositorBytes($host, $view))->toBe('');
+        $view->move(1, 0);
+        expect(compositorBytes($host, $view))->toContain('hello');
+    });
+});
+
+it('composes incrementally exactly what a fresh host composes from scratch (property)', function () {
+    $focusStyle = Style::of(Color::GREEN);
+    // a fresh host with the same windows, composed once from nothing
+    $fresh = function (Surface $host) use ($focusStyle): string {
+        $f = new Surface($host->cols(), $host->rows());
+        foreach ($host->viewports() as $hv) {
+            $fv = $f->host($hv->source, $hv->x(), $hv->y(), $hv->width(), $hv->height())
+                ->setBorder($hv->hasBorder(), null, $focusStyle)->setTitle($hv->title());
+            if (!$hv->isFollowing()) {
+                $fv->scrollTo($hv->top());
+            }
+        }
+        $f->focus($host->focused());
+        // what the host's own producer wrote outside the windows
+        for ($y = 0; $y < $host->rows(); $y++) {
+            for ($x = 0; $x < $host->cols(); $x++) {
+                $covered = array_filter($host->viewports(), fn($v) => $v->contains($x, $y)) !== [];
+                $c = $host->cell($x, $y);
+                if (!$covered && $c->char !== '') {
+                    $f->write("\e7" . Ansi::moveTo($x, $y) . Ansi::style($c->style) . $c->char . "\e8");
+                }
+            }
+        }
+        $dump = $f->dump();
+        foreach ($host->viewports() as $hv) {
+            $f->unhost($hv->source);
+        }
+        return $dump;
+    };
+    $pieces = ['ab', 'X', ' ', '中', '👍', "\e[1m", "\e[0m", "\e[31m", "\e[44m", "\r\n", "\e[K", "\e[2;2H", "\e[1L", "\e[2P", 'é'];
+    foreach (range(1, 12) as $seed) {
+        mt_srand($seed);
+        $host = new Surface(24, 10);
+        $sources = [];
+        for ($i = 0; $i < 3; $i++) {
+            $sources[$i] = new Surface(mt_rand(4, 14), mt_rand(2, 6));
+            $host->host($sources[$i], mt_rand(-2, 18), mt_rand(-1, 8), mt_rand(3, 16), mt_rand(2, 7))
+                ->setBorder(mt_rand(0, 1) === 1, null, $focusStyle)->setTitle("w$i");
+        }
+        for ($step = 0; $step < 150; $step++) {
+            $s = $sources[$si = mt_rand(0, 2)];
+            $v = $host->viewport($s);
+            switch ($op = mt_rand(0, 12)) {
+                case 6:
+                    $v->move(mt_rand(-2, 18), mt_rand(-1, 8));
+                    break;
+                case 7:
+                    $host->raise($s);
+                    break;
+                case 8:
+                    $v->scrollBy(mt_rand(-3, 3));
+                    break;
+                case 9:
+                    $v->resize(mt_rand(3, 16), mt_rand(2, 7));
+                    break;
+                case 10:
+                    [$x, $y, $w, $h] = $v->rect();
+                    $host->unhost($s);
+                    $host->host($s, $x, $y, $w, $h)->setBorder(true, null, $focusStyle)->setTitle("w$si");
+                    break;
+                case 11:
+                    $host->focus($s);
+                    break;
+                case 12:
+                    $host->write("\e[" . mt_rand(1, 10) . ';' . mt_rand(1, 24) . 'H' . str_repeat('#', mt_rand(1, 8)));
+                    break;
+                default:
+                    $bytes = '';
+                    for ($j = mt_rand(1, 6); $j > 0; $j--) {
+                        $bytes .= $pieces[mt_rand(0, \count($pieces) - 1)];
+                    }
+                    $s->write($bytes);
+            }
+            if ($step % 3 === 0) {
+                expect($host->dump())->toBe($fresh($host), "seed $seed step $step");
+            }
+        }
+    }
 });

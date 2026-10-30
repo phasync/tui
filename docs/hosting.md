@@ -30,6 +30,16 @@ when `compose()` is called, or when a terminal device draws a frame. While a hos
 in the middle of a synchronized update (mode 2026), its window keeps showing the previous frame,
 for at most half a second, so its redraws never show half done.
 
+**Always a diff, never a full re-render.** Every level works from damage. A Surface records
+which rows changed; a window remembers the cells it last put on its host and writes only those
+that differ, coalesced into runs of the same style per row, and never the cells a window above
+covers (so a change below never repaints a window above). The terminal device in turn writes
+only the root's cells that differ from its previous frame. A window is repainted in full only
+when it is newly shown, moved, resized or raised, or when what covered it moved away. A pane
+printing continuously costs its changed cells per frame, whatever the byte volume (a spinner
+writing 40 kB between two frames costs a few dozen bytes on the terminal); an idle pane costs
+nothing.
+
 Windows are painted in hosting order (later ones on top). When a window moves or is unhosted,
 the host blanks the area it left, and what was beneath is repainted. What the host's own
 producer writes under a window is painted over by the window.

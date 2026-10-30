@@ -104,6 +104,25 @@ it('sends only what changed', function () {
     });
 });
 
+it('costs a busy pane its changed cells per frame, whatever the byte volume', function () {
+    onTerminal(60, 10, function (FakeTerminal $terminal, Surface $root) {
+        $mid = new Surface();
+        $pane = new Surface();
+        $root->setLayout(phasync\Tui\Split::horizontal()->add(new Surface())->add($mid));
+        $mid->setLayout(phasync\Tui\Split::vertical()->add($pane));
+        $mid->host($pane)->setBorder(true)->setTitle('busy');
+        $pane->write("working ");
+        $terminal->refresh();
+        $terminal->takeOutput();
+        // a spinner: 40 kB of output between two frames that changes one cell in the end
+        $pane->write(str_repeat("\e[1;9H|\e[1;9H/\e[1;9H-\e[1;9H\\", 2000) . "\e[1;9H*");
+        $terminal->refresh();
+        $out = $terminal->takeOutput();
+        expect($out)->toContain('*')->and(\strlen($out))->toBeLessThan(60)
+            ->and($terminal->surface->dump())->toBe($root->dump());
+    });
+});
+
 it('draws by itself, at most 60 frames a second', function () {
     onTerminal(20, 3, function (FakeTerminal $terminal, Surface $root) {
         sleep(0.05);

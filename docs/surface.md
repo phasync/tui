@@ -158,7 +158,9 @@ colour, null for the default) and `Color::name()` (for display) complete it.
 ## Measuring text: `Text`
 
 The widths the Surface lays text out with, for code that aligns text:
-`Text::width($text)` (cells), `Text::clusters($text)` (list of `[grapheme, width]`),
+`Text::width($text)` (cells), `Text::graphemes($text)` (grapheme clusters by UAX #29, also
+where the PCRE2 in use is older than 10.43 and would join consecutive emoji),
+`Text::clusters($text)` (list of `[grapheme, width]`),
 `Text::clusterWidth($grapheme)`, `Text::truncate($text, $width, $ellipsis = '…')`,
 `Text::pad($text, $width, $align = 'left'|'right'|'center')`.
 

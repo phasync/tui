@@ -76,6 +76,15 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
   the rows damaged in it, the host rows its own producer changed, and rows repainted by an
   overlapping window below; written to itself as `ESC 7 ESC[?6l SI ESC(B [ESC[4l] ... ESC[0m
   [ESC[4h] ESC 8` so the host's producer keeps cursor, pen, charsets, origin and insert mode.
+- Always a diff (spec 1e086d7): each Viewport keeps `frame` = the cells it last painted per host
+  row (outer width). paint() diffs the rows to consider (source damage, all rows when the paint
+  key changed) against it and writes only changed cells in runs (`diffAnsi`), skipping cells
+  under windows above (`$covers`), so windows below never force a repaint above (the old
+  "repaint rows painted below" pass is gone). The frame is reset on move/resize/raise
+  (`invalidate`); rows the host's own producer wrote (incl. blanking) are forgotten
+  (`forgetRows`) and rewritten whole. A property test checks incremental == fresh compose.
+- PCRE2 < 10.43 `\X` joins consecutive pictographs ("👍👍" one cluster): `Text::graphemes()`
+  splits again before each Extended_Pictographic not after ZWJ; the emulator uses it.
 - Moving/removing a window blanks its old rect at once (ECH, same wrapper); the host's own
   writes count as damage under windows, so what was below repaints at the next compose.
   Layouts draw separators after placing windows, so blanking cannot erase them.

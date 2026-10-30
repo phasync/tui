@@ -192,3 +192,12 @@ describe('C0 controls', function () {
         expect(vt("a\x00\x01\x05\x18\x1a\x7fb\x1c\x1d")->line(0))->toBe('ab');
     });
 });
+
+it('breaks between consecutive pictographs, which PCRE2 before 10.43 joins (regression)', function () {
+    $s = vt("👍👍☺️☺️👍🏽👍x", 20, 1);
+    $s->write('👍');             // across writes too
+    expect(array_map(fn($x) => $s->cell($x, 0)->char, range(0, 14)))
+        ->toBe(['👍', '', '👍', '', "☺\u{FE0F}", '', "☺\u{FE0F}", '', '👍🏽', '', '👍', '', 'x', '👍', ''])
+        ->and(phasync\Tui\Text::graphemes("👨\u{200D}👩👍"))->toBe(["👨\u{200D}👩", '👍'])
+        ->and(phasync\Tui\Text::width('👍👍'))->toBe(4);
+});
