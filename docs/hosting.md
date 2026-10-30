@@ -124,6 +124,7 @@ that stays on it (one that only moved) gets none.
 | `focused(): ?Surface` | The focused hosted surface, or null. |
 | `focusNext(bool $backwards = false): bool` | Move the focus to the next window (one that hosts nothing), depth first through the whole tree below, wrapping around; false when there is no other. Bind it to a key: Tab in a form, a prefix key where the windows are shells that need Tab. |
 | `focusToward(string $direction): bool` | Move the focus to the window next to the focused one: `'left'`, `'right'`, `'up'` or `'down'`, by where the windows show on the screen. Of the windows entirely on that side, those alongside the focused one come first, then the nearest, then the best centred. False when there is none. Bind it to Alt-arrows, or a prefix key and the arrows as in tmux. |
+| `setFocusable(bool $focusable)`, `isFocusable()` | Whether the surface takes the focus by itself (default true): a host whose windows were never focused gives the keys to the first one that does, and `focusNext()`/`focusToward()` skip those that do not (and everything below them). For labels and status lines; `focus()` still focuses one when asked. A host whose windows all refuse keeps the keys itself. |
 | `setFocusOnClick(bool $on)` | Whether a mouse press on a window focuses it (off by default), here and in every surface below that is not set otherwise: set it on the root for click-to-focus everywhere. |
 
 ## Viewport
@@ -142,7 +143,7 @@ construct one.
 | `move(int $x, int $y)` | Place the outer rectangle. |
 | `resize(int $width, int $height)` | Set the outer size; the source keeps its size unless the viewport fits it. |
 | `setFit(bool $fit)`, `fits()` | Keep the source the size of the inner area, so a program in it fills the window and is told about every resize. Layouts turn it on. |
-| `setBorder(bool $border, ?Style $style = null, ?Style $focusStyle = null)`, `hasBorder()` | A one-cell border, in `$focusStyle` while focused. |
+| `setBorder(bool\|string $border, ?Style $style = null, ?Style $focusStyle = null)`, `hasBorder()`, `borderKind()` | A one-cell border, in `$focusStyle` while focused; `$border` is the kind of line, `'single'`, `'round'`, `'double'`, `'heavy'` or `'ascii'` (`Viewport::BORDERS`), true for the kind set before, false for none. |
 | `setTitle(string $title)`, `title()` | The title in the top border. |
 | `follow()`, `isFollowing()` | Follow the bottom of the source (the default), so new output stays in view. |
 | `scrollTo(int $row)` | Pin the view with source row `$row` at the top; negative rows are scrollback. Clamped; scrolling to the bottom follows again. The view stays on the same text while more lines scroll in. |

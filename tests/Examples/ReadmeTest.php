@@ -58,17 +58,24 @@ it('runs the README\'s screen from elements: typing, Tab, the dialog, the state 
     eval(preg_replace('/^fiber\\\\run\(.*$/m', '', $m[1]));
     run(function () use (&$app) {
         $app->start($t = new FakeTerminal(60, 9));
+        try {
+            readmeProfile($t);
+        } finally {
+            $t->detach();
+        }
+    });
+});
+
+function readmeProfile(FakeTerminal $t): void
+{
         expect($t->text())->toContain('Profile')->toContain('not saved yet')
             ->toContain('ctrl+s save  tab next field  ctrl+q quit');
         $t->type('Ada');
         $t->press('tab', 'down');
         $t->press('ctrl+s');
-        sleep(0.02);
-        expect($t->text())->toContain('Save the profile?');
+        expect($t->waitFor('Save the profile?', 2))->toBeTrue();
         $t->press('enter');
-        sleep(0.02);
-        expect($t->text())->toContain('saved: Ada, ops');
+        expect($t->waitFor('saved: Ada, ops', 2))->toBeTrue();
         $t->press('ctrl+q');
         expect($t->isAttached())->toBeFalse();
-    });
-});
+}

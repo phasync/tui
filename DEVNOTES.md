@@ -5,13 +5,31 @@ README.md and docs/.
 
 ## Status (0.0.2-beta1; TODO-0.0.2-beta1.md, SPEC section 8)
 
-- [x] 1. Element tree (src/Element.php, src/Element/*, src/Internal/{Tree,ElementLayout,LayoutItem}.php)
-- [x] 2. Reactive state (src/State.php; Component scheduler renderFrame())
-- [x] 3. Stylesheet (src/Stylesheet.php, src/ComputedStyle.php), :hover
-- [x] 4. Bindings + Help
-- [ ] 5. Widgets: Editor, Select (extends Table), Table, Dialog/Confirm
-- [ ] 6. Ansi::clearHome() (done), version check (done: Internal/Runtime), docs/components.md,
-      docs/widgets.md, README tour, CHANGELOG, examples, tag
+All items of TODO-0.0.2-beta1.md done, in CHANGELOG.md; tests green with and without
+ext-phasync (444 tests).
+
+- [x] 1. Element tree (src/Element.php, src/Element/*, src/Internal/{Tree,ElementLayout,LayoutItem}.php);
+      tests/Elements/ElementTreeTest.php (rebuilt tree keeps focus+scroll, keys, mixed with
+      imperative drawing, random rebuild property test, device replay)
+- [x] 2. Reactive state (src/State.php; Component::renderFrame()); tests/Elements/StateTest.php
+- [x] 3. Stylesheet (src/Stylesheet.php, src/ComputedStyle.php), :hover; StyleTest.php
+- [x] 4. Bindings + Help; BindingsTest.php
+- [x] 5. Widgets Editor, Table, Select (extends Table), Dialog/Confirm; tests/Widgets/*
+- [x] 6. Ansi::clearHome(), version check (Internal/Runtime, at start() and attach()),
+      docs/components.md, docs/widgets.md, README tour (tests/Examples/ReadmeTest.php),
+      examples/form.php (ExamplesTest), CHANGELOG
+
+## Left for later versions (0.0.2)
+
+- Widgets 5-8 of SPEC 8.5 (Form, Checkbox/Radio/Button, Tabs, ProgressBar, Spinner, Tree,
+  ScrollView, draggable separators, Terminal onOutput, Markdown).
+- `:hover` only for components (elements are values; a Text has no state of its own).
+- Stylesheet has no combinators (descendant selectors); inheritance covers the common case.
+- Text elements do not scroll when longer than their box (ScrollView is a later widget).
+- Editor: no double-click word selection; a hanging space at a wrap point puts the cursor one
+  cell past the text at the row's end (clamped to the last column).
+- Table scrolls sideways by whole columns, not by cells.
+- Dialog with element content needs a size (`with(width:, height:)`) or gets 60x12 at most.
 
 ## Design decisions (0.0.2-beta1)
 
@@ -56,6 +74,19 @@ README.md and docs/.
   covers it); parts `Type::part:state` for what widgets draw. Box focus border: Tree sets the
   same style as normal and focus style and re-renders on Focus events of its surfaces, so a
   Box in an unfocused pane is not drawn focused (the compositor's isFocused() is per host).
+- **Help** lists only bindings with a description (`[method, description]`): an Editor binds
+  ~50 keys, a footer of all of them is noise.
+- **Dialogs** (`Component::dialog()`): the dialog is a child "\0dialogN"; the render wraps the
+  tree in `Layers([tree, ...dialogs])` (a Layout in a Stack; a null render hosts the dialog
+  surface directly), the border comes from the dialog's style; the close event (a listener of
+  the opener: renders it) unhosts at once and refocuses the surface focused before. Modality:
+  the opener's own onKey/bindings/paste are skipped while a dialog is open, its mouse listener
+  takes events outside the dialog. Bound methods run synchronously, so awaiting the answer is
+  done in a go() (documented). A dialog disposed unanswered resolves with `$cancel` in
+  unmount() (else the awaiting coroutine hung: phasync reported a deadlock).
+- **measure() changes**: Tree measures components through `measureFor()`, which remembers the
+  room and answer; after the component's own render, a different answer makes the parent
+  render (an Editor with maxLines that grew a line).
 - **:hover** only for components: any component's mouse listener records the pointer (root,
   x, y); components whose computed style considered a :hover rule are kept in a WeakMap and
   render again when their hover state flips. Such a component writes ?1003h to its surface

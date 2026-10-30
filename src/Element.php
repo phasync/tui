@@ -54,6 +54,7 @@ abstract class Element
         int|string|null $height = null,
         ?bool $disabled = null,
     ): static {
+        $before = $this->elementAttributes;
         foreach (['key' => $key, 'id' => $id, 'width' => $width, 'height' => $height, 'disabled' => $disabled, 'style' => $style] as $name => $value) {
             if ($value !== null) {
                 if ($name === 'width' || $name === 'height') {
@@ -65,8 +66,8 @@ abstract class Element
         if ($class !== null) {
             $this->elementAttributes['class'] = \is_array($class) ? array_values($class) : preg_split('/\s+/', trim($class), -1, \PREG_SPLIT_NO_EMPTY);
         }
-        if ($disabled !== null && $this instanceof Component) {
-            $this->requestRender();
+        if ($this instanceof Component && $this->elementAttributes !== $before) {
+            $this->requestRender();     // (its look may depend on them)
         }
         return $this;
     }

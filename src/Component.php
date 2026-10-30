@@ -182,7 +182,7 @@ abstract class Component extends Element
     private static ?\WeakMap $helpShown = null;
     /** @var \WeakMap<Component, bool>|null components with `:hover` rules, and whether the mouse was over them */
     private static ?\WeakMap $hoverAware = null;
-    /** @var array{Surface, int, int}|null where the mouse was last: the root and the cell on it */
+    /** @var array{\WeakReference<Surface>, int, int}|null where the mouse was last: the root and the cell on it */
     private static ?array $pointer = null;
 
     // ------------------------------------------------------------------------------------------
@@ -1109,11 +1109,13 @@ abstract class Component extends Element
     private function pointer(Mouse $mouse): bool
     {
         $area = $this->surface->area();
-        $at = [$this->surface->root(), $area->x + $mouse->x, $area->y + $mouse->y];
-        if ($at === self::$pointer) {
+        $root = $this->surface->root();
+        $x = $area->x + $mouse->x;
+        $y = $area->y + $mouse->y;
+        if (self::$pointer !== null && self::$pointer[0]->get() === $root && self::$pointer[1] === $x && self::$pointer[2] === $y) {
             return false;
         }
-        self::$pointer = $at;
+        self::$pointer = [\WeakReference::create($root), $x, $y];
         foreach (self::$hoverAware ?? [] as $component => $was) {
             if ($component->isHovered() !== $was) {
                 $component->requestRender();
@@ -1129,7 +1131,7 @@ abstract class Component extends Element
             return false;
         }
         [$root, $x, $y] = self::$pointer;
-        return $root === $this->surface->root() && $this->surface->area()->contains($x, $y);
+        return $root->get() === $this->surface->root() && $this->surface->area()->contains($x, $y);
     }
 
     /** @return list<string> the states of this component for the stylesheet */

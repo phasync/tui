@@ -118,12 +118,14 @@ and the coroutines of mounted components and your own.
 |---|---|
 | `mount(): void` | Once, at start: props, state, children. Not sized yet. |
 | `sized(): void` | Once, when the component has its real size, right before the first render: start work that depends on the rectangle here. |
-| `render(): ?Layout` | Draw into `$this->surface` and return null, or return a layout of child components' surfaces. |
+| `render(): Layout\|Element\|null` | Return an element tree (see "Element trees"), or a layout of child components' surfaces, or draw into `$this->surface` and return null. |
+| `propsChanged(): void` | A parent's render placed this component anew with other props; they were taken over (see "Props"). |
+| `bindings(): array` | The keys of the component and the public methods they run (see "Key bindings"). |
 | `run(): void` | The component's coroutine, started after the first render. |
 | `unmount(): void` | Once, after disposal, when the coroutines have returned and the children have ended. |
-| `onKey(Key $key): bool` | A key reached the surface; return true if handled. |
-| `onMouse(Mouse $mouse): bool` | A mouse event, in the component's coordinates; true if handled. |
-| `onPaste(Paste $paste): bool` | Text pasted while the component is on the focus path; true if handled. |
+| `onKey(Key $key): bool` | A key reached the surface; return true if handled (a render follows). |
+| `onMouse(Mouse $mouse): bool` | A mouse event, in the component's coordinates; true if handled (a render follows). |
+| `onPaste(Paste $paste): bool` | Text pasted while the component is on the focus path; true if handled (a render follows). |
 | `onFocus(Focus $focus): void` | The component gained or lost the focus (a render follows). |
 | `onResize(Resize $size): void` | The surface was resized (a render follows by itself; so does one after a move). |
 
@@ -131,6 +133,210 @@ Event handlers run as the event travels down the surface tree (see [hosting](hos
 component sees an event before its focused child does, and returning true stops it there. That
 is where application-wide keys go (a quit key on the root component); a widget that handles
 keys itself (a text field) returns true for the keys it uses.
+
+## Element trees
+
+`render()` may return a tree of **elements**, plain PHP values made anew on every render. The
+library lays the tree out into the component's surface (a surface for each text and each
+container, the child components' own surfaces where they are placed) and paints every element
+through `write()`, the way any producer draws: there is no other way onto a Surface.
+
+```php
+use phasync\Tui\Element\{Box, Column, Help, Layers, Row, Span, Text};
+
+protected function render(): Element
+{
+    return new Column([
+        new Text(['Status: ', new Span($this->status(), class: 'ok')]),
+        new Row([
+            new Box($this->child('files', fn() => new Select($this->files())), 'files', width: 30),
+            new Box($this->child('log', fn() => new Log()), 'log'),
+        ]),
+        new Help(),
+    ]);
+}
+```
+
+| Element | What it is |
+|---|---|
+| `Column(array $children, int $gap = 0)` | Children on top of each other (as `Split::vertical()`); each as high as its `height`. |
+| `Row(array $children, int $gap = 0)` | Children side by side (as `Split::horizontal()`); each as wide as its `width`. |
+| `Layers(array $children)` | Children over each other, the first at the bottom (as `Stack`); each `width` x `height`, placed by its `align` style (`left` top-left, `center`, `right` top-right). |
+| `Box(Element $child, string $title = '')` | A border with a title around one element; border line, colour and `padding` from the stylesheet. |
+| `Text(string\|array $content, bool $wrap = true)` | Text, wrapped between words (or cut with "…" when `wrap` is false), aligned by the `align` style; content is a string (SGR sequences allowed) or a list of strings and `Span`s. |
+| `Span(string $text, $class, $style)` | A run of text in another style, inside a `Text`. |
+| `Help(?Component $for = null)` | The keys in force for the focused component (or `$for`) and its parents, as "key action" pairs. |
+| any `Component` | Its surface, where it is placed: from `child()`, or `new` (see "Props"). |
+
+**Attributes.** Every element takes `key`, `id`, `class`, `style` (inline style properties),
+`width`, `height` and `disabled` as named arguments; a component takes them with `with()`
+(`$this->child('name', fn() => new Editor())->with(id: 'name', height: 1)`). Read them with
+`attribute('class')`.
+
+**Sizes.** In a `Column` a child's `height`, in a `Row` its `width`, in `Layers` both: cells,
+`'25%'`, `'1fr'` (a share of what is left after the others), or `'auto'` (what its content
+needs: `measure()`). Without one, `Text`, `Box` and `Help` are `'auto'` (a text is as high as
+its wrapped lines), containers `'1fr'`, and a component `'auto'` when its `measure()` knows a
+size (a one-line `Editor`: 1 row; a `Table`: its rows) and `'1fr'` otherwise. Sizes may also
+come from the stylesheet (`width`, `height`). When a component's `measure()` changes (an
+editor grew a line), its parent lays the tree out again by itself.
+
+**What stays.** Elements are matched with the previous render's by their place in the tree
+(positions and element types), or by `key` (for items of a list that come and go or move):
+the surface behind each stays, and with it the focus, scroll positions and the child
+components. A tree rebuilt on every render keeps everything; a `Text` that moves to another
+place in the tree is a new text, which costs only its repaint.
+
+**Focus.** Text and help do not take the focus (`Surface::setFocusable(false)`), nor do
+containers with no component in them: a `Column` of a label and a field gives the keys to the
+field. `focusNext()` (Tab, if you bind it) goes from field to field.
+
+**Mixing.** A component may draw into its surface and return a tree in the same render: what it
+draws shows where no element covers it. Components that draw themselves (a graph with `Ansi`)
+go in a tree like any other.
+
+## Props
+
+A component placed in the tree with `new` is a child at that place: the first render starts
+it; on later renders the new instance is not started, the one already there **takes its props**
+(its public properties that are not readonly) and attributes, `propsChanged()` runs, and it
+renders. Its state stays.
+
+```php
+final class Counter extends Component
+{
+    public function __construct(public string $label = '') {}   // a prop
+    // ...
+}
+
+// in a parent's render: the label follows the parent's state, the count stays the counter's
+return new Column([new Counter(label: "clicks of {$this->state->user}"), ...]);
+```
+
+A component of another class at the same place replaces the old one. `child($key, $create)`
+is the other way: its factory runs once, and the parent changes the child afterwards through
+its methods.
+
+## State: rendering by itself
+
+`$this->state` is the component's `State`: an object whose writes render the component again.
+A component has a plain one (any property names, `$this->state->open = true`), or declares a
+class with typed public properties and assigns it in the constructor or `mount()`:
+
+```php
+final class TodoState extends State
+{
+    public array $items = [];
+    public string $filter = '';
+}
+
+final class Todo extends Component
+{
+    /** @var TodoState */
+    protected State $state;
+
+    public function __construct()
+    {
+        $this->state = new TodoState();
+    }
+
+    public function add(string $item): void
+    {
+        $this->state->items = [...$this->state->items, $item];   // assign arrays whole
+    }
+}
+```
+
+The rule, in one paragraph: **a component renders again in the next frame after its state
+changed, after one of its handlers took an event (`onKey()` and the others returning true, a
+bound key), after a step of one of its coroutines (each `sleep()`, and the end of a `go()`
+that waited), after a closure of the component that it gave to a child ran (a callback such as
+`onSubmit`, a listener given to `on()`), when a parent's render gave it new props, and when its
+area changed.** Everything in one moment is one render, parents before their children, so a
+coroutine loop that changes the state many times between two waits renders once per step.
+There are no signals, observables or dependency tracking: what `render()` shows is computed in
+`render()` (or in methods it calls). `requestRender()` is the explicit call for the rest, a
+change the component cannot see.
+
+`$state->set(count: 0, label: 'x')` assigns several properties at once. A write of the value a
+property has already renders nothing; a write of a wrong type is a `TypeError` as for any typed
+property. **Shared state**: give several components the same `State` object as their `$state`
+(a parent passes its own to children's constructors), and a write renders all of them.
+
+## Styles
+
+Elements and components take `class:`, `id:` and `style:`; the program's `Stylesheet` gives
+each its look. Set it on the root component (it applies to the subtree; the nearest one wins)
+and build it on the default theme:
+
+```php
+$app->setStylesheet(Stylesheet::default()->with([
+    'Text.title' => ['bold' => true, 'color' => '$accent'],
+    'Box:focused' => ['border' => 'double $accent'],
+    '#name' => ['width' => 30],
+    'Select::row:current' => ['background' => '$accent', 'color' => 'black'],
+], vars: ['accent' => 'magenta']));
+```
+
+Selectors: a type (the element's or component's class name; parents' names match too) or `*`,
+`#id`, `.class`, states `:focused` (on the focus path), `:disabled`, `:hover` (components, under
+the mouse), and widget parts `::part` with their own states. Properties: `color`,
+`background`, `bold`, `dim`, `italic`, `underline`, `inverse`, `strike`, `border` (kind
+`single`/`round`/`double`/`heavy`/`ascii` and/or colour, or `none`), `padding`, `align`,
+`width`, `height`. Colours and attributes inherit down the tree. The cascade: rules by
+specificity (ids, then classes/states/parts, then types; later rules win ties), then inline
+`style:`. The default theme uses the 16 terminal colours and the variables `accent`, `muted`,
+`panel`, `error`, `success`, `warning`. See `Stylesheet` for the details.
+
+A component that draws itself asks for its look with `$this->style()` (a `ComputedStyle`:
+`text` is the `Style` for `Ansi::style()`, plus `border`, `padding`, `align`, `width`,
+`height`) and `$this->style('part', 'state')` for its parts; it renders again when its
+states change.
+
+## Key bindings
+
+Keys that are actions are data: `bindings()` maps a key (`Key::parse()` notation) to a public
+method of the component, with a description for `Help` when it should be listed:
+
+```php
+protected function bindings(): array
+{
+    return ['ctrl+s' => ['save', 'save'], 'f5' => ['reload', 'reload'], 'delete' => 'remove'];
+}
+```
+
+**Order.** A key goes down the focus path: each component's `onKey()` on the way may take it
+(the root's first). At the component it ends at (the focused one): its own bindings, then its
+`onKey()`, then the bindings of its parents, nearest first. A key nobody takes goes to the
+focused surface's program (a `Terminal`'s shell). So a focused text field types every letter
+an application binds, the application's Ctrl-Q works wherever the focus is, and a method that
+returns `false` did not take the key (an editor's Up on its first row), which goes on.
+
+**Changing them.** `$component->bind(['ctrl+s' => null, 'ctrl+w' => 'save'])` changes one
+instance; `$app->bind(['ctrl+enter' => 'submit'], Editor::class)` every `Editor` below `$app`.
+The nearest setting wins. `bindingsInForce()` lists the result. A `Help` element shows the
+described ones for the focused component and its parents, and follows the focus.
+
+## Dialogs
+
+`$this->dialog(Dialog $dialog): object` shows a modal dialog centered over the component and
+returns an awaitable of its answer. Await it in a coroutine:
+
+```php
+public function delete(): void          // bound to a key
+{
+    $this->go(function () {
+        if (fiber\await($this->dialog(new Confirm('Delete the file?')))) {
+            unlink($this->state->file);
+        }
+    });
+}
+```
+
+While it is open, the component's own keys and bindings and the mouse outside the dialog are
+the dialog's (its parents' bindings still work: Ctrl-Q quits). Escape cancels; when it closes
+the focus goes back where it was. It works over element trees, layouts and components that
+draw themselves. See [widgets](widgets.md) for `Dialog` and `Confirm`.
 
 ## Focus
 
@@ -188,16 +394,25 @@ key reaches the component (or goes through it).
 | `dispose(float $timeout = 1.0)` | End the component (see the lifecycle): signals its coroutines and children and waits until they have ended, `$timeout` seconds at the latest; `unmount()` has run when it returns, except when called from a coroutine of the component or a descendant (it returns at once, and the end follows when that coroutine returns). For the root, its surface is closed first, which detaches the terminal. Safe to call twice. |
 | `isMounted(): bool` | True between start and dispose. |
 | `stopped(): object` | An awaitable that resolves on disposal. |
-| `requestRender()` | Ask for a render (batched). |
+| `requestRender()` | Ask for a render in the next frame (batched). Rarely needed: see "State: rendering by itself". |
+| `with(key:, id:, class:, style:, width:, height:, disabled:): static` | Set element attributes (see "Element trees"); returns the component. `attribute(string $name)` reads one. |
+| `measure(int $cols, int $rows): ?array` | The size it needs as `[cols, rows]`, or null to take what it is given; for `'auto'` sizes. Override it in a component that knows its size. |
+| `style(?string $part = null, string ...$states): ComputedStyle` | Its look from the stylesheet in its current states, or that of a part. |
+| `stylesheet(): Stylesheet` / `setStylesheet(Stylesheet $s)` | The stylesheet in force (its own, else its parent's, else the default); set one for the subtree. |
+| `bind(array $bindings, ?string $for = null): static` | Change the keys of this component, or of every component of class `$for` below it (see "Key bindings"). `bindingsInForce()` lists the keys in force. |
+| `types(): array` | The type names it matches in a stylesheet (its class's short name and its parents'). |
 | `focus()` | Give it the focus, and through it to the descendant it focused (see "Focus" above): every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). It takes effect at once, for the very next key, also for a component not shown yet (a dialog created in a key handler, shown by the render that follows). The focus stays with it through every re-render, also one that moves it into a different nested layout; when it is no longer shown, the component focused before it gets the focus back. |
 | `hasFocus(): bool` | True if keys go to it or through it to a descendant, also while it is not shown yet: it follows the path the keys take. False once disposed. |
 | `on(string $event, Closure $listener): Closure` | Listen to an event of the component (the built-ins document theirs: `Log` and `ListView` emit `scroll`); returns a function that removes the listener. See "Showing another component's state". |
 | `parent(): ?Component` | The parent, null for a root. |
 | `error(): ?Throwable` | The exception that ended it, if one did. |
 | `child(string $key, ?Closure $create = null): ?Component` (protected) | The child under `$key`, created with `$create` and started the first time it is asked for. Without `$create`: the child of that key, or null when there is none or it was disposed (`$this->child('dialog')?->dispose()` in a handler). After a render that returned a layout, children it neither asked for (either way) nor shows are disposed: one whose surface the layout shows is kept, however it got there. `$create` may return a component started already (another's child, given to a container): it is shown here and stays its owner's. |
-| `emit(string $event, mixed ...$data)` (protected) | Call the listeners of `$event` (see `on()`); document the events your component emits. `hasListeners(string $event): bool` tells whether anyone listens, to skip work only a listener needs. |
-| `go(Closure $task)` (protected) | Another coroutine of the component: contained like `run()`; the component's end waits for it. |
-| `sleep(float $seconds): bool` (protected) | Sleep, less if disposed meanwhile; returns `isMounted()`. |
+| `emit(string $event, mixed ...$data)` (protected) | Call the listeners of `$event` (see `on()`); document the events your component emits. `hasListeners(string $event): bool` tells whether anyone listens, to skip work only a listener needs. A listener made by a component renders that component afterwards. |
+| `call(?Closure $callback, mixed ...$args): mixed` (protected) | Call a callback the component was given (`onSubmit`); the component that made it renders afterwards. Use it for the callbacks of your own widgets. |
+| `dialog(Dialog $dialog): object` (protected) | Show a modal dialog over the component; an awaitable of its answer (see "Dialogs"). |
+| `state` (protected `State`) | The component's state (see "State: rendering by itself"). |
+| `go(Closure $task)` (protected) | Another coroutine of the component: contained like `run()`; the component's end waits for it; when it ends after it waited, the component renders. |
+| `sleep(float $seconds): bool` (protected) | Sleep, less if disposed meanwhile; returns `isMounted()`. What the coroutine did before shows in the next frame. |
 
 ```php
 protected function render(): ?Layout
@@ -225,8 +440,9 @@ return Split::vertical()->add($this->child('box', fn() => new Box($log, 'output'
 
 A `render()` that reads another component's state (a pane title with the lines a `Log` shows, a
 "12-30 of 200" next to a `ListView`) must run again when that state changes. The built-ins emit
-an event for what others commonly show; listen with `on()` and ask for a render (renders are
-batched, so a burst of events gives one):
+an event for what others commonly show; listen with `on()`: a listener made by your component
+renders it again after it ran (renders are batched, so a burst of events gives one), and the
+`requestRender()` below is only there to say so:
 
 ```php
 protected function mount(): void
@@ -279,7 +495,8 @@ program in a terminal draws for the size it is told and redraws on SIGWINCH.
 
 ## Built-in components
 
-All in `phasync\Tui\Component\`.
+All in `phasync\Tui\Component\`. The widgets of the components layer (`Editor`, `Table`,
+`Select`, `Dialog`, `Confirm`) are described in [widgets](widgets.md).
 
 ### Terminal
 

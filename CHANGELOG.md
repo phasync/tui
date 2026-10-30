@@ -1,5 +1,98 @@
 # Changelog
 
+## 0.0.2-beta1 (2026-10-30)
+
+The components layer, first cut: screens are described as element trees, components render
+again by themselves, a stylesheet gives everything its look, keys are data, and the first
+widgets (`Editor`, `Select`, `Table`, `Dialog`) are built on it. Everything from 0.0.1 works
+as before.
+
+**Element trees: describe the screen, the library lays it out**
+
+- `render()` may return a tree of elements instead of a layout: `Column` and `Row` (windows on
+  top of each other or side by side, sized as `Split` sizes them), `Layers` (over each other,
+  as `Stack`), `Box` (a border and a title around one element), `Text` (styled, wrapped,
+  aligned; `Span`s for runs in other styles) and `Help`; every component is an element too, so
+  widgets and your own components go where they show. There is no more building `Split`s of
+  `->surface`s by hand for an ordinary screen.
+- Elements are made anew on every render; the library matches them with the previous render's
+  by position or by `key:`, so the focus, the scroll positions and the child components behind
+  them stay. A tree rebuilt on every render keeps the cursor in the field you are typing in.
+- A text is as high as its wrapped lines, a one-line field one row: without a size an element
+  takes what its content needs (`'auto'`), components and containers share the rest. When a
+  component needs another size (an editor grew a line), its parent lays the tree out again.
+- Everything is painted through `write()`, as before: a replay of the bytes the terminal device
+  sent gives the same screen, styles included.
+- Text and labels no longer take the keys: a `Column` of a label and a field gives them to the
+  field (`Surface::setFocusable()`; `focusNext()` and `focusToward()` skip what does not take
+  the focus).
+- A component placed with `new` in the tree (`new Counter(label: $x)`) is matched with the one
+  already there, which keeps its state and takes the new props (its public properties);
+  `propsChanged()` tells it.
+
+**Reactive state: no more `requestRender()` after every change**
+
+- `$this->state` is a `State`: write to it (`$this->state->count++`, or typed properties in a
+  class of your own) and the component renders again in the next frame. Many writes in a
+  moment are one render, parents before children. A state object given to several components
+  renders all of them.
+- A component also renders by itself after one of its handlers took an event, after a bound
+  key, after each `sleep()` of its coroutines and the end of a `go()` that waited, after a
+  callback or listener it gave to a child ran (`onSubmit`, `on('scroll', ...)`), after new
+  props, and when its area changed. `requestRender()` remains for changes it cannot see.
+
+**A stylesheet**
+
+- `Stylesheet` with rules by element type, `#id`, `.class`, the states `:focused`,
+  `:disabled`, `:hover`, and widget parts (`Select::row:current`); properties `color`,
+  `background`, the text attributes, `border` (kind of line and colour), `padding`, `align`,
+  `width`, `height`; variables (`$accent`); rules, then classes, then inline `style:`.
+  Colours and attributes inherit down the tree. Set it on the root with `setStylesheet()`;
+  `Stylesheet::default()` is a theme in the 16 terminal colours that reads on dark and light
+  terminals alike. A widget that draws itself gets its colours with `$this->style()`.
+- Borders come in kinds of line: `Viewport::setBorder('round')` (also `double`, `heavy`,
+  `ascii`; `true` keeps the kind set before).
+- A focused field looks focused: the default theme gives the focused `Editor` a panel
+  background and a `Box` around the focused component an accent border; a `Box` in a pane
+  without the focus is no longer drawn as focused.
+
+**Key bindings as data**
+
+- `bindings()` maps keys to public methods of the component (`['ctrl+s' => 'save']`); the
+  application changes them per instance or per class with `bind()`
+  (`$app->bind(['ctrl+enter' => 'submit'], Editor::class)`), and a `Help` element lists the
+  keys in force for the focused component, following the focus.
+- The focused component's bindings come first, then its parents': a text field types the
+  letters an application binds, the application's Ctrl-Q works wherever the focus is (also in
+  a `Terminal`), and a method returning false passes the key on.
+
+**Widgets**
+
+- `Editor`: one line or many, word wrap, selection with Shift and the arrows or the mouse,
+  undo/redo, a kill ring (Ctrl-K, Ctrl-Y, Alt-Y), copy and cut to the terminal's clipboard,
+  bracketed paste as one step; `maxLines: 1` is a form field that replaces `TextInput`.
+- `Table`: columns with widths (cells, %, fr, auto), alignment, cells cut with "…", sorting by
+  a click on a title, sideways scrolling of tables wider than the window.
+- `Select`: a list or table to pick from, filtering as you type, marking several with Space,
+  `onSelect`, `onActivate`, `onChange`; the selection stays on the same items through
+  `setItems()`, sorting and filtering.
+- `Dialog` and `Confirm`: `$ok = fiber\await($this->dialog(new Confirm('Delete?')))` in a
+  coroutine; modal over the component (its own keys and the mouse outside go to the dialog),
+  Escape cancels, the focus goes back where it was. A dialog that ends unanswered (the program
+  quits) answers its cancel value, so the coroutine awaiting it does not hang.
+
+**Also**
+
+- `Ansi::clearHome()`: erase the screen and start at the top-left corner.
+- Starting a program on a `fiber-interop/api` older than 0.3.1 throws at once, saying which
+  version is needed and the `composer require` that fixes it, instead of failing with an
+  undefined function inside a coroutine.
+- The callbacks of the built-ins (`TextInput`'s `onSubmit`, `ListView`'s `onSelect`, a
+  `Terminal`'s `onExit`) render the component that gave them.
+- `examples/form.php`: a form built from elements. The README's tour has a screen built from
+  elements (tested as written). New: `docs/widgets.md`; `docs/components.md` describes the
+  element tree, props, state, styles, bindings and dialogs.
+
 ## 0.0.1-beta5 (2026-10-30)
 
 **The focus stays on a dialog however `render()` rebuilds the layouts around it**

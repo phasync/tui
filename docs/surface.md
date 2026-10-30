@@ -141,6 +141,7 @@ $s->input->read();                          // "\eOA"
 | `reset()` | SGR 0 |
 | `styled($text, $style)` | `$text` in `$style`, then a reset |
 | `clearScreen()`, `clearLine()`, `clearToEndOfLine()`, `clearToEndOfScreen()` | ED 2, EL 2, EL 0, ED 0 |
+| `clearHome()` | ED 2 then CUP 1;1: erase everything and start at the top-left corner (the start of a full redraw) |
 | `hideCursor()`, `showCursor()` | DECTCEM |
 | `saveCursor()`, `restoreCursor()` | DECSC, DECRC |
 | `scrollRegion($top, $bottom)` | DECSTBM (inclusive rows) |
