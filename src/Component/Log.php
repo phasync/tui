@@ -25,9 +25,16 @@ use phasync\Tui\Viewport;
  *
  * The view follows the end; the mouse wheel, `scrollBy()` or `scrollTo()` look back, and it
  * stays on the same lines while more text arrives until `follow()` (or scrolling back to the
- * end). Dragging the mouse selects and copies text, as in any window. To change lines already
- * shown (re-style the selected message, filter, re-sort), give the new lines to `setLines()`:
- * they are laid out once.
+ * end). Dragging the mouse selects and copies text, as in any window. A view scrolled back stays
+ * on the same line when the log is laid out again (a resize, `setLines()`).
+ *
+ * **Filtering and editing.** To change lines already shown (filter them, re-style the selected
+ * message, re-sort), keep the full list yourself and give what should show to `setLines()`: it
+ * replaces the text in one go and lays it out once. A view following the end keeps following; a
+ * view scrolled back stays on the line at its top if that line is still there, else it goes to
+ * the end:
+ *
+ *     $log->setLines(array_values(array_filter($all, fn($l) => str_contains($l, $query))));
  */
 final class Log extends Component
 {
@@ -42,6 +49,8 @@ final class Log extends Component
     /** Rows the open line takes, in word wrap mode. */
     private int $openRows = 1;
     private bool $fullLayoutPending = false;
+    /** The width the text on the content surface was laid out for. */
+    private int $laidCols = 80;
 
     /**
      * @param int  $scrollback how many lines are kept (older ones are dropped), and how many rows
@@ -57,7 +66,7 @@ final class Log extends Component
         // the text is laid out in a surface of its own, shown through a viewport that scrolls it
         $this->content = new Surface($this->surface->cols(), $this->surface->rows(), $this->scrollback);
         $this->surface->setLayout((new Stack())->add($this->content));
-        $this->content->on('resize', fn() => $this->layout(self::QUICK_ROWS));
+        $this->content->on('resize', fn() => $this->layout(self::QUICK_ROWS, $this->topLine()));
         $this->layout();
     }
 
@@ -77,9 +86,10 @@ final class Log extends Component
             if ($this->wordWrap) {
                 // the open line is laid out again with what it gets
                 if ($this->openRows - 1 >= $this->content->rows()) {
+                    $top = $this->topLine();
                     $this->open .= $first;
-                    $this->add($pieces);
-                    $this->layout();
+                    $dropped = $this->add($pieces);
+                    $this->layout(null, $top === null || $top < $dropped ? null : $top - $dropped);
                     return;
                 }
                 $out .= "\r" . ($this->openRows > 1 ? "\e[" . ($this->openRows - 1) . 'A' : '') . "\e[J";
@@ -100,8 +110,11 @@ final class Log extends Component
         $this->content->write($out);
     }
 
-    /** @param list<string> $pieces what followed the first "\n" of an append */
-    private function add(array $pieces): void
+    /**
+     * @param list<string> $pieces what followed the first "\n" of an append
+     * @return int how many old lines were dropped to stay within the scrollback
+     */
+    private function add(array $pieces): int
     {
         foreach ($pieces as $piece) {
             $this->lines[] = $this->open;
@@ -111,20 +124,28 @@ final class Log extends Component
         if ($excess > 0) {
             array_splice($this->lines, 0, $excess);
         }
+        return max(0, $excess);
     }
 
     /**
-     * Replace all text with $lines (each a line, without "\n"), laid out once: to re-style, edit
-     * or filter what is shown. The view follows the end again.
+     * Replace all text with $lines (each a line, without "\n"), laid out once: the way to
+     * filter, re-style, edit or re-sort what is shown. A view that follows the end keeps
+     * following; one scrolled back stays on the line at its top (the same text) when it is among
+     * the new lines, and follows the end when it is not.
      *
      * @param list<string> $lines
      */
     public function setLines(array $lines): void
     {
+        $top = $this->topLine();
+        $text = $top === null ? null : ([...$this->lines, $this->open][$top] ?? null);
         $this->lines = \array_slice(array_values(array_map('strval', $lines)), -max(1, $this->scrollback - 1));
         $this->open = '';
-        $this->layout();
-        $this->view()->follow();
+        $found = $text === null ? false : array_search($text, $this->lines, true);
+        $this->layout(null, $found === false ? null : $found);
+        if ($found === false) {
+            $this->view()->follow();
+        }
     }
 
     /** Remove all text, scrollback included. */
@@ -148,8 +169,9 @@ final class Log extends Component
     public function setWordWrap(bool $wordWrap): void
     {
         if ($wordWrap !== $this->wordWrap) {
+            $top = $this->topLine();
             $this->wordWrap = $wordWrap;
-            $this->layout();
+            $this->layout(null, $top);
         }
     }
 
@@ -189,12 +211,53 @@ final class Log extends Component
         return implode("\r\n", Text::wrap($line, $this->content->cols(), true));
     }
 
+    /** How many rows $line takes at $cols columns. */
+    private function rowCount(string $line, int $cols): int
+    {
+        return $this->wordWrap ? max(1, \count(Text::wrap($line, $cols, true))) : max(1, (int) ceil(Text::width($line) / max(1, $cols)));
+    }
+
+    /**
+     * The first row on the content surface of each line, as laid out for $cols: the lines and the
+     * open line after them end on the cursor's row. Keys are indexes into lines + [open].
+     *
+     * @return array<int, int>
+     */
+    private function lineRows(int $cols): array
+    {
+        $seq = [...$this->lines, $this->open];
+        $starts = [];
+        $end = $this->content->cursor()->y;
+        for ($k = \count($seq) - 1; $k >= 0 && $end >= -$this->scrollback; $k--) {
+            $starts[$k] = $end - $this->rowCount($seq[$k], $cols) + 1;
+            $end = $starts[$k] - 1;
+        }
+        return $starts;
+    }
+
+    /** The line at the top of a view scrolled back (an index into lines + [open]), or null when following. */
+    private function topLine(): ?int
+    {
+        $view = $this->view();
+        if ($view === null || $view->isFollowing()) {
+            return null;
+        }
+        $top = $view->top();
+        foreach ($this->lineRows($this->laidCols) as $k => $start) {
+            if ($start <= $top) {
+                return $k;
+            }
+        }
+        return null;
+    }
+
     /**
      * Write the lines into the content surface again, for its width: all of them that fit in
      * its scrollback, or with $rows only about that many rows at the end now (after a resize,
-     * so the visible part is right at once) and the rest in a moment.
+     * so the visible part is right at once) and the rest in a moment. A view scrolled back is
+     * put on line $top (an index into lines + [open]) at the top, or left following the end.
      */
-    private function layout(?int $rows = null): void
+    private function layout(?int $rows = null, ?int $top = null): void
     {
         $c = $this->content;
         $cols = $c->cols();
@@ -204,8 +267,6 @@ final class Log extends Component
             $this->layoutLater();
         }
         $view = $this->view();
-        $following = $view === null || $view->isFollowing();
-        $top = $view?->top() ?? 0;
         // the lines that fit, from the end
         $all = $this->lines();
         $first = \count($all);
@@ -230,8 +291,10 @@ final class Log extends Component
         }
         $this->openRows = $this->wordWrap ? \count(Text::wrap($this->open, $cols, true)) : 1;
         $c->write($out);
-        if ($view !== null) {
-            $following ? $view->follow() : $view->scrollTo($top);
+        $this->laidCols = $cols;
+        if ($view !== null && !$view->isFollowing()) {
+            $row = $top === null ? null : ($this->lineRows($cols)[$top] ?? null);
+            $row === null ? $view->follow() : $view->scrollTo($row);
         }
     }
 
@@ -246,7 +309,7 @@ final class Log extends Component
             $this->sleep(0.1);
             $this->fullLayoutPending = false;
             if ($this->isMounted()) {
-                $this->layout();
+                $this->layout(null, $this->topLine());
             }
         });
     }

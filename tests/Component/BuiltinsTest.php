@@ -95,6 +95,34 @@ describe('Log', function () {
         });
     });
 
+    it('keeps a view scrolled back on the same line when the lines are filtered, else goes to the end', function () {
+        onScreen(new Log(), 20, 3, function (FakeTerminal $t, Log $log) {
+            $all = array_map(fn($i) => ($i % 2 ? 'odd ' : 'even ') . $i, range(1, 30));
+            $log->setLines($all);
+            $log->scrollBy(-10);
+            expect($t->text())->toBe("odd 19\neven 20\nodd 21");
+            $log->setLines(array_values(array_filter($all, fn($l) => str_starts_with($l, 'odd'))));
+            expect($t->text())->toBe("odd 19\nodd 21\nodd 23")->and($log->isFollowing())->toBeFalse();
+            $log->setLines(array_values(array_filter($all, fn($l) => str_starts_with($l, 'even'))));
+            expect($log->isFollowing())->toBeTrue()->and($t->text())->toBe("even 28\neven 30\n");
+            $log->setLines($all);                   // following: it keeps following
+            expect($log->isFollowing())->toBeTrue()->and($t->text())->toBe("odd 29\neven 30\n");
+        });
+    });
+
+    it('keeps a view scrolled back on the same line when a resize lays the lines out again', function () {
+        onScreen(new Log(), 10, 3, function (FakeTerminal $t, Log $log) {
+            $log->setLines(array_map(fn($i) => "line $i " . str_repeat('x', $i % 3), range(1, 20)));
+            $log->scrollBy(-8);
+            expect($t->text())->toStartWith('line 11 xx');
+            $t->resize(5, 3);
+            expect($t->text())->toStartWith("line\n11 xx");
+            $t->resize(20, 3);
+            sleep(0.2);
+            expect($t->text())->toStartWith('line 11 xx')->and($log->isFollowing())->toBeFalse();
+        });
+    });
+
     it('keeps only the newest lines, and lays out a long scrollback in two steps on resize', function () {
         onScreen(new Log(scrollback: 500), 20, 5, function (FakeTerminal $t, Log $log) {
             foreach (range(1, 600) as $i) {
