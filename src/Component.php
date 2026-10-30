@@ -29,25 +29,29 @@ use function fiber\await_all;
  *     }
  *
  *     fiber\run(function () {
- *         $clock = (new Clock())->start();
- *         $tty = new Tty();
- *         $tty->attach($clock->surface);            // the root component's surface is the root
- *         ...
+ *         (new Clock())->start(new Tty());          // until the terminal is detached
  *     });
  *
  * **Lifecycle.** `start()` mounts a root component (a child is started by its parent's
- * `child()`): it gets its surface, `mount()` runs, the first `render()` follows, and `run()`
- * starts as a coroutine. `dispose()` ends it: children are disposed first, the `stopped()`
- * awaitable resolves and `sleep()` returns false so coroutines can end, disposal waits up to a
- * second for them, then `unmount()` runs. Coroutines are not cancelled from outside: write loops
- * as `while ($this->sleep(...))` or check `isMounted()`.
+ * `child()`): it gets its surface, `mount()` runs, the first `render()` follows once the size is
+ * known, and `run()` starts as a coroutine. `dispose()` ends it: children are disposed first,
+ * the `stopped()` awaitable resolves and `sleep()` returns false so coroutines can end, disposal
+ * waits up to a second for them, then `unmount()` runs. Coroutines are not cancelled from
+ * outside: write loops as `while ($this->sleep(...))` or check `isMounted()`.
+ *
+ * **Ending.** A component is disposed by its parent, by `dispose()`, or when its surface is
+ * closed (`Surface::close()`): detaching the terminal device closes the root, so quitting (a key
+ * handler calling `$tty->detach()`) disposes the whole tree, and every `Terminal` in it hangs its
+ * program up. Disposing the root component closes its surface, which detaches the device.
+ * `fiber\run()` returns once the device is detached and every coroutine has ended.
  *
  * **Rendering.** `render()` either draws into `$this->surface` with escape sequences (the
  * surface is a terminal; see `Ansi`) and returns null, or returns a layout of child components'
  * surfaces. It runs after `mount()`, after every resize, and after `requestRender()` (calls in
  * the same moment are batched into one render). Children come from `child($key, $create)`: the
  * same key gives the same component on every render; after a render that returned a layout,
- * children it did not ask for are disposed.
+ * children it did not ask for are disposed. A child renders for the first time when the layout
+ * that shows it has given it its size, so it never draws for a size it does not have.
  *
  *     protected function render(): ?Layout
  *     {
@@ -61,9 +65,10 @@ use function fiber\await_all;
  * child does, and returning true keeps them from going further. `onResize()` is told the new size.
  *
  * **Errors.** An exception in a child's hooks, handlers or coroutines is contained to the child:
- * it is disposed and its rectangle shows the error, the rest of the program keeps running. An
- * exception in the root component is not caught (it ends `fiber\run()`, and `Tty` restores the
- * terminal).
+ * it is disposed with its children (their programs are hung up) and its rectangle shows the
+ * error; the rest of the program keeps running. An exception in the root component ends the
+ * program: the tree is disposed, the surface closed (so the terminal is detached and restored),
+ * and the exception is rethrown, by `start()` when it happens there and else by `fiber\run()`.
  */
 abstract class Component
 {
@@ -76,6 +81,7 @@ abstract class Component
     /** @var array<string, true>|null keys asked for by the render in progress */
     private ?array $used = null;
     private bool $mounted = false;
+    private bool $rendered = false;
     private bool $renderPending = false;
     private ?Deferred $stopped = null;
     private ?Signal $wake = null;
@@ -144,18 +150,32 @@ abstract class Component
     // Lifecycle
 
     /**
-     * Mount this component as a root: on $surface (for example one you attach to a terminal),
-     * or a new 80x24 surface that a terminal device or a layout will size. Must be called inside
-     * `fiber\run()`. Child components are started by `child()`, not by this.
+     * Mount this component as the root of a program:
+     *
+     * - on a terminal device (`new Tty()`, or a `FakeTerminal` in tests): a new surface is
+     *   attached to it, so the first render is for the terminal's size, and detaching the device
+     *   disposes the component;
+     * - on $surface, a surface of yours (one you host somewhere, or attach a device to);
+     * - with no argument, on a new 80x24 surface that you attach or host afterwards (it renders
+     *   again at the size it gets).
+     *
+     * Must be called inside `fiber\run()`. Child components are started by `child()`, not by this.
+     * An exception in `mount()` or the first `render()` disposes what was started and is rethrown.
      *
      * @throws \LogicException when already started
      */
-    public function start(?Surface $surface = null): static
+    public function start(Surface|TerminalDevice|null $on = null): static
     {
         if ($this->mounted || $this->stopped !== null) {
             throw new \LogicException(static::class . ' was already started');
         }
-        $this->surface = $surface ?? new Surface();
+        if ($on instanceof TerminalDevice) {
+            $surface = new Surface();
+            $on->attach($surface);
+        } else {
+            $surface = $on ?? new Surface();
+        }
+        $this->surface = $surface;
         $this->mounted = true;
         $this->stopped = new Deferred();
         $this->wake = new Signal();
@@ -172,20 +192,40 @@ abstract class Component
                 $this->handle(fn() => $this->onResize($e));
                 $this->requestRender();
             }),
+            $s->on('close', fn() => $this->dispose()),
         ];
-        $this->guard(function (): void {
-            $this->mount();
-            $this->renderNow();
-            $this->go($this->run(...));
-        });
+        $this->guard($this->mount(...));
+        if ($this->parent === null) {
+            $this->firstRender();
+        } else {
+            // the parent renders it once its layout has sized it; if it does not show it, now
+            \fiber\go(function (): void {
+                \fiber\sleep(0);
+                $this->firstRender();
+            });
+        }
         return $this;
     }
 
+    /** The first render, then the coroutine; once. */
+    private function firstRender(): void
+    {
+        if ($this->rendered || !$this->mounted) {
+            return;
+        }
+        $this->rendered = true;
+        $this->guard(function (): void {
+            $this->renderNow();
+            $this->go($this->run(...));
+        });
+    }
+
     /**
-     * End the component: dispose its children, resolve `stopped()`, wake `sleep()`, wait up to
-     * $timeout seconds for its coroutines to return, then call `unmount()`. Its surface keeps
-     * its last content. Safe to call twice. Call it on the root when the program ends; children
-     * are disposed by their parent.
+     * End the component: dispose its children (a `Terminal` hangs its program up), resolve
+     * `stopped()`, wake `sleep()`, wait up to $timeout seconds for its coroutines to return,
+     * then call `unmount()`. Its surface keeps its last content. For a root, the surface is
+     * closed first, which detaches a terminal device attached to it. Safe to call twice.
+     * Children are disposed by their parent.
      */
     public function dispose(float $timeout = 1.0): void
     {
@@ -193,14 +233,18 @@ abstract class Component
             return;
         }
         $this->mounted = false;
-        foreach (array_reverse($this->children) as $child) {
-            $child->dispose($timeout);
-        }
-        $this->children = [];
         foreach ($this->offs as $off) {
             $off();
         }
         $this->offs = [];
+        if ($this->parent === null) {
+            // the program ends: give the terminal back at once
+            $this->surface->close();
+        }
+        foreach (array_reverse($this->children) as $child) {
+            $child->dispose($timeout);
+        }
+        $this->children = [];
         $this->stopped->settle(true, null);
         $this->wake->notify();
         // wait for the coroutines, except the one calling dispose() (it cannot wait for itself)
@@ -260,8 +304,8 @@ abstract class Component
      */
     public function requestRender(): void
     {
-        if (!$this->mounted || $this->renderPending) {
-            return;
+        if (!$this->mounted || $this->renderPending || !$this->rendered) {
+            return;     // (before the first render: that one is coming)
         }
         $this->renderPending = true;
         \fiber\go(function (): void {
@@ -368,6 +412,12 @@ abstract class Component
         }
         if ($layout !== null) {
             $this->surface->setLayout($layout);
+        }
+        // children made by this render draw for the first time, now that the layout sized them
+        foreach ($this->children as $child) {
+            $child->firstRender();
+        }
+        if ($layout !== null) {
             foreach ($this->children as $key => $child) {
                 if (!isset($used[$key])) {
                     unset($this->children[$key]);
@@ -388,7 +438,7 @@ abstract class Component
 
     /**
      * Run $code; an exception ends this component and shows in its rectangle, unless it is the
-     * root, where it is rethrown.
+     * root: then the program ends (the tree is disposed, the surface closed) and it is rethrown.
      */
     private function guard(\Closure $code): mixed
     {
@@ -396,6 +446,8 @@ abstract class Component
             return $code();
         } catch (\Throwable $e) {
             if ($this->parent === null) {
+                $this->error ??= $e;
+                $this->dispose();
                 throw $e;
             }
             $this->fail($e);
@@ -416,9 +468,8 @@ abstract class Component
         $s->setLayout(null);
         $this->showError();
         $s->on('resize', fn() => $this->showError());
-        if ($this->mounted) {
-            \fiber\go(fn() => $this->dispose());
-        }
+        // its children end with it
+        $this->dispose();
     }
 
     /** Draw the error that ended the component into its rectangle. */

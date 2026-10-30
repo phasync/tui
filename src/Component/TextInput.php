@@ -16,7 +16,13 @@ use phasync\Tui\Text;
  *         prompt: '> ',
  *         placeholder: 'type a command',
  *         onSubmit: function (string $line, TextInput $input) { ...; $input->setValue(''); },
+ *         history: true,
  *     ));
+ *
+ * Enter submits: `$onSubmit` receives the text (the application decides whether to clear the
+ * field, with `setValue('')`). With `$history`, every submitted line is remembered, and Up/Down
+ * walk back and forth through them as in a shell (the line being typed is kept and comes back
+ * after the newest); `history()` and `setHistory()` let a program save and restore it.
  *
  * Editing keys, as in a shell: Left/Right (Ctrl-B/Ctrl-F), Home/End (Ctrl-A/Ctrl-E),
  * Ctrl-Left/Ctrl-Right or Alt-B/Alt-F by word, Backspace and Delete (Ctrl-D), Ctrl-W or
@@ -31,6 +37,11 @@ final class TextInput extends Component
     private array $chars = [];
     private int $cursor = 0;
     private int $scroll = 0;
+    /** @var list<string> submitted lines, oldest first */
+    private array $entries = [];
+    /** The history entry shown, or null while editing a new line. */
+    private ?int $browsing = null;
+    private string $draft = '';
 
     /**
      * @param string     $value       the initial text
@@ -39,6 +50,7 @@ final class TextInput extends Component
      * @param (\Closure(string $value, TextInput $input): void)|null $onSubmit called on Enter
      * @param (\Closure(string $value, TextInput $input): void)|null $onChange called after every edit
      * @param Style|null $style       the style of the text
+     * @param bool       $history     remember submitted lines and walk through them with Up/Down
      */
     public function __construct(
         string $value = '',
@@ -47,6 +59,7 @@ final class TextInput extends Component
         private readonly ?\Closure $onSubmit = null,
         private readonly ?\Closure $onChange = null,
         private readonly ?Style $style = null,
+        private readonly bool $history = false,
     ) {
         $this->setChars($value);
         $this->cursor = \count($this->chars);
@@ -64,6 +77,28 @@ final class TextInput extends Component
         $this->setChars($value);
         $this->cursor = \count($this->chars);
         $this->requestRender();
+    }
+
+    /**
+     * The submitted lines, oldest first (empty without `$history`).
+     *
+     * @return list<string>
+     */
+    public function history(): array
+    {
+        return $this->entries;
+    }
+
+    /**
+     * Replace the remembered lines (oldest first), for example with those saved by an earlier
+     * run of the program.
+     *
+     * @param list<string> $lines
+     */
+    public function setHistory(array $lines): void
+    {
+        $this->entries = array_values(array_map('strval', $lines));
+        $this->browsing = null;
     }
 
     /** The cursor position, in characters (grapheme clusters) from the start. */
@@ -86,6 +121,14 @@ final class TextInput extends Component
         $this->requestRender();
     }
 
+    /** Show a history entry (or the draft) for editing. */
+    private function show(string $value): void
+    {
+        $this->setChars($value);
+        $this->cursor = \count($this->chars);
+        $this->changed(true);
+    }
+
     private function setChars(string $value): void
     {
         $value = str_replace(["\r\n", "\r", "\n", "\t"], ' ', $value);
@@ -99,8 +142,31 @@ final class TextInput extends Component
         $edit = true;
         switch (true) {
             case $key->is('enter'):
+                $value = $this->value();
+                if ($this->history && $value !== '' && end($this->entries) !== $value) {
+                    $this->entries[] = $value;
+                }
+                $this->browsing = null;
                 if ($this->onSubmit !== null) {
-                    ($this->onSubmit)($this->value(), $this);
+                    ($this->onSubmit)($value, $this);
+                }
+                return true;
+            case $this->history && $key->is('up'):
+                if ($this->entries !== [] && $this->browsing !== 0) {
+                    if ($this->browsing === null) {
+                        $this->draft = $this->value();
+                    }
+                    $this->browsing = ($this->browsing ?? \count($this->entries)) - 1;
+                    $this->show($this->entries[$this->browsing]);
+                }
+                return true;
+            case $this->history && $key->is('down'):
+                if ($this->browsing !== null) {
+                    $this->browsing++;
+                    if ($this->browsing >= \count($this->entries)) {
+                        $this->browsing = null;
+                    }
+                    $this->show($this->browsing === null ? $this->draft : $this->entries[$this->browsing]);
                 }
                 return true;
             case $key->is('left') || $key->is('ctrl+b'):

@@ -2,29 +2,40 @@
 
 namespace phasync\Tui\Component;
 
+use fiber\Deferred;
 use phasync\Tui\Component;
 use phasync\Tui\Pty;
 
 /**
  * A command running in a pseudo-terminal, as a component: a shell, an editor, a build, `ssh`.
  *
- *     $shell = $this->child('shell', fn() => new Terminal($_SERVER['SHELL'] ?? 'sh'));
+ *     $shell = $this->child('shell', fn() => new Terminal(
+ *         $_SERVER['SHELL'] ?? 'sh',
+ *         onExit: fn(int $code, Terminal $t) => $this->status->set("shell exited ($code), Enter restarts"),
+ *     ));
+ *     ...
+ *     $code = fiber\await($shell->exited());     // or wait for it
  *
  * The program gets the component's surface as its terminal: its size (and every resize, with
  * SIGWINCH), its keys and pastes when the component has the focus, the answers to its queries.
- * When the program exits, `$onExit` is called with its exit status and the component stays as
- * it is, showing the last output; disposing the component hangs the program up (SIGHUP, then
- * SIGKILL if it is still there after a second).
+ *
+ * When the program exits, the component stays as it is, showing the last output, and announces
+ * it: `$onExit` is called with the exit status (in a coroutine of the component), and the
+ * `exited()` awaitable resolves with it. The host can then close the pane, `restart()` the
+ * program or show the status. Disposing the component hangs the program up (SIGHUP, then
+ * SIGKILL if it is still there after half a second); so does quitting, since detaching the
+ * terminal device disposes the component tree.
  */
 final class Terminal extends Component
 {
     private ?Pty $pty = null;
+    private ?Deferred $exited = null;
 
     /**
      * @param string|list<string>        $command a shell command line or an argument vector (see `Pty::start()`)
      * @param string|null                $cwd     working directory, default the current one
      * @param array<string,string>       $env     variables added to the inherited environment
-     * @param (\Closure(int $code): void)|null $onExit called when the program has ended
+     * @param (\Closure(int $code, Terminal $terminal): void)|null $onExit called when the program has ended
      */
     public function __construct(
         private readonly string|array $command,
@@ -36,27 +47,67 @@ final class Terminal extends Component
 
     protected function mount(): void
     {
-        $this->pty = Pty::start($this->command, $this->surface, $this->cwd, $this->env);
+        $this->launch();
     }
 
-    protected function run(): void
+    private function launch(): void
     {
-        $pty = $this->pty;
-        // on dispose: hang the program up, and kill it if it does not listen
-        $this->go(function () use ($pty): void {
-            while ($this->sleep(3600)) {
-            }
-            if ($pty->isRunning()) {
-                $pty->kill(1);
-                if ($pty->wait(0.5) === null) {
-                    $pty->kill(9);
-                }
+        $exited = $this->exited = new Deferred();
+        $this->pty = Pty::start($this->command, $this->surface, $this->cwd, $this->env, function (int $code, Pty $pty) use ($exited): void {
+            $exited->settle(true, $code);
+            // a program ended by restart() is not announced
+            if ($pty === $this->pty && $this->onExit !== null && $this->isMounted()) {
+                $this->go(fn() => ($this->onExit)($code, $this));
             }
         });
-        $code = $pty->wait();
-        if ($this->onExit !== null && $code !== null && $this->isMounted()) {
-            ($this->onExit)($code);
+    }
+
+    protected function unmount(): void
+    {
+        // disposed: hang the program up, and kill it if it does not listen
+        $this->hangUp($this->pty);
+    }
+
+    private function hangUp(?Pty $pty): void
+    {
+        if ($pty !== null && $pty->isRunning()) {
+            $pty->kill(1);
+            if ($pty->wait(0.5) === null) {
+                $pty->kill(9);
+                $pty->wait(1.0);
+            }
         }
+    }
+
+    /**
+     * Run the command again, in the same window: a program still running is hung up first (and
+     * not announced as ended), the terminal is reset, and the new program starts at the window's
+     * size. `exited()` then belongs to the new program. Must be called inside a coroutine (it
+     * waits for the old program to end).
+     *
+     * @throws \LogicException when the component is not mounted
+     */
+    public function restart(): void
+    {
+        if (!$this->isMounted()) {
+            throw new \LogicException('Only a mounted Terminal can restart its program');
+        }
+        $old = $this->pty;
+        $this->pty = null;
+        $this->hangUp($old);
+        $this->surface->write("\ec");       // RIS: a fresh terminal for the new program
+        $this->launch();
+    }
+
+    /**
+     * An awaitable that resolves with the exit status when the program ends (a killed program
+     * reports 128 + the signal): `$code = fiber\await($terminal->exited())`.
+     *
+     * @throws \LogicException before the component is mounted
+     */
+    public function exited(): object
+    {
+        return $this->exited ?? throw new \LogicException('The Terminal has not been started');
     }
 
     /** The pty the program runs in (for its pid, `kill()`, `write()`), or null before mounting. */

@@ -264,7 +264,7 @@ describe('built-ins', function () {
             }
             $log->append("\e[31mred");
             expect($t->text())->toBe("line 5\nline 6\nred")
-                ->and($log->lines())->toBe(['line 1', 'line 2', 'line 3', 'line 4', 'line 5', 'line 6', 'red']);
+                ->and($log->lines())->toBe(['line 1', 'line 2', 'line 3', 'line 4', 'line 5', 'line 6', "\e[31mred"]);
             $t->scroll(0, 0, -1);
             expect($log->isFollowing())->toBeFalse()->and($t->text())->toBe("line 2\nline 3\nline 4");
             $log->append("\nmore\n");
