@@ -10,15 +10,16 @@ use phasync\Tui\Internal\Size;
  *
  *     $stack = (new Stack())->add($main);                         // fills the host
  *     $root->setLayout($stack);
- *     $stack->add($dialog, width: 40, height: 10);                // centered on top
- *     $root->host($dialog)->setBorder(true)->setTitle('Save?');
+ *     $stack->add($dialog, width: 40, height: 10, title: 'Save?'); // centered on top, framed
  *     $dialog->focus();                                           // keys go to the dialog
  *     ...
  *     $stack->remove($dialog);                                    // what was below shows again
  *
  * Sizes are cells (int), a share of the host (`'50%'`); the default `'100%'` fills it. A window
  * is placed by `$align` (`center`, `top`, `bottom`, `left`, `right`, `top-left`, `top-right`,
- * `bottom-left`, `bottom-right`) or at an explicit `$x`/`$y`. Surfaces are kept the size of their
+ * `bottom-left`, `bottom-right`) or at an explicit `$x`/`$y`. A `$title` frames the window with
+ * a border and puts the title in it (`border: true` frames it without one); the size includes the
+ * border. Surfaces are kept the size of their
  * windows (`Viewport::setFit()`). A layout can be added where a surface would go: the stack shows
  * it in a surface of its own (see `Split`), for a dialog made of several windows.
  */
@@ -26,7 +27,7 @@ final class Stack implements Layout
 {
     private const ALIGN = ['center', 'top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
-    /** @var list<array{Surface|Layout, int|string, int|string, string, ?int, ?int}> */
+    /** @var list<array{Surface|Layout, int|string, int|string, string, ?int, ?int, ?bool, ?string}> */
     private array $items = [];
     private ?Surface $host = null;
 
@@ -39,15 +40,18 @@ final class Stack implements Layout
      * @param string     $align  where the window goes when $x/$y are not given
      * @param int|null   $x      left column, overriding the horizontal part of $align
      * @param int|null   $y      top row, overriding the vertical part of $align
+     * @param bool|null  $border draw a border around the window (default: when it has a title;
+     *                           null leaves the viewport's own `setBorder()` alone)
+     * @param string|null $title the title in its top border (implies a border)
      */
-    public function add(Surface|Layout $item, int|string $width = '100%', int|string $height = '100%', string $align = 'center', ?int $x = null, ?int $y = null): static
+    public function add(Surface|Layout $item, int|string $width = '100%', int|string $height = '100%', string $align = 'center', ?int $x = null, ?int $y = null, ?bool $border = null, ?string $title = null): static
     {
         Size::parse($width);
         Size::parse($height);
         if (!\in_array($align, self::ALIGN, true)) {
             throw new \InvalidArgumentException("Unknown alignment '$align'");
         }
-        $entry = [$item, $width, $height, $align, $x, $y];
+        $entry = [$item, $width, $height, $align, $x, $y, $border ?? ($title !== null ? true : null), $title];
         foreach ($this->items as $i => [$s]) {
             if ($s === $item) {
                 $this->items[$i] = $entry;
@@ -100,7 +104,7 @@ final class Stack implements Layout
         $rows = $host->rows();
         $order = [];
         $nested = 0;
-        foreach ($this->items as [$item, $width, $height, $align, $x, $y]) {
+        foreach ($this->items as [$item, $width, $height, $align, $x, $y, $border, $title]) {
             $surface = $item instanceof Layout ? $host->nestedSurface($nested++, $item) : $item;
             $order[] = $surface;
             $w = self::measure($width, $cols);
@@ -115,7 +119,14 @@ final class Stack implements Layout
                 str_starts_with($align, 'bottom') => $rows - $h,
                 default => intdiv($rows - $h, 2),
             };
-            $host->host($surface)->move($x, $y)->resize($w, $h)->setFit(true);
+            $view = $host->host($surface);
+            if ($border !== null && $border !== $view->hasBorder()) {
+                $view->setBorder($border);
+            }
+            if ($title !== null) {
+                $view->setTitle($title);
+            }
+            $view->move($x, $y)->resize($w, $h)->setFit(true);
         }
         // hosting order is z-order: keep it the stack's order
         $current = array_values(array_filter(array_map(fn(Viewport $v) => $v->source, $host->viewports()), fn(Surface $s) => \in_array($s, $order, true)));

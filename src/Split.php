@@ -15,8 +15,9 @@ use phasync\Tui\Internal\Size;
  *         ->add($log, '25%'));       // a quarter of the width
  *
  * Every surface is kept the size of its window (`Viewport::setFit()`), so a program in it (a
- * shell in a `Pty`) is resized with the host. Borders and titles are set on the viewports:
- * `$root->host($files)->setBorder(true)->setTitle('files')`.
+ * shell in a `Pty`) is resized with the host. A window gets a border and a title with
+ * `->add($files, 30, title: 'files')` (or `border: true` for a frame without a title), or on its
+ * viewport: `$root->host($files)->setBorder(true)->setTitle('files')`.
  *
  * Layouts nest: add a layout where a surface would go, and the split shows it in a surface of
  * its own (the same one every time the split is arranged, even when a component's `render()`
@@ -31,7 +32,7 @@ final class Split implements Layout
     public const HORIZONTAL = 'horizontal';
     public const VERTICAL = 'vertical';
 
-    /** @var list<array{Surface|Layout, int|string}> */
+    /** @var list<array{Surface|Layout, int|string, ?bool, ?string}> */
     private array $items = [];
     private ?Surface $host = null;
     private Style $separatorStyle;
@@ -67,19 +68,22 @@ final class Split implements Layout
     /**
      * Add $item as the next window: a surface, or a layout to nest (shown in a surface the split
      * makes for it). $size is its width (horizontal) or height (vertical): cells as an int,
-     * `'25%'` of the host, or `'2fr'` for a weighted share of what is left. Adding an item that
-     * is already in the split changes its size.
+     * `'25%'` of the host, or `'2fr'` for a weighted share of what is left. A `$title` frames
+     * the window with a border and puts the title in it; `border: true` frames it without one
+     * (both null: the viewport's own `setBorder()`/`setTitle()` are left alone). Adding an item
+     * that is already in the split changes its size and frame.
      */
-    public function add(Surface|Layout $item, int|string $size = '1fr'): static
+    public function add(Surface|Layout $item, int|string $size = '1fr', ?bool $border = null, ?string $title = null): static
     {
         Size::parse($size);
+        $entry = [$item, $size, $border ?? ($title !== null ? true : null), $title];
         foreach ($this->items as $i => [$s]) {
             if ($s === $item) {
-                $this->items[$i][1] = $size;
+                $this->items[$i] = $entry;
                 return $this->rearrange();
             }
         }
-        $this->items[] = [$item, $size];
+        $this->items[] = $entry;
         return $this->rearrange();
     }
 
@@ -133,9 +137,15 @@ final class Split implements Layout
         $at = 0;
         $lines = [];
         $nested = 0;
-        foreach ($this->items as $i => [$item]) {
+        foreach ($this->items as $i => [$item, , $border, $title]) {
             $surface = $item instanceof Layout ? $host->nestedSurface($nested++, $item) : $item;
             $view = $host->host($surface);
+            if ($border !== null && $border !== $view->hasBorder()) {
+                $view->setBorder($border);
+            }
+            if ($title !== null) {
+                $view->setTitle($title);
+            }
             if ($across) {
                 $view->move($at, 0)->resize($sizes[$i], $host->rows());
             } else {

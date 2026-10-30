@@ -174,3 +174,29 @@ describe('nesting', function () {
             ->and($answer->area()->x)->toBe(5);
     });
 });
+
+describe('frames', function () {
+    it('frames a dialog in a stack with a border and title given to add()', function () {
+        $root = new Surface(20, 6);
+        [$main, $dialog] = [new Surface(), new Surface()];
+        $root->setLayout((new Stack())->add($main)->add($dialog, 12, 4, title: 'Save?'));
+        $dialog->write('yes');
+        expect($root->line(1))->toBe('    ┌ Save? ───┐')
+            ->and($root->line(2))->toBe('    │yes       │')
+            ->and($root->line(4))->toBe('    └──────────┘')
+            ->and([$dialog->cols(), $dialog->rows()])->toBe([10, 2]);
+        $root->resize(24, 6);                   // kept on every arrange
+        expect($root->viewport($dialog)->hasBorder())->toBeTrue()->and($root->viewport($dialog)->title())->toBe('Save?');
+    });
+
+    it('frames windows of a split, and leaves a viewport framed by hand alone', function () {
+        $root = new Surface(20, 4);
+        [$a, $b] = [new Surface(), new Surface()];
+        $root->setLayout(Split::horizontal()->add($a, border: true)->add($b));
+        $root->viewport($b)->setBorder(true)->setTitle('b');
+        $root->resize(22, 4);
+        expect($root->viewport($a)->hasBorder())->toBeTrue()->and($root->viewport($a)->title())->toBe('')
+            ->and($root->viewport($b)->hasBorder())->toBeTrue()->and($root->viewport($b)->title())->toBe('b')
+            ->and([$a->cols(), $a->rows()])->toBe([9, 2]);
+    });
+});
