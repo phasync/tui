@@ -43,10 +43,18 @@ A grid of cells with its own `cols` × `rows`, independent of the screen, plus s
   that a real xterm handles must produce the same cells here. A small `Ansi` helper that *builds*
   sequences (cursor to x,y; SGR for a style; erase) is welcome, as the producer side of the same
   protocol.
-- Parse character by character, properly, with a real state machine (the VT500-style parser states:
-  ground, escape, CSI entry/param/intermediate, OSC/DCS string, …). Do not take shortcuts for
-  speed; PHP is fast enough when the parser is written well (a cursor into the chunk, no copying of
-  the remainder per step). Correctness first; measure later.
+- Parse character by character, properly. The parser is generated from a PEG grammar with
+  `charm/parsing` (Packagist; `vendor/bin/charm-compile grammar.cpeg -o ... -c ...` produces a
+  standalone PHP class): the grammar `src/Surface/ansi.cpeg` is the readable definition of what the
+  emulator accepts (the VT500 structure: C0 controls, ESC sequences, CSI with params and
+  intermediates, OSC/DCS/APC/PM/SOS strings with ST or BEL, UTF-8 text runs), the compiled class is
+  committed next to it, and a test asserts the committed class is current. Each `write()` chunk is
+  parsed as a sequence of items with semantic actions applying them to the cells; a sequence cut
+  off at the end of a chunk is matched by a lowest-priority "incomplete tail" rule and kept for the
+  next chunk. Do not take shortcuts for speed; PHP is fast enough when the parser is written well
+  (a cursor into the input, no copying of the remainder per step). Correctness first; measure later.
+  If charm/parsing turns out unable to express or run this, say exactly why in DEVNOTES.md and in
+  your report, and only then hand-write the state machine.
 - Reading the cells: `cell($x, $y)`, `line($y)` as text and as styled runs, `resize($cols, $rows)`
   (reflow is not required; preserve what fits).
 - Damage tracking: which rows (or cells) changed since the last `takeDamage()`, so a compositor
@@ -128,7 +136,8 @@ a child). More widgets belong to applications or later versions.
   (e.g. the same bytes through `tmux`/`script` and `tmux capture-pane`, if tmux is installed).
 - `examples/`: at least `split-shells.php` (two shells side by side, Tab to switch, status bar,
   resizes with the terminal, scrollback with the wheel), `coroutine-pane.php` (one pane a shell,
-  one a PHP closure with `echo`, a progress bar and colors), `dashboard.php` (direct drawing).
+  one a PHP closure with `echo`, a progress bar and colors), `dashboard.php` (graphs and boxes
+  drawn with escape sequences from coroutines).
 - `README.md` (what it is, install, the three-minute tour, the model: Surface → producers →
   viewport → screen → layout → component), `docs/` one page per layer with every public method
   described, and `CHANGELOG.md` with a section per version (`## 0.0.1-betaN (date)`), each entry
