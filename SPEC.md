@@ -69,7 +69,9 @@ A grid of cells with its own `cols` × `rows`, independent of the screen, plus s
   movement (CUU/CUD/CUF/CUB/CNL/CPL/CHA/CUP/VPA/HPA), ED/EL erase, IL/DL, ICH/DCH, ECH, SU/SD,
   DECSTBM scroll region, SGR (all attributes, 16/256/truecolor, reset), DECSET/DECRST private
   modes needed by common programs (DECAWM autowrap, DECTCEM cursor visibility, alt screen 1049,
-  bracketed paste 2004, mouse modes 1000/1002/1006, application cursor keys), save/restore cursor
+  bracketed paste 2004, mouse modes 1000/1002/1003/1006, focus events 1004, synchronized output
+  2026, application cursor keys, Kitty keyboard protocol push/pop/query (`CSI > u`, `CSI < u`,
+  `CSI ? u`) and modifyOtherKeys as state the Screen's key encoder honours), save/restore cursor
   (DECSC/DECRC and CSI s/u), tab stops, OSC strings (title: stored; others parsed and ignored),
   DCS/APC/PM/SOS strings parsed and ignored, and ESC sequences (RIS, IND, RI, NEL, HTS,
   charset designations parsed, DEC line drawing set honoured). Unknown sequences are consumed
