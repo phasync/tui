@@ -24,7 +24,12 @@ one runtime). Two things `fiber\` lacks are to be solved inside the library in t
   buffer class of this library, with `await`-able readiness via `Deferred`.
 If the `fiber\` surface proves genuinely insufficient for something the spec requires, say exactly
 what and why in DEVNOTES.md and in the report, with the smallest `fiber\` addition that would do;
-do not quietly reach for phasync. The supervisor decides whether to switch.
+do not quietly reach for phasync, and **do not work around the API's limits by going beneath it**:
+no `\Fiber` API (`Fiber::getCurrent()` and the like), no Swoole or Revolt calls, no assumption about
+what a task is. What `fiber\go()` returns is opaque: it is only ever passed to `await`, `await_all`
+or `await_any`, never inspected, compared or stored for its identity. A gap is a finding to report
+(the owner of `fiber-interop/api` would rather add the primitive than have libraries guess), and
+until it is filled the library does without, in the plain way, even at some cost.
 
 ext-phasync is optional: with it, `phasync\ext\sapi()` routes a coroutine's `echo` into a Surface
 (the one place that may mention phasync, guarded by `function_exists`); without it, the application
