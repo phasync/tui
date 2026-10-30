@@ -50,8 +50,10 @@ Design for the general case; no API exists for one demo.
   make the library's own output look right while a foreign program's would not, no shelling out to
   `tput`/`clear` for drawing. The windowed shell command (vim, htop, a build, an ssh session in a
   pane of a PHP program) is the differentiator; it only works if the emulator is honest.
-- **Clean layers.** Each layer depends only on the one below it and is usable alone: a Surface
-  without a Screen, a Pty without a layout, a Screen without components. No layer knows about
+- **Clean layers, one structure.** Each layer depends only on the one below it and is usable
+  alone: a Surface without a terminal, a Pty without a layout, hosting without components. And the
+  structure is self-similar: the root is a Surface hosting Surfaces, each of which may host
+  Surfaces; the real terminal is only a device attached to the root. No layer knows about
   phasync, Swerve or any application.
 - **Small, complete, consistent API.** One way to do each thing; names a terminal person expects
   (rows/cols, scrollback, focus, cursor); the same shape for every producer. Documented so a
@@ -71,7 +73,7 @@ A grid of cells with its own `cols` × `rows`, independent of the screen, plus s
   modes needed by common programs (DECAWM autowrap, DECTCEM cursor visibility, alt screen 1049,
   bracketed paste 2004, mouse modes 1000/1002/1003/1006, focus events 1004, synchronized output
   2026, application cursor keys, Kitty keyboard protocol push/pop/query (`CSI > u`, `CSI < u`,
-  `CSI ? u`) and modifyOtherKeys as state the Screen's key encoder honours), save/restore cursor
+  `CSI ? u`) and modifyOtherKeys as state the Surface's key encoder honours), save/restore cursor
   (DECSC/DECRC and CSI s/u), tab stops, OSC strings (title: stored; others parsed and ignored),
   DCS/APC/PM/SOS strings parsed and ignored, and ESC sequences (RIS, IND, RI, NEL, HTS,
   charset designations parsed, DEC line drawing set honoured). Unknown sequences are consumed
@@ -131,35 +133,57 @@ A grid of cells with its own `cols` × `rows`, independent of the screen, plus s
 - **Program-generated output**: widgets and applications that draw (graphs, tables, borders)
   produce escape sequences, with the `Ansi` helper, and `write()` them like any other producer.
 
-## 3. Viewport
+## 3. Surfaces hosting surfaces (the structure)
 
-A rectangle on a parent surface that shows a rectangle of a child Surface: offset (x, y), clipping,
-scroll position that may follow the tail or stay pinned in scrollback, and optional borders/title
-drawn by the viewport, not the child. A Surface may be larger than its viewport in both axes.
+**The design is self-similar: the root is a Surface hosting Surfaces.** There is no separate
+"screen" kind of thing. A Surface can host child Surfaces, each placed through a **Viewport**
+(a rectangle on the host showing a rectangle of the child: offset, clipping, z-order, a scroll
+position that follows the tail or stays pinned in scrollback, optional border and title drawn by
+the host). A hosted Surface can itself host Surfaces, to any depth: a pane of a multiplexer running
+another multiplexer is the same structure one level down, and so is a component tree.
 
-## 4. Screen (the real terminal)
+- **Compositing is writing.** When a child is damaged, its host repaints the child's visible,
+  damaged cells into its own cells **by writing escape sequences to itself** (cursor positioning
+  and SGR runs, through the same `write()` as every producer), clipped to the viewport. Damage then
+  propagates up: the host is damaged where it repainted, so its host repaints, up to the root.
+  Nothing paints cells directly; the ANSI-only rule holds for the compositor too.
+- **Input goes down the same tree.** A host has one focused child (or itself). Key, mouse and paste
+  events arrive at the root and are passed down the focus path; at the focused leaf, the Surface
+  encodes them to the bytes its producer expects (application cursor keys, Kitty keyboard
+  state, mouse mode, bracketed paste state of *that* Surface) and puts them on its input channel.
+  Mouse coordinates are translated by each viewport on the way down. A host may handle an event
+  itself first (a multiplexer's prefix key, a mouse drag for selection when the child has not asked
+  for mouse reporting).
+- **Replies go up.** A hosted Surface's replies to its producer's queries (DSR, DA, Kitty query,
+  OSC 52 clipboard) stay with that Surface's producer; OSC 52 and title changes bubble to the root
+  so the real terminal gets them.
+- **Resize goes down.** Resizing a host re-lays its viewports (section 5), which resizes the
+  children, which resize their ptys.
 
-- Takes over the terminal: raw mode (via `stty` or ext-phasync when available), alternate screen,
-  cursor hidden while composing, restored on exit and on exceptions/signals.
-- Holds a Surface of the terminal's size; composites viewports in z-order into it; a differ emits
-  the minimum cursor moves and SGR runs against the previous frame. Frames at most 60/s, only when
-  damaged; a `fiber\go()` coroutine of the Screen drives it (not `service()`: the screen belongs
-  to the program's `run()`), ending when the Screen closes.
-- Input decoder: keys (legacy, SS3, CSI, CSI-u/kitty basics, alt-modified, UTF-8 text), mouse
-  (SGR 1006, buttons, wheel, drag), paste (bracketed), focus in/out. Delivered as typed events
-  (`Key`, `Mouse`, `Paste`, `Resize`) to the focus owner; a Surface receiving a Key/Mouse encodes
-  it to the bytes its producer expects (application cursor key mode, mouse mode of that Surface).
-- Resize: SIGWINCH via pcntl when available, otherwise polling `stty size`; propagates through the
-  layout to Surfaces and ptys.
-- **Headless backend**: `Screen` must work against an in-memory terminal (`FakeTerminal`) with a
-  given size, where tests and headless programs read the composed frame as text and the emitted
-  byte stream, and inject input events. Every feature must be testable without a tty.
+## 4. The real terminal
+
+The root Surface is attached to the terminal by a **Terminal device**, which is only an I/O
+adapter: it writes the root's damage to the tty as the minimum cursor moves and SGR runs against
+the previous frame (at most 60 frames a second, only when damaged, driven by a `fiber\go()`
+coroutine of the device that ends when it detaches), and decodes the tty's input into events for
+the root (keys: legacy, SS3, CSI, CSI-u/Kitty, alt-modified, UTF-8 text; mouse: SGR 1006, buttons,
+wheel, drag; bracketed paste; focus in/out; resize via SIGWINCH with pcntl or polling `stty size`).
+It takes over the terminal (raw mode via `stty`, alternate screen, cursor hidden while composing,
+mouse and bracketed paste and focus reporting enabled, the Kitty keyboard protocol pushed if the
+host supports it) and restores it on exit, exceptions and signals.
+
+- **Headless**: a `FakeTerminal` device of a given size, for tests and headless programs: it
+  exposes the root's frame as text and the emitted byte stream, and injects input events. Every
+  feature is testable without a tty.
+- Self-hosting is the structure's own test: a root attached to a `FakeTerminal` whose byte stream
+  is written into a Surface must yield the same cells as the root.
 
 ## 5. Layout
 
-- `Split` (horizontal/vertical) with children sized fixed, percentage or weight, with optional
-  separators; `Stack` (z-order, for overlays and modal dialogs, with placement and size); nesting.
-  Resizing re-lays children and resizes their Surfaces and ptys.
+- A layout arranges a host's viewports: `Split` (horizontal/vertical) with children sized fixed,
+  percentage or weight, with optional separators; `Stack` (z-order, for overlays and modal dialogs,
+  with placement and size); nesting by giving a child Surface a layout of its own. Resizing re-lays
+  children and resizes their Surfaces and ptys.
 - Focus: one focus owner; `Tab`/`Shift-Tab` order, programmatic focus, mouse click to focus
   (opt-in).
 
@@ -196,7 +220,7 @@ everything working, before any UI component matters. Two programs are the accept
   level. Everything the library emits must be exactly what its own Surface understands.
 
 A general `examples/host.php <command...>` runs any command in a window (with a status bar) so
-both can be tried by hand; tests drive them through the headless Screen and a pty.
+both can be tried by hand; tests drive them through a root on a `FakeTerminal` and a pty.
 
 ## 7. Deliverables for every version
 
