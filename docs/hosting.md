@@ -48,7 +48,7 @@ producer writes under a window is painted over by the window.
 
 | Method | What it does |
 |---|---|
-| `host(Surface $child, ?int $x = null, ?int $y = null, ?int $width = null, ?int $height = null): Viewport` | Show `$child` and return its viewport. Without geometry it shows at the top-left at its own size. Hosting it again returns the same viewport (moved and resized if geometry is given). The first surface hosted gets the focus, and so does one that asked for it with `focus()` before it was shown. Throws if `$child` is this surface or hosts it. |
+| `host(Surface $child, ?int $x = null, ?int $y = null, ?int $width = null, ?int $height = null): Viewport` | Show `$child` and return its viewport. Without geometry it shows at the top-left at its own size. Hosting it again returns the same viewport (moved and resized if geometry is given). Of its windows, the host focuses the one focused most recently (also by a `focus()` made before it was shown), or the first one when none was ever focused (see Focus). Throws if `$child` is this surface or hosts it. |
 | `unhost(Surface $child)` | Stop showing it; its area is blanked. |
 | `raise(Surface $child)` | Bring its window to the top. |
 | `viewport(?Surface $child = null): ?Viewport` | The viewport of a hosted surface, or null. Without an argument: the viewport this surface shows through on its host. |
@@ -99,10 +99,27 @@ Focus is a property of the tree. Each host has one focused hosted surface, or ke
 itself. The focus path runs from the root down through each host's focused surface; keys go to
 its end. Any kind of host can be in between: plain surfaces, nested layouts, components.
 
+**The focus belongs to the surface, not to the place it is shown.** Every `focus()` is a request
+numbered in order, and the surface focused last has the focus wherever it is: after any change
+to the tree (hosting, unhosting, a layout set or re-arranged, a component's render that swaps a
+plain layout for a `Stack` with a dialog and back, which moves the windows into other nested
+surfaces) each host focuses the window whose part of the tree was focused most recently. So:
+
+- a focused surface that moves to another host, or one level deeper into a new nested layout,
+  keeps the focus;
+- a `focus()` made before a re-arrangement (in a component's `render()`, before the layout it
+  returns is set) wins over it;
+- when the focused surface is no longer shown (a dialog closes), the focus goes back to the one
+  focused before it that is still shown, and to the first window when none was;
+- a change takes effect at once for the next key; only the drawing waits for the next frame.
+
+Surfaces that leave the focus path and those that join it each get one `Focus` event; a surface
+that stays on it (one that only moved) gets none.
+
 | Method | What it does |
 |---|---|
-| `focus()` | Give the focus to this surface: every host from the root down focuses the way to it. When it hosts windows, keys go on to the one of them it focuses. Called before the surface is shown (a window a layout is about to place) it takes effect when it is hosted; when several wait, the latest request wins. The branch that leaves the focus path and the one that joins it each get one `Focus` event (a program with focus reporting reads `ESC [O` / `ESC [I`). |
-| `takeFocus()` | Focus this surface and keep the keys here: its own windows lose the focus, so its own producer gets them (a program with a pop-up over it). |
+| `focus()` | Give the focus to this surface: every host from the root down focuses the way to it. When it hosts windows, keys go on to the one of them it focuses. Called before the surface is shown (a window a layout is about to place) it takes effect when it is hosted; when several wait, the latest request wins. The surfaces that leaves the focus path and those that join it each get one `Focus` event (a program with focus reporting reads `ESC [O` / `ESC [I`). |
+| `takeFocus()` | Focus this surface and keep the keys here: its own windows lose the focus, so its own producer gets them (a program with a pop-up over it), until one of them is focused again. |
 | `hasFocus(): bool` | True if this surface is on the focus path from its root. |
 | `focused(): ?Surface` | The focused hosted surface, or null. |
 | `focusNext(bool $backwards = false): bool` | Move the focus to the next window (one that hosts nothing), depth first through the whole tree below, wrapping around; false when there is no other. Bind it to a key: Tab in a form, a prefix key where the windows are shells that need Tab. |

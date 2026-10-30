@@ -37,9 +37,17 @@ fiber\run(function () {
    first render is for the terminal's size; on a surface of yours; or on a new 80x24 surface that
    you attach or host afterwards (it renders again at the size it gets). Child components are
    started by their parent's `child()`.
-2. `mount()` runs once: set up state here.
-3. `render()` runs, then `run()` starts as a coroutine. A child renders for the first time once
-   the layout of the parent's render has given it its size, so it never draws for a guessed one.
+2. `mount()` runs once: set up props and state here, and create children. The surface does not
+   have its real size yet.
+3. Once the component has its real size, `sized()` runs once, then the first `render()`, then
+   `run()` starts as a coroutine. A root has its size at once (the terminal device's, or that of
+   the surface you gave it). A child has it when its parent's render has placed it in a layout:
+   it never draws for a guessed size, and a child that no render shows waits (is not sized,
+   rendered or run) until a render shows it.
+   **The rule for component authors: `mount()` is for props and state; anything that depends on
+   the rectangle starts in `sized()`**: a program that reads its terminal size once when it
+   starts (the built-in `Terminal` starts its program there), text laid out for the width, a
+   view computed for the height. Later sizes arrive with `onResize()` and a render.
 4. `render()` runs again after every resize and after `requestRender()` (batched: calls in the
    same moment give one render, as soon as the current coroutine yields).
 5. `dispose()` ends it: children are disposed first, the `stopped()` awaitable resolves and
@@ -79,7 +87,8 @@ and the coroutines of mounted components and your own.
 
 | Hook | When it runs |
 |---|---|
-| `mount(): void` | Once, before the first render. |
+| `mount(): void` | Once, at start: props, state, children. Not sized yet. |
+| `sized(): void` | Once, when the component has its real size, right before the first render: start work that depends on the rectangle here. |
 | `render(): ?Layout` | Draw into `$this->surface` and return null, or return a layout of child components' surfaces. |
 | `run(): void` | The component's coroutine, started after the first render. |
 | `unmount(): void` | Once, after disposal, when the coroutines have ended. |
@@ -104,7 +113,7 @@ keys itself (a text field) returns true for the keys it uses.
 | `isMounted(): bool` | True between start and dispose. |
 | `stopped(): object` | An awaitable that resolves on disposal. |
 | `requestRender()` | Ask for a render (batched). |
-| `focus()` | Give it the focus: every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). Called in the parent's `render()` before the layout shows it, it takes effect when the layout does. |
+| `focus()` | Give it the focus: every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). It takes effect at once, for the very next key: also for a child not shown yet (a dialog created in a key handler, shown by the render that follows), whose keys and pastes go to it through its parent until that render shows it. The focus stays with it through every re-render, also one that moves it into a different nested layout; when it is no longer shown, the component focused before it gets the focus back. |
 | `hasFocus(): bool` | True if it is on the focus path from the root (read from the surface tree). |
 | `parent(): ?Component` | The parent, null for a root. |
 | `error(): ?Throwable` | The exception that ended it, if one did. |
@@ -165,7 +174,10 @@ All in `phasync\Tui\Component\`.
 
 A command in a pseudo-terminal, as a component: `new Terminal(string|array $command, ?string
 $cwd = null, array $env = [], ?Closure $onExit = null)`. The program gets the component's surface
-as its terminal: size and resizes, keys and pastes while focused, answers to its queries.
+as its terminal: size and resizes, keys and pastes while focused, answers to its queries. The
+program starts when the component is sized (the render of its parent that shows it), in a pty
+that already has the pane's size, so full-screen programs that read their size once (vim, htop,
+less) fill their pane; until then `pty()` is null (`exited()` can be awaited from the start).
 
 When the program exits, the window keeps its last output and the end is announced:
 `$onExit(int $code, Terminal $terminal)` is called (in a coroutine of the component, so it may
@@ -173,7 +185,8 @@ wait, and a failure in it is contained), and the `exited()` awaitable resolves w
 (`fiber\await($terminal->exited())`). The host can then close the pane, show the status, or
 `restart()`: the command runs again in the same window (a running program is hung up first,
 without being announced; the terminal is reset). Disposing the component, and so quitting the
-program, hangs the program up (SIGHUP, then SIGKILL after half a second). `pty(): ?Pty`,
+program, hangs the program up with everything it started, a shell's foreground job included
+(`Pty::hangUp()`: SIGHUP, then SIGKILL after half a second). `pty(): ?Pty`,
 `isRunning()`, `exitCode()`.
 
 ### Log
@@ -189,13 +202,22 @@ moment later.)
 | Method | What it does |
 |---|---|
 | `append(string $text)` | Add text; `"\n"` ends a line, text without one continues the last line. Escape sequences style it. |
-| `setLines(array $lines)` | Replace all lines (without `"\n"`), laid out once: to re-style, edit or filter what is shown. |
+| `setLines(array $lines)` | Replace all lines (without `"\n"`), laid out once: the way to filter, re-style, edit or re-sort what is shown. A view scrolled back stays on the line at its top if it is among the new lines, else it follows the end. |
 | `clear()` | Remove all text. |
 | `lines(): list<string>` | The lines as given (escape sequences included), oldest first; an unfinished last line included. |
 | `setWordWrap(bool $on)`, `wordWrap(): bool` | Wrap between words or at any character; lays out again. |
 | `scrollBy(int $rows)`, `scrollTo(int $row)`, `follow()`, `isFollowing()` | Look back and follow the end again. |
 
-The mouse wheel scrolls it and a drag selects and copies.
+The mouse wheel scrolls it and a drag selects and copies. A view scrolled back stays on the same
+line when the log is laid out again (a resize, a change of wrapping, `setLines()`).
+
+**Filtering.** Keep the full list yourself and give the log what should show; `setLines()` lays it
+out once, and a reader scrolled back keeps their place when that line is still shown:
+
+```php
+$this->all[] = $line;                                   // every line, as it arrives
+$log->setLines(array_values(array_filter($this->all, fn(string $l) => str_contains($l, $this->query))));
+```
 
 ### TextInput
 

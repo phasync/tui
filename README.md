@@ -85,7 +85,10 @@ One primitive, one structure:
 
 The surfaces form one tree, whatever is in it: every surface knows its `parent()` and its
 `area()` on the root, and focus (`focus()`, `focusNext()`, `focusToward('left')`) follows that
-tree through plain surfaces, nested layouts and components alike.
+tree through plain surfaces, nested layouts and components alike. The focus belongs to the
+surface focused last, wherever it is shown: a re-render that wraps the layout in a `Stack` with a
+dialog and takes it away again leaves the keys where they were, and the window focused before a
+dialog gets them back when it closes.
 
 ## A three-minute tour
 
@@ -116,8 +119,7 @@ show them.
 ```php
 $root = new Surface(60, 12);
 $log = new Surface();
-$root->setLayout(Split::horizontal()->add($log));
-$root->host($log)->setBorder(true)->setTitle('log');
+$root->setLayout(Split::horizontal()->add($log, title: 'log'));     // a border with a title
 $log->write("first line\r\n");
 echo $root->text();
 ```
@@ -142,7 +144,8 @@ $root->on('key', function (Key $key) use ($tty) {
 $tty->wait();
 ```
 
-**Components** give pieces of UI a lifecycle and a coroutine:
+**Components** give pieces of UI a lifecycle and a coroutine (`mount()` for state, `sized()` for
+work that needs the component's real size, `render()`, `run()`):
 
 ```php
 final class App extends Component
@@ -164,7 +167,8 @@ fiber\run(fn() => (new App())->start(new Tty()));     // until it quits
 
 **How a program ends.** `fiber\run()` returns once nothing runs any more. Quitting (disposing
 the root component, closing the root surface, or detaching the device; each leads to the others)
-disposes the component tree: `Terminal`s hang their programs up, coroutines are told to stop,
+disposes the component tree: `Terminal`s hang their programs up with everything those started
+(a shell's foreground `vim` or `sleep` too), coroutines are told to stop,
 the terminal is restored. An exception in the root component does the same and is then thrown
 to you, by `start()` or by `fiber\run()`. A `Pty` you start yourself is yours to end.
 

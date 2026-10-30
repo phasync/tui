@@ -3,6 +3,65 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.1-beta3; TODO-0.0.1-beta3.md)
+
+All items of TODO-0.0.1-beta3.md done, in CHANGELOG.md; tests green with and without ext-phasync.
+
+- [x] 1. Component::sized() (mount = props/state, sized = rectangle); Terminal starts its pty
+      there; children are sized/rendered only by a parent render that shows them; a resize
+      before the program's first output is followed by a second SIGWINCH at its first output
+- [x] 2. Pty::hangUp()/kill() signal every process group of the session; shutdown hang-up
+- [x] 3. Focus by stamps settled over the tree after every tree change
+- [x] 4. Component::focus() on an unshown child routes keys through the nearest shown ancestor
+- [x] 5. border/title on Split::add()/Stack::add(); Log::setLines() keeps the place; docs
+- [x] acceptance: tests/Benchmark/PanesTest.php (vim/htop/less size + clean exit, quit with
+      foreground jobs as string/vector, nested split-shells), BenchmarkTest still green
+
+## Design decisions (0.0.1-beta3)
+
+- **Focus = the latest request.** `Surface::focus()`/`takeFocus()` stamp the surface from a
+  static clock. Every change to the tree (Surface::host/unhost/setLayout/resize-arrange and
+  focus itself) runs through `Surface::changeTree()`; when the outermost change ends, the root
+  is settled: `rankFocus()` walks the tree once, each host points at the child whose subtree
+  has the highest stamp (ties keep the current one; all zero = the first window; a host's
+  `keepStamp` from takeFocus() beats older children = focus on itself). The root remembers the
+  path it announced (`announced`); the set difference old/new gets Focus(false)/(true), each
+  surface once, the 1004 report only at a path end. A root that gets hosted (`joinTree()`)
+  tells its old path it lost the focus. Host::setFocus is a plain pointer + title write.
+  Replaces beta2's `focusWanted`/`Host::focusStamp`, which lost the focus when a render moved the
+  focused window into another nested surface.
+- **hasFocus() of an unhosted surface is true** (it is a root of its own). Unchanged; tests
+  check routing instead.
+- **Pending focus (item 4)** lives in Component, where batching happens: focus() on a child
+  whose surface has no viewport sets `focusPending` on each ancestor up to the first shown one,
+  focuses that one, then the child (so the child holds the latest stamp). The ancestor's
+  key/paste listener (after its own onKey) forwards to the pending child while it is mounted,
+  unshown and `isLatestFocus()`. Plain surfaces need no such thing: whoever hosts them does it
+  synchronously.
+- **Pty session.** The pid is the session leader (setsid -c, no fork). `processGroups()` walks
+  /proc/<pid>/task/*/children recursively (a full /proc scan cost 40 ms per call with 1500
+  processes and blocked the loop) and keeps every group seen in `$groups`, so the SIGKILL phase
+  still reaches jobs whose shell died on SIGHUP (they are reparented and no longer below the
+  pid). Children in another session (nested Ptys, daemons) are not descended into: a nested
+  program ends its own ptys (Tty's signal handler exits; Pty's shutdown function hangs up).
+- **Early resize**: `resizedEarly` when resize() comes before the program's first output; at the
+  first output, after any stty in flight, SIGWINCH to the tty's foreground group (tpgid from
+  /proc/<pid>/stat). The kernel sends no SIGWINCH for an unchanged size, hence the explicit one.
+- **sized()**: firstRender() = sized(), render, go(run). A child's firstRender is only called by
+  the parent's renderNow() for children whose surface has a viewport; the beta2 fallback that
+  rendered unshown children at 80x24 is gone.
+- **Log place**: rows of each line are computed back from the cursor row (the open line ends
+  there) with the width last laid out (`laidCols`); the line at the view's top is found before
+  the re-layout and its new first row scrolled to after. setLines() looks the old top line's text
+  up in the new lines.
+
+## Left for later versions
+
+- Word wrap does not break between CJK ideographs (UAX #14).
+- Log's open-line rewrite in word-wrap mode erases with the current pen (BCE).
+- Ctrl-C forwarding into Claude's login screen did not exit it (also under tmux).
+- Non-Linux: Pty signals only the program's own group (no /proc children walk).
+
 ## Status (0.0.1-beta2; TODO-0.0.1-beta2.md)
 
 All items of TODO-0.0.1-beta2.md done, in CHANGELOG.md; tests green with and without ext-phasync.
@@ -69,7 +128,7 @@ All items of TODO-0.0.1-beta2.md done, in CHANGELOG.md; tests green with and wit
   spaces is one word.
 - Log's open-line rewrite in word-wrap mode erases with the current pen (BCE): a background
   colour left on by an earlier line shows in the erased cells until rewritten.
-- A pinned (scrolled-back) Log keeps its row index across a re-layout, not the same line.
+- (fixed in beta3) A pinned Log kept its row index across a re-layout.
 - Ctrl-C forwarding into Claude's login screen did not exit it under our emulator nor tmux;
   not investigated further.
 

@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.0.1-beta3 (2026-10-30)
+
+**A program starts at the size of its pane**
+
+- vim, htop, less and other full-screen programs in a `Terminal` pane no longer stay at 80x24
+  (or whatever the default was) when the pane is larger: the program now starts in a pty that
+  already has its pane's size. A `Terminal` starts its program when it has been sized (the
+  render of its parent that shows it), not at mount; until then `pty()` is null, and a
+  `Terminal` that no render shows has not started its program yet.
+- New hook `Component::sized()`: runs once when the component has its real size, right before
+  its first render. The rule for component authors: `mount()` sets up props and state, work that
+  depends on the rectangle starts in `sized()`. A child component that no render shows is no
+  longer rendered at a guessed size; it is sized and rendered by the render that shows it.
+- A pane resized while its program is still starting (before the program's first output) no
+  longer leaves the program at the old size: once it writes, it gets a second SIGWINCH, for
+  programs that install their handler late (vim).
+
+**Quitting ends every program in the panes, also what a shell runs in the foreground**
+
+- Quitting while a shell in a pane ran `sleep`, `vim`, a build or a nested multiplexer in the
+  foreground could leave the shell and that program running as orphans holding the pane's
+  terminal open, and `fiber\run()` never returned. Ending a `Pty` now ends every process it
+  started: the program leads its own session on the pty, and hanging up signals every process
+  group of that session (SIGHUP and SIGCONT, then SIGKILL after the grace period), as closing a
+  terminal window does. A command given as a string and one given as an argument vector behave
+  the same.
+- New `Pty::hangUp(float $grace = 0.5)`: the usual way to end a Pty (the `Terminal` component
+  uses it). `Pty::kill()` now signals the whole session too, not only the program's own group.
+- Ptys still running when the PHP process exits (`exit()`, an uncaught exception, a signal such
+  as the SIGHUP a program in a pane gets when its outer pane closes) are hung up on the way out,
+  so a split-shells nested in a pane of another ends its own shells with it.
+
+**Focus survives a re-render that swaps layouts**
+
+- A component whose `render()` returns a `Stack` with a dialog and then the plain layout again
+  no longer loses the keyboard when that layout contains a nested layout: the windows moved into
+  other nested surfaces, the focus was left pointing at a window no longer shown, and typing did
+  nothing afterwards. The focus now belongs to the surface: the surface focused last has it,
+  wherever it is shown and however the windows are re-arranged.
+- A `focus()` made during `render()` (or anywhere before a re-arrangement) wins over what the
+  re-arrangement does.
+- When the focused window is no longer shown (a dialog closes), the focus goes back to the
+  window focused before it, if it is still there, else to the first window. (It used to go to
+  the topmost window.)
+- Focus events: surfaces that leave the focus path and those that join it each get one; a
+  surface that only moved to another host gets none. A host that took the focus with
+  `takeFocus()` keeps it when a new window is hosted, until a window is focused.
+
+**Keys go to the new focus at once**
+
+- Keys typed right after a key that changed the focus (opening a dialog with
+  `$dialog->focus(); $this->requestRender();`) no longer go to the old focus until the next
+  render: focus changes take effect immediately for input, and only the drawing waits for the
+  frame. A component focused before a render shows it gets its keys and pastes through its
+  parent until then.
+
+**Small things**
+
+- A window gets a border and title right where it is added to a layout:
+  `$stack->add($dialog, 40, 10, title: 'Save?')`, also `Split::add($item, $size, title: ...)`,
+  or `border: true` for a frame without a title. No detour through `host()` for a dialog's frame.
+- `Log::setLines()` is documented as the way to filter (also in the Log class docs), and keeps
+  the reader's place: a view scrolled back stays on the line at its top when it is among the new
+  lines, and follows the end when it is not. A scrolled-back `Log` also stays on the same line
+  (no longer the same row number) when a resize or `setWordWrap()` lays it out again.
+
 ## 0.0.1-beta2 (2026-10-30)
 
 **Text that fits the window it is in**

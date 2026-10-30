@@ -98,6 +98,10 @@ it('keeps the keys on a host itself with takeFocus()', function () {
     expect($root->focused())->toBeNull()->and($popup->hasFocus())->toBeFalse();
     $root->dispatch(new phasync\Tui\Key('q'));
     expect($root->input->read())->toBe('q');
+    $root->host(new Surface(3, 1), 0, 0);        // a new window does not take the keys away
+    expect($root->focused())->toBeNull();
+    $popup->focus();
+    expect($root->focused())->toBe($popup);
 });
 
 it('moves the focus by direction, from the geometry of the windows', function () {

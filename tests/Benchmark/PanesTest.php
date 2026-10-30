@@ -81,7 +81,9 @@ it('starts vim at the size of its pane and ends it with the pane', function () {
     $file = sys_get_temp_dir() . '/tui-vim-' . getmypid() . '.txt';
     file_put_contents($file, str_repeat('a', 70) . "\nsecond\n");
     $took = inPanes([['vim', '-u', 'NONE', '-i', 'NONE', '-N', '-n', $file]], function (FakeTerminal $t) {
-        expect($t->waitFor(fn() => str_contains(paneRow($t, 19), '2L'), 10))->toBeTrue()
+        // (wait for the whole screen: vim may show its message before the text)
+        $t->waitFor(fn() => str_contains(paneRow($t, 19), '2L') && paneRow($t, 2) === 'second', 10);
+        expect(paneRow($t, 19))->toContain('2L')
             ->and(paneRow($t, 0))->toBe(str_repeat('a', 60))       // 60 columns wide
             ->and(paneRow($t, 1))->toBe(str_repeat('a', 10))
             ->and(paneRow($t, 2))->toBe('second')

@@ -26,8 +26,21 @@ The program sees a real terminal of the surface's size: `TERM=xterm-256color`,
 via `setsid -c`), and the size from its first instruction. Its output is written into the
 surface as it arrives; what is written to the surface's `input` (keys from `dispatch()`, pastes,
 replies to its queries) goes to the program. Resizing the surface resizes the terminal (with
-`stty -F <slave>` in a helper process), which sends SIGWINCH to the program. Descriptors of the
-PHP process are not passed on to the program.
+`stty -F <slave>` in a helper process), which sends SIGWINCH to the program; a size set while
+the program is still starting (before its first output) is announced once more with a second
+SIGWINCH when it first writes, for programs that install their handler late (vim). Descriptors
+of the PHP process are not passed on to the program.
+
+**Ending a Pty ends everything it started.** The program leads a session of its own with the pty
+as its controlling terminal, as a login shell does on a real terminal; what it starts (a shell's
+jobs, an editor, a nested multiplexer) is in that session. `hangUp()` does to all of it what
+closing a terminal window does, and `kill()` signals all of it: every process group of the
+session, so a shell running `sleep`, `vim` or a build in the foreground ends with its pty, and
+`fiber\run()` returns. A string command and an argument vector behave the same. Ptys still
+running when the PHP process exits (`exit()`, an uncaught exception, a signal) are hung up on
+the way out. A program that starts a session of its own (a daemon, or a nested program's own
+ptys) is not part of it; a nested program built on this library ends its own ptys when it is
+hung up.
 
 | Method | What it does |
 |---|---|
@@ -37,13 +50,14 @@ PHP process are not passed on to the program.
 | `exitCode(): ?int` | The exit status once it has ended (128 + signal when killed by one), else null. |
 | `wait(float $timeout = PHP_FLOAT_MAX): ?int` | Wait until the program has ended and all its output is in the surface; null if the timeout passed first. |
 | `exited(): object` | An awaitable that resolves with the exit status at the same moment: `fiber\await($pty->exited())`, or race it against other work with `fiber\await_any()`. |
-| `kill(int $signal = 15)` | Send a signal to the program's process group. SIGHUP (1) for "the terminal went away", SIGKILL (9) for a program that does not listen. |
+| `kill(int $signal = 15)` | Send a signal to the program and everything it started on the pty (every process group of its session). SIGKILL (9) ends all of it for certain. |
+| `hangUp(float $grace = 0.5): ?int` | End the program the way closing its terminal window does: SIGHUP and SIGCONT to every process group of its session, SIGKILL after `$grace` seconds for what is left. Returns the exit status once the terminal has closed (at once if it had ended), or null if something holds it open even then. Call it in a coroutine. The usual way to end a Pty. |
 | `write(string $bytes)` | Send bytes to the program as if typed, bypassing the surface's input. |
 | `resize(int $cols, int $rows)` | Set the terminal size. Happens by itself when the surface is resized; call it only for a pty whose surface you size differently. |
 | `device(): ?string` | The pty's slave device, such as `/dev/pts/3`. |
 
 A Pty you start is yours: it runs (and keeps `fiber\run()` from returning) until the program
-exits or you `kill()` it; detaching the terminal does not end it. The `Terminal`
+exits or you end it (`hangUp()`, `kill()`); detaching the terminal does not end it. The `Terminal`
 [component](components.md) wraps a Pty with a lifecycle that does: disposing the component (and
 so quitting the program) hangs its program up.
 

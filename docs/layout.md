@@ -28,9 +28,12 @@ root) goes through it like through any host. `$inner->host()` is that surface (t
 a border: `$inner->host()->viewport()->setBorder(true)`). Giving a hosted surface a layout of its
 own (`$right->setLayout(...)`) works too, when you want to hold that surface yourself.
 
-Borders and titles are set on the viewports, not in the layout:
+A window gets a border and a title right where it is added: `->add($left, 30, title: 'files')`
+frames it with the title in the top border, `border: true` frames it without a title (the size
+is the outer size, border included). Or set them on the viewport yourself:
 `$root->host($left)->setBorder(true)->setTitle('files')` (`host()` returns the existing viewport
-of a hosted surface, so this works before or after the layout is set).
+of a hosted surface, so this works before or after the layout is set); an item added without
+`border`/`title` leaves what you set on its viewport alone.
 
 ## Split
 
@@ -42,7 +45,7 @@ to bottom), optionally with a one-cell separator line between them.
 | `Split::horizontal(bool $separators = false, ?Style $style = null)` | Side by side. |
 | `Split::vertical(bool $separators = false, ?Style $style = null)` | Stacked. |
 | `new Split(string $direction = Split::HORIZONTAL, bool $separators = false, ?Style $style = null)` | The same, with the direction as a constant. |
-| `add(Surface\|Layout $item, int\|string $size = '1fr')` | The next window: a surface, or a layout to nest. Adding an item already in the split changes its size. Chainable. |
+| `add(Surface\|Layout $item, int\|string $size = '1fr', ?bool $border = null, ?string $title = null)` | The next window: a surface, or a layout to nest. `$title` frames it with a border and that title, `border: true` with a border only. Adding an item already in the split changes its size and frame. Chainable. |
 | `remove(Surface\|Layout $item)` | Take it out; the others share its space. |
 | `items(): list<Surface\|Layout>` | In order. |
 | `host(): ?Surface` | The surface it arranges (for a nested split, the one made for it); null until arranged. |
@@ -57,16 +60,16 @@ it. For overlays, pop-ups and modal dialogs.
 ```php
 $stack = (new Stack())->add($main);                 // fills the host
 $root->setLayout($stack);
-$stack->add($dialog, width: 40, height: 8);         // centered on top
-$root->host($dialog)->setBorder(true)->setTitle('Save changes?');
+$stack->add($dialog, width: 40, height: 8, title: 'Save changes?');   // centered on top, framed
 $dialog->focus();                                   // keys go to the dialog
 // ...
-$stack->remove($dialog);                            // what it covered shows again
+$stack->remove($dialog);                            // what it covered shows again, and the
+                                                    // window focused before gets the keys back
 ```
 
 | Method | What it does |
 |---|---|
-| `add(Surface\|Layout $item, int\|string $width = '100%', int\|string $height = '100%', string $align = 'center', ?int $x = null, ?int $y = null)` | Put a window on top, a surface or a layout to nest (a dialog of several windows), or change how an item already in the stack is placed. Sizes in cells or percentages. `$align`: `center`, `top`, `bottom`, `left`, `right`, `top-left`, `top-right`, `bottom-left`, `bottom-right`; `$x`/`$y` override it. |
+| `add(Surface\|Layout $item, int\|string $width = '100%', int\|string $height = '100%', string $align = 'center', ?int $x = null, ?int $y = null, ?bool $border = null, ?string $title = null)` | Put a window on top, a surface or a layout to nest (a dialog of several windows), or change how an item already in the stack is placed. Sizes in cells or percentages, border included. `$align`: `center`, `top`, `bottom`, `left`, `right`, `top-left`, `top-right`, `bottom-left`, `bottom-right`; `$x`/`$y` override it. `$title` frames the window with a border and that title (a dialog's usual look), `border: true` with a border only. |
 | `remove(Surface\|Layout $item)` | Take it off the stack. |
 | `items(): list<Surface\|Layout>` | Bottom first; this is the z-order. |
 | `host(): ?Surface` | The surface it arranges; null until arranged. |
