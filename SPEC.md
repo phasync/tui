@@ -255,6 +255,23 @@ to its public methods; the application overrides per component class or instance
 dispatches, and a `Help` element can list the active bindings. Handlers remain possible for
 anything a map can't express.
 
+### 8.6 Overlays: anything can float
+
+A widget may show a surface on top of everything, outside its own rectangle and its parents'
+clipping: a dropdown's list, autocomplete under an `Editor`, a context menu, a tooltip, a command
+palette, and `Dialog` itself. One primitive, on the component:
+`$this->overlay($element, anchor: Rect|null, place: 'below'|'above'|'center'|Rect, modal: bool)`
+returns an `Overlay` handle (`close()`, `closed()` awaitable, `result`). The library hosts the
+element on the nearest `Layers` above the component (the root always has one) at absolute
+coordinates from the anchor, flips above/below when it would leave the screen, clips only to the
+screen, and orders later overlays above earlier ones, keeping the order across renders. Focus moves
+to the overlay by the surface tree's own rule; Escape, a click outside, or the anchor's component
+losing focus closes a non-modal overlay; a modal one takes all input until closed; closing returns
+the focus to where it was. The overlay follows its anchor when the anchor's area changes (resize,
+scroll, layout rebuild) and closes when the anchor is no longer shown. `Dialog` is an overlay with
+`place: 'center'` and `modal: true`; `Select`'s popup and `Editor`'s autocomplete are the first
+non-modal users.
+
 ### 8.5 Widgets, in this order
 
 Each one complete, documented, with its states styled and its keyboard and mouse behaviour the
