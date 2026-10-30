@@ -252,7 +252,7 @@ final class Pty
             proc_close($this->process);
             $this->ended = true;
             $this->done->notify();
-            $this->exited->settle(true, $this->exitCode);
+            $this->exited->resolve($this->exitCode);
             if ($this->onExit !== null) {
                 ($this->onExit)($this->exitCode, $this);
             }

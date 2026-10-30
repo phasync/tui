@@ -6,7 +6,9 @@ use fiber\Deferred;
 use fiber\TimeoutException;
 use phasync\Tui\Internal\Signal;
 
+use function fiber\await;
 use function fiber\await_all;
+use function fiber\current;
 
 /**
  * A piece of user interface: a Surface of its own, a lifecycle, a coroutine, child components
@@ -40,9 +42,10 @@ use function fiber\await_all;
  * The rule for component authors: **`mount()` sets up props and state; work that depends on the
  * rectangle (starting a program that reads its terminal size once, laying out text for the
  * width) starts in `sized()`**. `dispose()` ends it: children are disposed first, the
- * `stopped()` awaitable resolves and `sleep()` returns false so coroutines can end; `dispose()`
- * returns at once, and `unmount()` runs when the coroutines have returned and the children have
- * ended (a second at the latest). Coroutines are not cancelled from outside: write loops as
+ * `stopped()` awaitable resolves and `sleep()` returns false so coroutines can end, and
+ * `unmount()` runs when the coroutines have returned and the children have ended (a second at
+ * the latest); `dispose()` returns after that, except when called from one of the component's
+ * own coroutines (see `dispose()`). Coroutines are not cancelled from outside: write loops as
  * `while ($this->sleep(...))` or check `isMounted()`.
  *
  * **Ending.** A component is disposed by its parent, by `dispose()`, or when its surface is
@@ -86,6 +89,8 @@ abstract class Component
     private ?Component $parent = null;
     /** @var array<string, Component> */
     private array $children = [];
+    /** @var list<Component> children disposed that have not ended yet: the end waits for them */
+    private array $ending = [];
     /** @var array<string, true>|null keys asked for by the render in progress */
     private ?array $used = null;
     private bool $mounted = false;
@@ -97,7 +102,7 @@ abstract class Component
     /** After disposal: resolves when the last coroutine has returned. */
     private ?Deferred $idle = null;
     private ?Signal $wake = null;
-    /** @var array<int, true> running coroutines, by number */
+    /** @var array<int, ?object> running coroutines by number: the handle `fiber\go()` gave each */
     private array $tasks = [];
     private int $taskCount = 0;
     private ?\Throwable $error = null;
@@ -224,7 +229,7 @@ abstract class Component
             }),
             // what render() draws may depend on where the component is: draw again when it moved
             $s->on('area', fn() => $this->requestRender()),
-            $s->on('close', fn() => $this->dispose()),
+            $s->on('close', fn() => $this->stop()),
         ];
         $this->guard($this->mount(...));
         if ($this->parent === null) {
@@ -250,20 +255,55 @@ abstract class Component
 
     /**
      * End the component: dispose its children (a `Terminal` hangs its program up), resolve
-     * `stopped()` and wake `sleep()`, so its coroutines know they are to end. It returns at once
-     * and does not wait for them; the component's end follows: `unmount()` runs when its last
-     * coroutine has returned and its children have ended (each the same way), or after $timeout
-     * seconds at the latest, if a coroutine does not listen. For a root, the surface is closed
-     * first, which detaches a terminal device attached to it, and `fiber\run()` returns only
-     * after the end. The surface keeps its last content. Safe to call twice; children are
-     * disposed by their parent.
+     * `stopped()` and wake `sleep()`, so its coroutines know they are to end, and wait for its
+     * end: `unmount()` runs when its last coroutine has returned and its children have ended
+     * (each the same way), or after $timeout seconds at the latest if a coroutine does not
+     * listen. When `dispose()` returns, `unmount()` has run. For a root, the surface is closed
+     * first, which detaches a terminal device attached to it. The surface keeps its last
+     * content. Safe to call twice; children are disposed by their parent.
      *
-     * A coroutine of the component may dispose it (`$this->dispose()` in `run()`, in a `go()`, or
-     * in a Terminal's `$onExit`): dispose() returns, the coroutine goes on with `isMounted()`
-     * false and `sleep()` returning false, and `unmount()` runs once it has returned. So return
-     * soon after, and do not wait in it for the component's end.
+     * Called from one of the component's own coroutines (its `run()`, a `go()`, a `Terminal`'s
+     * `$onExit`) or from one of a descendant's (a child quitting the program by disposing the
+     * root), it cannot wait for the coroutine it is called from: it signals as above and
+     * returns, the coroutine goes on with `isMounted()` false and `sleep()` returning false, and
+     * `unmount()` runs once it has returned. So return soon after, and do not wait in it for the
+     * component's end. The same happens where the runtime cannot say which coroutine is running
+     * (`fiber\current()` is null, as outside `fiber\run()`). `fiber\run()` returns only after the
+     * end either way.
      */
     public function dispose(float $timeout = 1.0): void
+    {
+        if (!$this->mounted) {
+            return;
+        }
+        $me = current();
+        $fromInside = $me === null || $this->runs($me);
+        $this->stop($timeout);
+        if (!$fromInside) {
+            await($this->ended);    // bounded: the end comes $timeout after stop() at the latest
+        }
+    }
+
+    /** True if $task is one of the coroutines of this component or of a descendant. */
+    private function runs(object $task): bool
+    {
+        if (\in_array($task, $this->tasks, true)) {
+            return true;
+        }
+        foreach ([...$this->children, ...$this->ending] as $child) {
+            if ($child->runs($task)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Signal the end to the component and its subtree, and arrange it: the end (end()) runs when
+     * the coroutines and the children have ended, at once when nothing is pending, else in a
+     * coroutine that waits for them, $timeout at most.
+     */
+    private function stop(float $timeout = 1.0): void
     {
         if (!$this->mounted) {
             return;
@@ -276,13 +316,18 @@ abstract class Component
         if ($this->parent === null) {
             // the program ends: give the terminal back at once
             $this->surface->close();
+        } else {
+            // no longer the parent's child (child() makes a new one), but the parent's end waits for it
+            $key = array_search($this, $this->parent->children, true);
+            if ($key !== false) {
+                unset($this->parent->children[$key]);
+            }
+            $this->parent->ending[] = $this;
         }
-        $children = array_reverse($this->children);
-        foreach ($children as $child) {
-            $child->dispose($timeout);
+        foreach (array_reverse($this->children) as $child) {
+            $child->stop($timeout);
         }
-        $this->children = [];
-        $this->stopped->settle(true, null);
+        $this->stopped->resolve();
         $this->wake->notify();
         // the end: once the coroutines (told to stop just now) and the children have ended
         $waits = [];
@@ -290,7 +335,7 @@ abstract class Component
             $this->idle = new Deferred();
             $waits[] = $this->idle;
         }
-        foreach ($children as $child) {
+        foreach ($this->ending as $child) {
             $waits[] = $child->ended;
         }
         if ($waits === []) {
@@ -313,7 +358,10 @@ abstract class Component
         try {
             $this->guard($this->unmount(...));
         } finally {
-            $this->ended->settle(true, null);
+            $this->ended->resolve();
+            if ($this->parent !== null) {
+                $this->parent->ending = array_values(array_filter($this->parent->ending, fn(Component $c) => $c !== $this));
+            }
         }
     }
 
@@ -399,7 +447,7 @@ abstract class Component
      */
     public function hasFocus(): bool
     {
-        if (!$this->surface->hasFocus()) {
+        if (!$this->mounted || !$this->surface->hasFocus()) {
             return false;
         }
         // on the surface path from the top of its surface's tree; every ancestor must pass the
@@ -511,17 +559,22 @@ abstract class Component
     protected function go(\Closure $task): void
     {
         $id = ++$this->taskCount;
-        $this->tasks[$id] = true;
-        \fiber\go(function () use ($id, $task): void {
+        $this->tasks[$id] = null;
+        $handle = \fiber\go(function () use ($id, $task): void {
+            // known here already when the runtime starts the task before go() returns
+            $this->tasks[$id] ??= current();
             try {
                 $this->guard($task);
             } finally {
                 unset($this->tasks[$id]);
                 if ($this->tasks === [] && $this->idle !== null) {
-                    $this->idle->settle(true, null);
+                    $this->idle->resolve();
                 }
             }
         });
+        if (\array_key_exists($id, $this->tasks)) {
+            $this->tasks[$id] ??= $handle;
+        }
     }
 
     /**
@@ -558,12 +611,22 @@ abstract class Component
         }
         if ($layout !== null) {
             foreach ($this->children as $key => $child) {
-                if (!isset($used[$key])) {
-                    unset($this->children[$key]);
-                    $child->dispose();
+                if (!isset($used[$key]) && !$child->isShownIn($this->surface)) {
+                    $child->stop();         // a render does not wait for its coroutines
                 }
             }
         }
+    }
+
+    /** True if this component's surface shows on $surface, directly or through windows in between. */
+    private function isShownIn(Surface $surface): bool
+    {
+        for ($s = $this->surface->parent(); $s !== null; $s = $s->parent()) {
+            if ($s === $surface) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Run an event handler; true when it handled the event. */
@@ -607,8 +670,8 @@ abstract class Component
         $s->setLayout(null);
         $this->showError();
         $s->on('resize', fn() => $this->showError());
-        // its children end with it
-        $this->dispose();
+        // its children end with it; whoever ran into the failure does not wait for the end
+        $this->stop();
     }
 
     /** Draw the error that ended the component into its rectangle. */

@@ -174,11 +174,9 @@ it('tells coroutines to end on dispose, and unmounts once they have', function (
         sleep(0.05);
         expect($ticker->ticks)->toBeGreaterThan(0);
         $start = microtime(true);
-        $ticker->dispose();                         // returns at once, without waiting
+        $ticker->dispose();                         // returns once the coroutine ended and unmount() ran
         expect($ticker->isMounted())->toBeFalse()
-            ->and($ticker->endedBeforeUnmount)->toBeNull();
-        sleep(0.01);
-        expect($ticker->ended)->toBeTrue()
+            ->and($ticker->ended)->toBeTrue()
             ->and($ticker->endedBeforeUnmount)->toBeTrue()
             ->and(microtime(true) - $start)->toBeLessThan(0.5);
     });

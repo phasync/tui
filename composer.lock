@@ -4,24 +4,24 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "4922c5eea384ceaa9e5c39cce73a3f83",
+    "content-hash": "9d546da121444eaff91626e05454500f",
     "packages": [
         {
             "name": "fiber-interop/api",
-            "version": "v0.3.0",
+            "version": "v0.3.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/fiber-interop/api.git",
-                "reference": "4706fd3976b86882d23f4837679901868f5d3cff"
+                "reference": "b1b3491e2982b78183e877a040fc5bbff0f02dd4"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/fiber-interop/api/zipball/4706fd3976b86882d23f4837679901868f5d3cff",
-                "reference": "4706fd3976b86882d23f4837679901868f5d3cff",
+                "url": "https://api.github.com/repos/fiber-interop/api/zipball/b1b3491e2982b78183e877a040fc5bbff0f02dd4",
+                "reference": "b1b3491e2982b78183e877a040fc5bbff0f02dd4",
                 "shasum": ""
             },
             "require": {
-                "fiber-interop/scope": "^0.2 || ^0.3",
+                "fiber-interop/scope": "^0.2 || ^0.3 || ^0.4 || ^0.5",
                 "php": "^8.1"
             },
             "require-dev": {
@@ -52,22 +52,22 @@
             "description": "One surface for fiber-based concurrency: go, await, sleep, readable, writable on phasync, Revolt, AMPHP and ReactPHP.",
             "support": {
                 "issues": "https://github.com/fiber-interop/api/issues",
-                "source": "https://github.com/fiber-interop/api/tree/v0.3.0"
+                "source": "https://github.com/fiber-interop/api/tree/v0.3.1"
             },
-            "time": "2026-10-19T17:53:37+00:00"
+            "time": "2026-10-30T21:26:08+00:00"
         },
         {
             "name": "fiber-interop/scope",
-            "version": "v0.3.0",
+            "version": "v0.5.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/fiber-interop/scope.git",
-                "reference": "74e579e94c2e46e29075550f14fa9b5577e772fe"
+                "reference": "7c60c441a6b90f295d4f862553d6dc547f241e14"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/fiber-interop/scope/zipball/74e579e94c2e46e29075550f14fa9b5577e772fe",
-                "reference": "74e579e94c2e46e29075550f14fa9b5577e772fe",
+                "url": "https://api.github.com/repos/fiber-interop/scope/zipball/7c60c441a6b90f295d4f862553d6dc547f241e14",
+                "reference": "7c60c441a6b90f295d4f862553d6dc547f241e14",
                 "shasum": ""
             },
             "require": {
@@ -82,7 +82,7 @@
             "type": "library",
             "extra": {
                 "branch-alias": {
-                    "dev-main": "0.3.x-dev"
+                    "dev-main": "0.5.x-dev"
                 }
             },
             "autoload": {
@@ -110,9 +110,9 @@
             ],
             "support": {
                 "issues": "https://github.com/fiber-interop/scope/issues",
-                "source": "https://github.com/fiber-interop/scope/tree/v0.3.0"
+                "source": "https://github.com/fiber-interop/scope/tree/v0.5.0"
             },
-            "time": "2026-10-19T11:28:48+00:00"
+            "time": "2026-10-30T08:24:00+00:00"
         }
     ],
     "packages-dev": [
@@ -480,21 +480,21 @@
         },
         {
             "name": "fiber-interop/phasync",
-            "version": "v0.4.0",
+            "version": "v0.4.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/fiber-interop/phasync.git",
-                "reference": "6b01d38a7edfcafc62d9b94bbb9a9c7a8016c229"
+                "reference": "4b6a7b19b90c7c4b295ae9a5929acccdf0d39bb4"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/fiber-interop/phasync/zipball/6b01d38a7edfcafc62d9b94bbb9a9c7a8016c229",
-                "reference": "6b01d38a7edfcafc62d9b94bbb9a9c7a8016c229",
+                "url": "https://api.github.com/repos/fiber-interop/phasync/zipball/4b6a7b19b90c7c4b295ae9a5929acccdf0d39bb4",
+                "reference": "4b6a7b19b90c7c4b295ae9a5929acccdf0d39bb4",
                 "shasum": ""
             },
             "require": {
                 "fiber-interop/api": "^0.3",
-                "fiber-interop/scope": "^0.2 || ^0.3",
+                "fiber-interop/scope": "^0.2 || ^0.3 || ^0.4 || ^0.5",
                 "phasync/phasync": "^2.0.0-beta9",
                 "php": "^8.2"
             },
@@ -522,9 +522,9 @@
             "description": "fiber-interop/api adapter for the phasync event loop.",
             "support": {
                 "issues": "https://github.com/fiber-interop/phasync/issues",
-                "source": "https://github.com/fiber-interop/phasync/tree/v0.4.0"
+                "source": "https://github.com/fiber-interop/phasync/tree/v0.4.1"
             },
-            "time": "2026-10-19T17:56:03+00:00"
+            "time": "2026-10-30T21:26:09+00:00"
         },
         {
             "name": "fidry/cpu-core-counter",
@@ -1542,20 +1542,20 @@
         },
         {
             "name": "phasync/phasync",
-            "version": "2.0.4",
+            "version": "2.0.7",
             "source": {
                 "type": "git",
                 "url": "https://github.com/phasync/phasync.git",
-                "reference": "27d79c5a37c3a40f0a487fd5cda06b0c126a2120"
+                "reference": "99f69ab3070c2507befa4801bc397c648ff0783e"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phasync/phasync/zipball/27d79c5a37c3a40f0a487fd5cda06b0c126a2120",
-                "reference": "27d79c5a37c3a40f0a487fd5cda06b0c126a2120",
+                "url": "https://api.github.com/repos/phasync/phasync/zipball/99f69ab3070c2507befa4801bc397c648ff0783e",
+                "reference": "99f69ab3070c2507befa4801bc397c648ff0783e",
                 "shasum": ""
             },
             "require": {
-                "fiber-interop/scope": "^0.3",
+                "fiber-interop/scope": "^0.5",
                 "php": "^8.2",
                 "psr/http-factory": "^1.0",
                 "psr/http-message": "^1.0 || ^2.0",
@@ -1563,6 +1563,9 @@
             },
             "provide": {
                 "psr/http-factory-implementation": "1.1"
+            },
+            "replace": {
+                "phasync/fiber-interop-facade": "^1.0"
             },
             "require-dev": {
                 "friendsofphp/php-cs-fixer": "^3.58",
@@ -1607,9 +1610,9 @@
             "description": "phasync asyncio library for PHP, providing seamless and efficient coroutines via PHP fibers",
             "support": {
                 "issues": "https://github.com/phasync/phasync/issues",
-                "source": "https://github.com/phasync/phasync/tree/2.0.4"
+                "source": "https://github.com/phasync/phasync/tree/2.0.7"
             },
-            "time": "2026-10-20T07:35:39+00:00"
+            "time": "2026-10-30T09:46:00+00:00"
         },
         {
             "name": "phpdocumentor/reflection-common",
@@ -1794,16 +1797,16 @@
         },
         {
             "name": "phpstan/phpdoc-parser",
-            "version": "2.4.0",
+            "version": "2.4.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/phpstan/phpdoc-parser.git",
-                "reference": "e3647094ed8f0f1f67393d812b793a5143e25af3"
+                "reference": "af8e840551031d254cfdb3a18a62c3470a309c10"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpstan/phpdoc-parser/zipball/e3647094ed8f0f1f67393d812b793a5143e25af3",
-                "reference": "e3647094ed8f0f1f67393d812b793a5143e25af3",
+                "url": "https://api.github.com/repos/phpstan/phpdoc-parser/zipball/af8e840551031d254cfdb3a18a62c3470a309c10",
+                "reference": "af8e840551031d254cfdb3a18a62c3470a309c10",
                 "shasum": ""
             },
             "require": {
@@ -1835,9 +1838,9 @@
             "description": "PHPDoc parser with support for nullable, intersection and generic types",
             "support": {
                 "issues": "https://github.com/phpstan/phpdoc-parser/issues",
-                "source": "https://github.com/phpstan/phpdoc-parser/tree/2.4.0"
+                "source": "https://github.com/phpstan/phpdoc-parser/tree/2.4.1"
             },
-            "time": "2026-10-28T20:28:58+00:00"
+            "time": "2026-10-30T19:36:28+00:00"
         },
         {
             "name": "phpunit/php-code-coverage",

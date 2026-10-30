@@ -649,6 +649,17 @@ final class Surface implements \Stringable
         return $surface;
     }
 
+    /**
+     * @internal The nested layout this surface was made for (`nestedSurface()`) is gone: its
+     * windows are unhosted, down through its own nested layouts.
+     */
+    public function giveUp(): void
+    {
+        if ($this->host !== null) {
+            $this->changeTree(fn() => $this->host->giveUp());
+        }
+    }
+
     // ------------------------------------------------------------------------------------------
     // Focus
 
@@ -965,7 +976,7 @@ final class Surface implements \Stringable
      * Run $code in a new coroutine as the producer of this surface; returns its awaitable (pass it
      * to `fiber\await()`). Must be called inside `fiber\run()`.
      *
-     * $code receives the surface. With ext-phasync loaded, everything the coroutine prints with
+     * $code receives the surface. With ext-phasync 2.0.7 or later loaded, everything the coroutine prints with
      * `echo`, `print`, `printf` or `var_dump()` lands in this surface, including output of
      * coroutines it starts (they are awaited before it ends). Without ext-phasync output is not
      * captured: write with `$surface->write()`, which works in both cases. `STDOUT` is never
@@ -984,10 +995,14 @@ final class Surface implements \Stringable
         });
     }
 
-    /** True when ext-phasync is loaded, so `run()` captures `echo` output. */
+    /**
+     * True when `run()` captures `echo` output: ext-phasync 2.0.7 or later is loaded (older
+     * versions have a different `sapi()` contract and are treated as absent).
+     */
     public static function canCaptureOutput(): bool
     {
-        return \function_exists('phasync\ext\sapi');
+        return \function_exists('phasync\ext\sapi')
+            && version_compare((string) phpversion('phasync'), SurfaceSapi::MIN_EXT_VERSION, '>=');
     }
 
     /**

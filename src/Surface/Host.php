@@ -231,13 +231,28 @@ final class Host
         foreach ($this->nested as $i => $surface) {
             if (!isset($placed[spl_object_id($surface)])) {
                 unset($this->nested[$i]);
-                $surface->setLayout(null);
-                foreach ($surface->viewports() as $v) {
-                    $surface->unhost($v->source);
-                }
+                $surface->giveUp();
             }
         }
         $this->nested = array_values($this->nested);
+    }
+
+    /**
+     * This surface was made for a nested layout that is gone: unhost its windows, and give up
+     * the surfaces of its own nested layouts the same way, so that no window stays hosted (and
+     * focused) in a part of the tree that is no longer shown.
+     */
+    public function giveUp(): void
+    {
+        $this->layout = null;
+        $nested = $this->nested;
+        $this->nested = [];
+        foreach ($this->viewports as $v) {
+            $this->unhost($v->source);
+        }
+        foreach ($nested as $surface) {
+            $surface->giveUp();
+        }
     }
 
     /**

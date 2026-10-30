@@ -55,7 +55,7 @@ composer require phasync/tui fiber-interop/phasync     # or fiber-interop/revolt
 ```
 
 `fiber-interop/api` is the only runtime dependency; install one adapter to choose the event
-loop. Optional: ext-phasync (bundled with `phasync/phasync`) captures `echo` of a PHP coroutine
+loop. Optional: ext-phasync 2.0.7+ (bundled with `phasync/phasync`) captures `echo` of a PHP coroutine
 into a window; ext-pcntl gives immediate resizes and terminal restore on SIGTERM.
 
 ## The model

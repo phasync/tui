@@ -75,7 +75,7 @@ fiber\await($task);
 `run(Closure $code): object` runs `$code` in a new coroutine as the producer of the surface and
 returns its awaitable. The closure receives the surface.
 
-- **With ext-phasync loaded** (`Surface::canCaptureOutput()` is true), the closure runs under
+- **With ext-phasync 2.0.7 or later loaded** (`Surface::canCaptureOutput()` is true; an older ext-phasync counts as absent), the closure runs under
   `phasync\ext\sapi()`: everything it prints with `echo`, `print`, `printf` or `var_dump()` lands
   in the surface, including the output of coroutines it starts (they are awaited before it
   ends). Output made for a terminal (colours, `\r` progress bars, symfony/console and

@@ -45,7 +45,7 @@ final class Signal
         $waiters = $this->waiters;
         $this->waiters = [];
         foreach ($waiters as $d) {
-            $d->settle(true, null);
+            $d->resolve();
         }
     }
 

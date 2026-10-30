@@ -62,7 +62,7 @@ final class Terminal extends Component
     {
         $exited = $this->exited;
         $this->pty = Pty::start($this->command, $this->surface, $this->cwd, $this->env, function (int $code, Pty $pty) use ($exited): void {
-            $exited->settle(true, $code);
+            $exited->resolve($code);
             // a program ended by restart() is not announced
             if ($pty === $this->pty && $this->onExit !== null && $this->isMounted()) {
                 $this->go(fn() => ($this->onExit)($code, $this));
