@@ -1,0 +1,193 @@
+<?php
+
+use phasync\Tui\Ansi;
+use phasync\Tui\Color;
+use phasync\Tui\FakeTerminal;
+use phasync\Tui\Focus;
+use phasync\Tui\Key;
+use phasync\Tui\Mouse;
+use phasync\Tui\Paste;
+use phasync\Tui\Style;
+use phasync\Tui\Surface;
+
+use function fiber\run;
+use function fiber\sleep;
+
+/** Run $test with a root attached to a FakeTerminal, detached afterwards. */
+function onTerminal(int $cols, int $rows, Closure $test): void
+{
+    run(function () use ($cols, $rows, $test) {
+        $root = new Surface();
+        $terminal = new FakeTerminal($cols, $rows);
+        $terminal->attach($root);
+        try {
+            $test($terminal, $root);
+        } finally {
+            $terminal->detach();
+        }
+    });
+}
+
+/** The terminal shows exactly the root: same cells, same styles, same cursor. */
+function expectSameScreen(FakeTerminal $terminal, Surface $root): void
+{
+    $terminal->refresh();
+    $c = $root->activeCursor();
+    $t = $terminal->surface->cursor();
+    expect($terminal->surface->dump())->toBe($root->dump())
+        ->and([$t->x, $t->y, $t->visible])->toBe([$c->x, $c->y, $c->visible]);
+}
+
+it('takes over the terminal and gives it back', function () {
+    run(function () {
+        $terminal = new FakeTerminal(20, 4);
+        $root = new Surface();
+        $terminal->attach($root);
+        $s = $terminal->surface;
+        expect([$root->cols(), $root->rows()])->toBe([20, 4])
+            ->and($s->isAltScreen())->toBeTrue()
+            ->and($s->mode(1002) && $s->mode(1006) && $s->mode(2004) && $s->mode(1004))->toBeTrue()
+            ->and($terminal->hasKittyKeyboard())->toBeTrue()
+            ->and($s->keyboardFlags())->toBe(1);
+        $terminal->detach();
+        expect($s->isAltScreen())->toBeFalse()
+            ->and($s->mode(1002) || $s->mode(1006) || $s->mode(2004) || $s->mode(1004))->toBeFalse()
+            ->and($s->keyboardFlags())->toBe(0)
+            ->and($s->cursor()->visible)->toBeTrue()
+            ->and($terminal->isAttached())->toBeFalse();
+    });
+});
+
+it('shows exactly what the root holds: the library\'s output read back by its own emulator', function () {
+    onTerminal(30, 8, function (FakeTerminal $terminal, Surface $root) {
+        $a = new Surface(14, 6);
+        $b = new Surface(12, 5);
+        $root->host($a, 0, 0, 16, 8)->setBorder(true, Style::of(Color::BLUE))->setTitle('a 中文');
+        $root->host($b, 17, 1);
+        $a->write("\e[1;31mred\e[0m plain \e[48;5;200mbg\e[0m\r\n中文字 e\u{301} 👍🏽\r\n\e[4munder\e[24m \e[38;2;1;2;3mrgb");
+        $b->write("\e[7minverse\e[27m\r\n\e[3;9mx\e[0m");
+        expectSameScreen($terminal, $root);
+        $seed = 7;
+        mt_srand($seed);
+        $pieces = ['a', 'bc', ' ', '中', '👍', "\e[1m", "\e[0m", "\e[32m", "\e[44m", "\r\n", "\e[K", "\e[2;3H", "\e[1L", "\e[2P", "\e[3@", "\e[A", 'é'];
+        for ($i = 0; $i < 200; $i++) {
+            $target = mt_rand(0, 1) ? $a : $b;
+            $bytes = '';
+            for ($j = mt_rand(1, 8); $j > 0; $j--) {
+                $bytes .= $pieces[mt_rand(0, \count($pieces) - 1)];
+            }
+            $target->write($bytes);
+            if ($i % 20 === 0) {
+                expectSameScreen($terminal, $root);
+            }
+        }
+        expectSameScreen($terminal, $root);
+    });
+});
+
+it('sends only what changed', function () {
+    onTerminal(40, 10, function (FakeTerminal $terminal, Surface $root) {
+        $root->write("hello world\r\nsecond line");
+        $terminal->refresh();
+        $terminal->takeOutput();
+        $root->write("\e[1;7HW");
+        $terminal->refresh();
+        $out = $terminal->takeOutput();
+        expect($out)->toContain("\e[1;7HW")->not->toContain('hello')->not->toContain('second')
+            ->and(\strlen($out))->toBeLessThan(60);
+        $terminal->refresh();
+        expect($terminal->takeOutput())->toBe('');
+    });
+});
+
+it('draws by itself, at most 60 frames a second', function () {
+    onTerminal(20, 3, function (FakeTerminal $terminal, Surface $root) {
+        sleep(0.05);
+        $terminal->takeOutput();
+        $start = microtime(true);
+        for ($i = 0; $i < 30; $i++) {
+            $root->write("\r$i ");
+            sleep(0.002);
+        }
+        sleep(0.05);
+        $elapsed = microtime(true) - $start;
+        $frames = substr_count($terminal->takeOutput(), "\e[?2026h");
+        expect($terminal->surface->line(0))->toBe('29')
+            ->and($frames)->toBeGreaterThan(0)
+            ->and($frames)->toBeLessThanOrEqual((int) ceil($elapsed * 60) + 1);
+    });
+});
+
+it('decodes input and dispatches it to the root and down the focus path', function () {
+    onTerminal(20, 4, function (FakeTerminal $terminal, Surface $root) {
+        $a = new Surface(10, 4);
+        $b = new Surface(10, 4);
+        $root->host($a);
+        $root->host($b, 10, 0);
+        $seen = [];
+        $root->on('key', function (Key $k) use (&$seen) { $seen[] = (string) $k; });
+        $root->on('paste', function (Paste $p) use (&$seen) { $seen[] = "paste $p->text"; });
+        $terminal->press('a', 'ctrl+i', 'shift+enter', 'escape');
+        $terminal->paste("two\nlines");
+        $terminal->feed("\e");
+        expect($seen)->toBe(['a', 'ctrl+i', 'shift+enter', 'escape', "paste two\nlines", 'escape'])
+            ->and($a->input->peek())->toBe("a\t\r\etwo\rlines\e");
+        $b->write("\e[?1000h\e[?1006h");
+        $terminal->click(12, 1);
+        expect($b->input->peek())->toBe("\e[<0;3;2M\e[<0;3;2m");
+    });
+});
+
+it('passes focus reports to the focused program', function () {
+    onTerminal(10, 2, function (FakeTerminal $terminal, Surface $root) {
+        $a = new Surface(10, 2);
+        $root->host($a);
+        $a->write("\e[?1004h");
+        $terminal->focus(false);
+        $terminal->focus(true);
+        expect($a->input->peek())->toBe("\e[O\e[I");
+    });
+});
+
+it('follows the terminal size', function () {
+    onTerminal(20, 4, function (FakeTerminal $terminal, Surface $root) {
+        $root->write('top');
+        $terminal->resize(30, 6);
+        expect([$root->cols(), $root->rows()])->toBe([30, 6]);
+        expectSameScreen($terminal, $root);
+    });
+});
+
+it('passes the title, the bell and clipboard requests to the terminal', function () {
+    onTerminal(20, 4, function (FakeTerminal $terminal, Surface $root) {
+        $a = new Surface(10, 4);
+        $root->host($a);
+        $a->write("\e]2;my title\x07" . Ansi::clipboard('copied'));
+        expect($terminal->surface->title())->toBe('my title')
+            ->and($terminal->clipboardText())->toBe('copied');
+    });
+});
+
+it('copies a mouse selection to the terminal\'s clipboard', function () {
+    onTerminal(20, 4, function (FakeTerminal $terminal, Surface $root) {
+        $a = vt("first line\r\nsecond", 20, 4);
+        $root->host($a);
+        $terminal->drag(6, 0, 2, 1);
+        expect($terminal->clipboardText())->toBe("line\nsec");
+        expectSameScreen($terminal, $root);
+    });
+});
+
+it('shows the cursor of the focused window where it is', function () {
+    onTerminal(20, 6, function (FakeTerminal $terminal, Surface $root) {
+        $a = new Surface(5, 2);
+        $root->host($a, 3, 2);
+        $a->write("ab\e[5 q");
+        $terminal->refresh();
+        $c = $terminal->surface->cursor();
+        expect([$c->x, $c->y, $c->visible, $c->shape, $c->blinking])->toBe([5, 2, true, 'bar', true]);
+        $a->write("\e[?25l");
+        $terminal->refresh();
+        expect($terminal->surface->cursor()->visible)->toBeFalse();
+    });
+});
