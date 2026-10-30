@@ -141,3 +141,19 @@ it('fails clearly for a command that cannot start', function () {
         expect(Pty::start(['/nonexistent/program'], $s)->wait(5))->toBe(127);
     });
 });
+
+it('announces the end of the program as an event and an awaitable, with its output in place', function () {
+    run(function () {
+        $s = new Surface(40, 5);
+        $seen = [];
+        $pty = Pty::start('echo bye; exit 3', $s, onExit: function (int $code, Pty $p) use (&$seen, $s) {
+            $seen[] = [$code, $s->line(0), $p->isRunning()];
+        });
+        expect(fiber\await($pty->exited(), 5))->toBe(3)
+            ->and($seen)->toBe([[3, 'bye', false]])
+            ->and(fiber\await($pty->exited()))->toBe(3);          // settled: awaiting again returns at once
+        $killed = Pty::start('exec sleep 30', new Surface(10, 2));
+        $killed->kill(9);
+        expect(fiber\await($killed->exited(), 5))->toBe(128 + 9);
+    });
+});

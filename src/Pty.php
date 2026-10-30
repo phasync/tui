@@ -2,6 +2,7 @@
 
 namespace phasync\Tui;
 
+use fiber\Deferred;
 use phasync\Tui\Internal\Signal;
 
 use function fiber\go;
@@ -25,6 +26,12 @@ use function fiber\writable;
  * everything written to the surface's `input` (keys and pastes from `Surface::dispatch()`, the
  * terminal's replies to queries) goes to the program. Resizing the surface resizes the
  * terminal, which sends SIGWINCH to the program.
+ *
+ * The end of the program is announced three ways: `$onExit` (given to `start()`) is called with
+ * the exit status, `exited()` is an awaitable that resolves with it, and `wait()` waits for it.
+ * Either way the program's last output is in the surface by then. A Pty you start is yours to
+ * end: it runs until the program exits or you `kill()` it, and while it runs it keeps
+ * `fiber\run()` from returning.
  *
  * Everything runs in coroutines (`fiber\go()`), so `start()` and the other waiting methods must
  * be called inside `fiber\run()`; nothing blocks other coroutines.
@@ -50,11 +57,14 @@ final class Pty
     /** The wrapper has set the initial size: later sizes can be applied. */
     private bool $ready = false;
     private Signal $done;
+    private Deferred $exited;
+    private ?\Closure $onExit = null;
     private \Closure $offResize;
 
     private function __construct()
     {
         $this->done = new Signal();
+        $this->exited = new Deferred();
     }
 
     /**
@@ -64,10 +74,12 @@ final class Pty
      *                                     argument vector (run directly, no shell)
      * @param string|null         $cwd     working directory, default the current one
      * @param array<string,string> $env    variables added to the inherited environment
+     * @param (\Closure(int $code, Pty $pty): void)|null $onExit called once when the program has
+     *                                     ended and its output is in the surface, with its exit status
      *
      * @throws \RuntimeException when the process cannot be started
      */
-    public static function start(string|array $command, Surface $surface, ?string $cwd = null, array $env = []): Pty
+    public static function start(string|array $command, Surface $surface, ?string $cwd = null, array $env = [], ?\Closure $onExit = null): Pty
     {
         $argv = \is_string($command) ? ['/bin/sh', '-c', $command] : array_values($command);
         if ($argv === []) {
@@ -97,6 +109,7 @@ final class Pty
             throw new \RuntimeException('Could not start ' . implode(' ', $argv) . ': ' . (error_get_last()['message'] ?? 'proc_open failed'));
         }
         $pty = new Pty();
+        $pty->onExit = $onExit;
         $pty->process = $process;
         $pty->master = $pipes[1];
         fclose($pipes[0]);
@@ -184,7 +197,21 @@ final class Pty
             proc_close($this->process);
             $this->ended = true;
             $this->done->notify();
+            $this->exited->settle(true, $this->exitCode);
+            if ($this->onExit !== null) {
+                ($this->onExit)($this->exitCode, $this);
+            }
         }
+    }
+
+    /**
+     * An awaitable that resolves with the exit status when the program has ended and all its
+     * output is in the surface: `$code = fiber\await($pty->exited())`, or race it with other
+     * work in `fiber\await_any()`.
+     */
+    public function exited(): object
+    {
+        return $this->exited;
     }
 
     /** Process id of the program. */
