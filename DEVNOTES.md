@@ -8,7 +8,7 @@ README.md and docs/.
 Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
 
 - [x] Surface, VT parser (charm/parsing grammar), Ansi, tests incl. tmux reference + recorded programs
-- [ ] Pty
+- [x] Pty, Surface::run() coroutine producer (echo capture via ext-phasync sapi())
 - [ ] Viewport
 - [ ] Screen + FakeTerminal + Tty + input decoder + key/mouse encoding
 - [ ] Layout (Split, Stack, focus)
@@ -46,6 +46,21 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
   reverse wrap, 132-column mode, OSC 4/10/11 colour queries (no reply), DECRQSS.
 - Speed: ~5 MB/s plain text, ~1.5-2 MB/s heavily coloured (PHP 8.5, no JIT). The ASCII fast path
   stores a row's share with array_splice.
+
+## Producers
+
+- Pty: proc_open with three 'pty' descriptors gives no controlling terminal and no new session
+  (checked: `ps` shows TT `?`), so Ctrl-C, job control and SIGWINCH would not work. On Linux the
+  command is wrapped in `setsid -c` (same pid, pty becomes the controlling tty). Initial size is
+  set by `stty cols C rows R; exec "$@"` before the program starts; later resizes by
+  `stty -F <slave>` in a helper process, serialised (latest size wins). The slave path comes
+  from /proc/<pid>/fd/0 (fallback `ps -o tty=`).
+- The master reads return EIO when the program exits; that is the end of the stream, read
+  under a temporary error handler so it is not reported as a notice.
+- Surface::run(): with ext-phasync, `phasync\ext\sapi($code, $sapi)` (the sapi object needs
+  name(), output() returning a stream, send_headers()); the stream is a tiny userland wrapper
+  writing to the Surface. Output of coroutines started inside sapi() is lost once sapi() returns,
+  so the closure is wrapped in a nested `fiber\run()` (children finish inside the capture).
 
 ## fiber\ notes
 
