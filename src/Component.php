@@ -4,7 +4,11 @@ namespace phasync\Tui;
 
 use fiber\Deferred;
 use fiber\TimeoutException;
+use phasync\Tui\Component\Dialog;
+use phasync\Tui\Element\Layers;
+use phasync\Tui\Internal\Runtime;
 use phasync\Tui\Internal\Signal;
+use phasync\Tui\Internal\Tree;
 
 use function fiber\await;
 use function fiber\await_all;
@@ -93,10 +97,19 @@ use function fiber\current;
  * program: the tree is disposed, the surface closed (so the terminal is detached and restored),
  * and the exception is rethrown, by `start()` when it happens there and else by `fiber\run()`.
  */
-abstract class Component
+abstract class Component extends Element
 {
     /** The component's surface: draw into it, or give it a layout of children. Set by `start()`. */
     public readonly Surface $surface;
+
+    /**
+     * The component's state (see `State`): every write renders the component again. Assign
+     * one of your own class in the constructor or `mount()` for typed properties
+     * (`$this->state = new CounterState()`, with `@var CounterState` for your editor), or give
+     * several components the same object to share it; a component that assigns none has a
+     * plain `State` from `start()` on.
+     */
+    protected State $state;
 
     private ?Component $parent = null;
     /**
@@ -127,6 +140,23 @@ abstract class Component
     private array $listeners = [];
     /** @var \WeakMap<Surface, Component>|null the component on each surface that has one */
     private static ?\WeakMap $onSurface = null;
+    /** True while render() and the layout of what it returned run: its own state writes render nothing. */
+    private bool $rendering = false;
+    private ?Tree $tree = null;
+    private ?Stylesheet $stylesheet = null;
+    /** The style a parent's element tree gives this component to inherit. */
+    private ?ComputedStyle $inherited = null;
+    /** @var array<string, mixed> bindings of this instance over its class's (`bind()`) */
+    private array $bound = [];
+    /** @var array<string, array<string, mixed>> bindings for components of a class in the subtree */
+    private array $boundFor = [];
+    /** @var array<string, array{Dialog, ?Surface}> open dialogs by child key, with the surface focused before */
+    private array $dialogs = [];
+    private static int $dialogCount = 0;
+    /** @var array<int, Component> components to render in the coming frame */
+    private static array $dirty = [];
+    /** @var \WeakMap<Component, true>|null components whose last render showed a `Help` element */
+    private static ?\WeakMap $helpShown = null;
 
     // ------------------------------------------------------------------------------------------
     // Hooks
@@ -150,12 +180,32 @@ abstract class Component
     }
 
     /**
-     * Draw the component: write into `$this->surface` and return null, or return a layout of
-     * child components' surfaces (see `child()`).
+     * Draw the component. Three ways, by what it returns:
+     *
+     * - an element tree (`Column`, `Row`, `Layers`, `Box`, `Text`, `Help`, components): the
+     *   library lays it out into the surface and paints it (see `Element`);
+     * - a layout (`Split`, `Stack`) of child components' surfaces;
+     * - null, after drawing into `$this->surface` with escape sequences (see `Ansi`).
+     *
+     * It may also draw into the surface and return a tree or a layout: what it draws shows
+     * where no window covers it. It runs after `sized()`, after every change of the area, and
+     * in the next frame after the state or the props changed or a handler of the component ran
+     * (see the class description); it should only read, not change, what it shows.
      */
-    protected function render(): ?Layout
+    protected function render(): Layout|Element|null
     {
         return null;
+    }
+
+    /**
+     * Called when a render of the parent placed this component anew with other props: a
+     * component element made with `new` in the parent's tree (`new Counter(label: 'A')`) is
+     * matched with the one shown there before, which keeps its state and takes the new one's
+     * props (its public properties) and attributes; this runs after they were taken, before the
+     * render that follows. Derive state from the new props here.
+     */
+    protected function propsChanged(): void
+    {
     }
 
     /** The component's coroutine, started after the first render. Return when `sleep()` says false. */
@@ -168,22 +218,39 @@ abstract class Component
     {
     }
 
-    /** A key reached the component's surface; return true if handled (it goes no further). */
+    /**
+     * A key reached the component's surface; return true if handled (it goes no further, and the
+     * component renders again). Keys that are actions are better declared in `bindings()`.
+     */
     protected function onKey(Key $key): bool
     {
         return false;
     }
 
-    /** A mouse event in the component's coordinates; return true if handled. */
+    /** A mouse event in the component's coordinates; return true if handled (a render follows). */
     protected function onMouse(Mouse $mouse): bool
     {
         return false;
     }
 
-    /** Text was pasted while the component is on the focus path; return true if handled. */
+    /** Text was pasted while the component is on the focus path; return true if handled (a render follows). */
     protected function onPaste(Paste $paste): bool
     {
         return false;
+    }
+
+    /**
+     * The keys of this component and the public methods they run: `['ctrl+s' => 'save', 'enter'
+     * => 'submit']`, a key in `Key::parse()` notation, a method name or `[method, description]`
+     * for `Help`. The application changes them with `bind()`. A bound method runs when the key
+     * reaches the component (see the class description on the order); one that returns false
+     * did not take the key, which goes on. A render follows.
+     *
+     * @return array<string, string|array{string, string}>
+     */
+    protected function bindings(): array
+    {
+        return [];
     }
 
     /** The component gained or lost the focus (or the terminal did, while it has it). */
@@ -222,6 +289,7 @@ abstract class Component
         if ($this->mounted || $this->stopped !== null) {
             throw new \LogicException(static::class . ' was already started');
         }
+        Runtime::check();
         if ($on instanceof TerminalDevice) {
             $surface = new Surface();
             $on->attach($surface);
@@ -235,14 +303,22 @@ abstract class Component
         $this->stopped = new Deferred();
         $this->ended = new Deferred();
         $this->wake = new Signal();
+        if (!isset($this->state)) {
+            $this->state = new State();
+        }
+        $this->state->watchFor($this);
         $s = $this->surface;
         $this->offs = [
-            $s->on('key', fn(Key $e) => $this->handle(fn() => $this->onKey($e)) || $this->toUnshown($e)),
-            $s->on('mouse', fn(Mouse $e) => $this->handle(fn() => $this->onMouse($e))),
-            $s->on('paste', fn(Paste $e) => $this->handle(fn() => $this->onPaste($e)) || $this->toUnshown($e)),
+            $s->on('key', fn(Key $e) => $this->key($e)),
+            $s->on('mouse', fn(Mouse $e) => $this->modal($e) || $this->handle(fn() => $this->onMouse($e))),
+            $s->on('paste', fn(Paste $e) => ($this->dialogs === [] && $this->handle(fn() => $this->onPaste($e))) || $this->toUnshown($e)),
             $s->on('focus', function (Focus $e): void {
                 $this->handle(fn() => $this->onFocus($e));
                 $this->requestRender();
+                // a Help element shows the keys of the focused component
+                foreach (self::$helpShown ?? [] as $component => $_) {
+                    $component->requestRender();
+                }
             }),
             $s->on('resize', function (Resize $e): void {
                 $this->handle(fn() => $this->onResize($e));
@@ -452,6 +528,34 @@ abstract class Component
     {
         foreach ($this->listeners[$event] ?? [] as $listener) {
             $listener(...$data);
+            self::touch($listener);
+        }
+    }
+
+    /**
+     * Call $callback with $args, if there is one: how a component calls the callbacks it was
+     * given (`onSubmit`, `onSelect`). The component that made the callback (the closure's
+     * `$this`) renders again afterwards, as after one of its own handlers. Returns what the
+     * callback returned.
+     */
+    protected function call(?\Closure $callback, mixed ...$args): mixed
+    {
+        if ($callback === null) {
+            return null;
+        }
+        try {
+            return $callback(...$args);
+        } finally {
+            self::touch($callback);
+        }
+    }
+
+    /** A closure of a component ran: that component renders again. */
+    private static function touch(\Closure $fn): void
+    {
+        $that = (new \ReflectionFunction($fn))->getClosureThis();
+        if ($that instanceof Component) {
+            $that->requestRender();
         }
     }
 
@@ -462,22 +566,70 @@ abstract class Component
     }
 
     /**
-     * Ask for a render. Calls made in the same moment are batched into one render, which runs
-     * as soon as the current coroutine yields. Does nothing once disposed.
+     * Ask for a render in the next frame. Rarely needed: a component renders again by itself
+     * after its state changed, after its handlers and bound keys, after a step of its
+     * coroutines and when a component it listens to emitted an event. Call it when what
+     * `render()` shows changed some other way (a property of yours, data outside the
+     * component). Calls in the same moment are one render; does nothing once disposed.
      */
     public function requestRender(): void
     {
-        if (!$this->mounted || $this->renderPending || !$this->rendered) {
+        if (!$this->mounted || $this->renderPending || !$this->rendered || $this->rendering) {
             return;     // (before the first render: that one is coming)
         }
         $this->renderPending = true;
-        \fiber\go(function (): void {
+        self::$dirty[spl_object_id($this)] = $this;
+        \fiber\go(static function (): void {
             \fiber\sleep(0);
-            $this->renderPending = false;
-            if ($this->mounted) {
-                $this->guard($this->renderNow(...));
-            }
+            self::renderFrame();
         });
+    }
+
+    /**
+     * Render every component that asked for it, parents before their children (so a child
+     * whose props a parent's render changed renders once), each at most once per frame.
+     */
+    private static function renderFrame(): void
+    {
+        $done = [];
+        $later = [];
+        $error = null;
+        while (self::$dirty !== []) {
+            $batch = self::$dirty;
+            self::$dirty = [];
+            uasort($batch, fn(Component $a, Component $b) => $a->depth() <=> $b->depth());
+            foreach ($batch as $id => $component) {
+                if (isset($done[$id])) {
+                    $later[$id] = $component;   // asked again by a render of this frame: the next one
+                    continue;
+                }
+                $done[$id] = true;
+                $component->renderPending = false;
+                if ($component->mounted) {
+                    try {
+                        $component->guard($component->renderNow(...));
+                    } catch (\Throwable $e) {
+                        $error ??= $e;      // (a root's failure: the others still render)
+                    }
+                }
+            }
+        }
+        foreach ($later as $component) {
+            $component->renderPending = false;
+            $component->requestRender();
+        }
+        if ($error !== null) {
+            throw $error;
+        }
+    }
+
+    private function depth(): int
+    {
+        $n = 0;
+        for ($c = $this->parent; $c !== null; $c = $c->parent) {
+            $n++;
+        }
+        return $n;
     }
 
     /**
@@ -650,18 +802,23 @@ abstract class Component
     {
         $id = ++$this->taskCount;
         $this->tasks[$id] = null;
-        $handle = \fiber\go(function () use ($id, $task): void {
+        $started = false;
+        $handle = \fiber\go(function () use ($id, $task, &$started): void {
             // known here already when the runtime starts the task before go() returns
             $this->tasks[$id] ??= current();
             try {
                 $this->guard($task);
             } finally {
+                if ($started) {
+                    $this->requestRender();     // it waited and went on: what it did shows
+                }
                 unset($this->tasks[$id]);
                 if ($this->tasks === [] && $this->idle !== null) {
                     $this->idle->resolve();
                 }
             }
         });
+        $started = true;
         if (\array_key_exists($id, $this->tasks)) {
             $this->tasks[$id] ??= $handle;
         }
@@ -674,6 +831,7 @@ abstract class Component
     protected function sleep(float $seconds): bool
     {
         if ($this->mounted) {
+            $this->requestRender();     // what the coroutine did until now shows in the next frame
             $this->wake->wait($seconds);
         }
         return $this->mounted;
@@ -684,14 +842,19 @@ abstract class Component
     private function renderNow(): void
     {
         $this->used = [];
+        $this->rendering = true;
         try {
-            $layout = $this->render();
+            $result = $this->render();
+            $layout = $this->layoutOf($result);
             $used = $this->used;
         } finally {
             $this->used = null;
+            $this->rendering = false;
         }
         if ($layout !== null) {
             $this->surface->setLayout($layout);
+        } elseif ($this->dialogs !== []) {
+            $this->hostDialogs();
         }
         // children shown for the first time draw now, at the size the layout gave them
         foreach ($this->children as $child) {
@@ -712,6 +875,412 @@ abstract class Component
         }
     }
 
+    /** The layout for what render() returned (an element tree laid out), with the open dialogs over it. */
+    private function layoutOf(Layout|Element|null $result): ?Layout
+    {
+        foreach ($this->dialogs as $key => [$dialog]) {
+            $this->child($key);         // (keeps them)
+        }
+        if ($result instanceof Element) {
+            if ($this->dialogs !== []) {
+                $result = new Layers([$result, ...array_column($this->dialogs, 0)]);
+            }
+            $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
+            $layout = $this->tree->build($result, $this->stylesheet(), $this->style());
+            self::$helpShown ??= new \WeakMap();
+            if ($this->tree->showsHelp) {
+                self::$helpShown[$this] = true;
+            } else {
+                unset(self::$helpShown[$this]);
+            }
+            return $layout;
+        }
+        if ($result instanceof Layout && $this->dialogs !== []) {
+            $stack = (new Stack())->add($result);
+            foreach ($this->dialogs as [$dialog]) {
+                [$w, $h] = $this->dialogSize($dialog);
+                $stack->add($dialog->surface, $w, $h);
+            }
+            $result = $stack;
+        }
+        if ($result instanceof Layout) {
+            foreach ($this->dialogs as [$dialog]) {
+                $this->frameDialog($dialog);
+            }
+        }
+        return $result;
+    }
+
+    /** Dialogs over a component that draws itself: windows of its surface, centered. */
+    private function hostDialogs(): void
+    {
+        $s = $this->surface;
+        foreach ($this->dialogs as [$dialog]) {
+            [$w, $h] = $this->dialogSize($dialog);
+            $s->host($dialog->surface, intdiv($s->cols() - $w, 2), intdiv($s->rows() - $h, 2), $w, $h)->setFit(true);
+            $s->raise($dialog->surface);
+            $this->frameDialog($dialog);
+        }
+    }
+
+    /** @return array{int,int} the outer size of $dialog's window */
+    private function dialogSize(Dialog $dialog): array
+    {
+        $style = $dialog->style();
+        $b = $style->border === false ? 0 : 2;
+        $cols = $this->surface->cols();
+        $rows = $this->surface->rows();
+        [$w, $h] = $dialog->measure(max(1, $cols - $b), max(1, $rows - $b)) ?? [$cols - $b, $rows - $b];
+        return [min($cols, $w + $b), min($rows, $h + $b)];
+    }
+
+    private function frameDialog(Dialog $dialog): void
+    {
+        $style = $dialog->style();
+        $view = $this->surface->viewport($dialog->surface);
+        if ($view !== null && $style->border !== false) {
+            $view->setBorder($style->border, $style->borderStyle, $style->borderStyle);
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Element trees, props, styles
+
+    /** The child for a component element made anew by a render: the one at its place, with the new props. */
+    private function place(string $key, Component $fresh): Component
+    {
+        $existing = $this->child($key);
+        if ($existing !== null && $existing::class === $fresh::class) {
+            $existing->receive($fresh);
+            return $existing;
+        }
+        if ($existing !== null) {
+            $existing->stop();      // another kind of component at this place now
+        }
+        return $this->child($key, fn() => $fresh);
+    }
+
+    /** Take the props (public properties) and attributes of $fresh, a new instance of this class. */
+    private function receive(Component $fresh): void
+    {
+        $changed = $this->adoptAttributes($fresh);
+        foreach (self::props(static::class) as $name) {
+            $value = $fresh->$name;
+            if ($value !== $this->$name) {
+                $this->$name = $value;
+                $changed = true;
+            }
+        }
+        if ($changed) {
+            $this->guard($this->propsChanged(...));
+            $this->requestRender();
+        }
+    }
+
+    /**
+     * @return list<string> the props of $class: its public properties that a render can change
+     * (not static, not readonly, declared below Component)
+     */
+    private static function props(string $class): array
+    {
+        static $props = [];
+        if (!isset($props[$class])) {
+            $props[$class] = [];
+            foreach ((new \ReflectionClass($class))->getProperties(\ReflectionProperty::IS_PUBLIC) as $p) {
+                if (!$p->isStatic() && !$p->isReadOnly() && !\in_array($p->getDeclaringClass()->getName(), [self::class, Element::class], true)) {
+                    $props[$class][] = $p->getName();
+                }
+            }
+        }
+        return $props[$class];
+    }
+
+    /**
+     * The stylesheet in force for this component: the one set on it with `setStylesheet()`,
+     * else its parent's, up to the root; `Stylesheet::default()` when none was set.
+     */
+    public function stylesheet(): Stylesheet
+    {
+        return $this->stylesheet ?? $this->parent?->stylesheet() ?? Stylesheet::default();
+    }
+
+    /**
+     * Use $stylesheet for this component and its descendants (set it on the root component for
+     * the whole program; build it on the default theme with `Stylesheet::default()->with()`).
+     * Everything renders again with it.
+     */
+    public function setStylesheet(Stylesheet $stylesheet): void
+    {
+        $this->stylesheet = $stylesheet;
+        $this->renderSubtree();
+    }
+
+    private function renderSubtree(): void
+    {
+        $this->requestRender();
+        foreach ($this->owned() as $child) {
+            $child->renderSubtree();
+        }
+    }
+
+    /**
+     * What the stylesheet says about this component in its current states (`:focused`,
+     * `:disabled`, `:hover`), or about one of its parts in the given part states: how a widget
+     * that draws itself finds its colours. Each widget documents its parts:
+     *
+     *     $this->style()                       // the component: ->text, ->border, ->padding ...
+     *     $this->style('row', 'current')       // the part `Select::row:current`
+     */
+    public function style(?string $part = null, string ...$states): ComputedStyle
+    {
+        $sheet = $this->stylesheet();
+        $own = $this->states();
+        $base = $sheet->compute($this, $own, $this->inherited ?? $this->parent?->style());
+        return $part === null ? $base : $sheet->compute($this, $own, $base, $part, array_values($states));
+    }
+
+    /** @internal The style the parent's element tree around this component gives it to inherit. */
+    public function inheritStyle(ComputedStyle $parent): void
+    {
+        if ($parent != $this->inherited) {
+            $this->inherited = $parent;
+            $this->requestRender();
+        }
+    }
+
+    /** @return list<string> the states of this component for the stylesheet */
+    private function states(): array
+    {
+        $states = [];
+        if ($this->mounted && $this->hasFocus()) {
+            $states[] = 'focused';
+        }
+        if ($this->attribute('disabled')) {
+            $states[] = 'disabled';
+        }
+        return $states;
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Keys
+
+    /**
+     * A key on its way down the focus path. On the way, each component's `onKey()` may take it
+     * (the root's first). At the component it ends at (nothing focused further down): its own
+     * bindings, its `onKey()`, then its parents' bindings, nearest first. A component with an
+     * open dialog passes keys on to it untouched.
+     */
+    private function key(Key $key): bool
+    {
+        if (!$this->mounted) {
+            return false;
+        }
+        $mine = $this->dialogs === [] && !$this->attribute('disabled');
+        if (!$this->isKeyEnd()) {
+            return ($mine && $this->handle(fn() => $this->onKey($key))) || $this->toUnshown($key);
+        }
+        if ($mine && ($this->runBinding($key) || $this->handle(fn() => $this->onKey($key)))) {
+            return true;
+        }
+        for ($c = $this->parent; $c !== null; $c = $c->parent) {
+            if ($c->dialogs === [] && !$c->attribute('disabled') && $c->runBinding($key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** True if no other component is on the key path below this one. */
+    private function isKeyEnd(): bool
+    {
+        if ($this->unshownFocus() !== null) {
+            return false;
+        }
+        for ($s = $this->surface->focused(); $s !== null; $s = $s->focused()) {
+            if ((self::$onSurface[$s] ?? null)?->mounted) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Run the method bound to $key; true if it took the key. */
+    private function runBinding(Key $key): bool
+    {
+        $method = $this->bindingsInForce()[(string) $key][0] ?? null;
+        if ($method === null) {
+            return false;
+        }
+        if (!method_exists($this, $method) || !(new \ReflectionMethod($this, $method))->isPublic()) {
+            throw new \LogicException(static::class . ": the key '$key' is bound to '$method', which is not a public method");
+        }
+        if ($this->guard(fn() => $this->$method()) === false) {
+            return false;
+        }
+        $this->requestRender();
+        return true;
+    }
+
+    /**
+     * Change the keys: without $for, of this component (over its class's `bindings()`); with a
+     * class name, of every component of that class below this one, which is how an application
+     * sets its keys for a widget (`$app->bind(['ctrl+enter' => 'submit'], Editor::class)`). A
+     * method name or `[method, description]` binds a key, null unbinds it. The nearest setting
+     * wins: an instance's own, then those of its nearest parent, up to the root. Returns $this.
+     *
+     * @param array<string, string|array{string, string}|null> $bindings
+     */
+    public function bind(array $bindings, ?string $for = null): static
+    {
+        $normal = self::normalize($bindings);
+        if ($for === null) {
+            $this->bound = [...$this->bound, ...$normal];
+        } else {
+            $this->boundFor[$for] = [...$this->boundFor[$for] ?? [], ...$normal];
+        }
+        foreach (self::$helpShown ?? [] as $component => $_) {
+            $component->requestRender();
+        }
+        return $this;
+    }
+
+    /**
+     * The keys in force for this component: `bindings()` with what `bind()` changed, as
+     * [method, description] by key notation (`ctrl+s`).
+     *
+     * @return array<string, array{string, string}>
+     */
+    public function bindingsInForce(): array
+    {
+        $map = self::normalize($this->bindings());
+        $chain = [];
+        for ($c = $this->parent; $c !== null; $c = $c->parent) {
+            array_unshift($chain, $c);
+        }
+        foreach ($chain as $c) {
+            foreach ($c->boundFor as $class => $over) {
+                if ($this instanceof $class) {
+                    $map = [...$map, ...$over];
+                }
+            }
+        }
+        return array_filter([...$map, ...$this->bound]);
+    }
+
+    /**
+     * @param array<string, mixed> $bindings
+     * @return array<string, array{string, string}|null>
+     */
+    private static function normalize(array $bindings): array
+    {
+        $out = [];
+        foreach ($bindings as $spec => $action) {
+            $key = (string) Key::parse((string) $spec);
+            if ($action === null) {
+                $out[$key] = null;
+            } elseif (\is_array($action)) {
+                $out[$key] = [(string) $action[0], (string) ($action[1] ?? $action[0])];
+            } else {
+                $out[$key] = [(string) $action, (string) $action];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * The keys a `Help` element shows: those of $for (else of the component the keys go to in
+     * this component's tree) and of its parents, nearest first, each key once.
+     *
+     * @return list<array{string, string}>
+     */
+    private function helpFor(?Component $for): array
+    {
+        $at = $for ?? self::keyEnd($this->surface->root()) ?? $this;
+        $out = [];
+        for ($c = $at; $c !== null; $c = $c->parent) {
+            if ($c->attribute('disabled') || ($c !== $at && $c->dialogs !== [])) {
+                continue;
+            }
+            foreach ($c->bindingsInForce() as $key => [, $description]) {
+                $out[$key] ??= $description;
+            }
+            if ($c->dialogs !== []) {
+                break;      // (a dialog's keys only: the rest are not reachable)
+            }
+        }
+        return array_map(fn($k, $d) => [(string) $k, $d], array_keys($out), $out);
+    }
+
+    /** The component the keys go to from $root down. */
+    private static function keyEnd(Surface $root): ?Component
+    {
+        $last = null;
+        $s = $root;
+        while ($s !== null) {
+            $on = self::$onSurface[$s] ?? null;
+            if ($on !== null && $on->mounted) {
+                $last = $on;
+                if (($unshown = $on->unshownFocus()) !== null) {
+                    $s = $unshown->surface;
+                    continue;
+                }
+            }
+            $s = $s->focused();
+        }
+        return $last;
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Dialogs
+
+    /**
+     * Show $dialog over this component, modal, and return an awaitable for its answer:
+     *
+     *     $this->go(function () {
+     *         if (fiber\await($this->dialog(new Confirm('Delete the file?')))) { ... }
+     *     });
+     *
+     * The dialog is centered over the component, at the size it needs, in its own border, and
+     * gets the focus. While it is open, this component's own keys and mouse are the dialog's:
+     * keys go to the dialog, clicks outside it do nothing. When it closes (a button, Enter on
+     * it, Escape for null), the awaitable resolves with the answer, the dialog is disposed, and
+     * the focus goes back where it was. Await the answer in a coroutine (`go()`), not in a key
+     * handler: the keys that answer it come through the handlers.
+     */
+    protected function dialog(Dialog $dialog): object
+    {
+        $before = null;
+        for ($s = $this->surface->root(); ($next = $s->focused()) !== null; $s = $next) {
+            $before = $next;
+        }
+        $key = "\0dialog" . ++self::$dialogCount;
+        $this->child($key, fn() => $dialog);
+        $this->dialogs[$key] = [$dialog, $before];
+        $dialog->on('close', function () use ($key): void {
+            [, $before] = $this->dialogs[$key] ?? [null, null];
+            unset($this->dialogs[$key]);
+            if ($before !== null && ($before->viewport() !== null || $before->parent() === null)) {
+                $before->focus();
+            } else {
+                $this->focus();
+            }
+        });
+        $dialog->focus();
+        $this->requestRender();
+        return $dialog->result();
+    }
+
+    /** While a dialog is open: mouse events outside it are taken (nothing below gets them). */
+    private function modal(Mouse $mouse): bool
+    {
+        if ($this->dialogs === []) {
+            return false;
+        }
+        [$dialog] = end($this->dialogs);
+        $view = $this->surface->viewport($dialog->surface);
+        return $view === null || !$view->contains($mouse->x, $mouse->y);
+    }
+
     /** True if this component's surface shows on $surface, directly or through windows in between. */
     private function isShownIn(Surface $surface): bool
     {
@@ -729,7 +1298,11 @@ abstract class Component
         if (!$this->mounted) {
             return false;
         }
-        return $this->guard($handler) === true;
+        if ($this->guard($handler) !== true) {
+            return false;
+        }
+        $this->requestRender();
+        return true;
     }
 
     /**

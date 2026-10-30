@@ -26,3 +26,26 @@ function cursorAt(Surface $s): array
 {
     return [$s->cursor()->x, $s->cursor()->y];
 }
+
+/**
+ * Start $component on a FakeTerminal of $cols x $rows, run $test($terminal, $component) in
+ * fiber\run(), detach afterwards (also when the test fails, so run() returns).
+ */
+function mountOn(\phasync\Tui\Component $component, int $cols, int $rows, Closure $test): void
+{
+    \fiber\run(function () use ($component, $cols, $rows, $test) {
+        $t = new \phasync\Tui\FakeTerminal($cols, $rows);
+        $component->start($t);
+        try {
+            $test($t, $component);
+        } finally {
+            $t->detach();
+        }
+    });
+}
+
+/** Let the frame that follows a change render (renders are batched into the next tick). */
+function frame(): void
+{
+    \fiber\sleep(0.005);
+}

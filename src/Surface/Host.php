@@ -295,9 +295,12 @@ final class Host
         return $path;
     }
 
-    /** Every leaf below $surface (a surface hosting nothing), as its path, in depth-first order. */
+    /** Every leaf below $surface (a surface hosting nothing) that takes the focus, as its path, depth first. */
     private static function leaves(Surface $surface, array $path = []): array
     {
+        if (!$surface->isFocusable()) {
+            return [];
+        }
         $views = $surface->viewports();
         if ($views === []) {
             return $path === [] ? [] : [$path];

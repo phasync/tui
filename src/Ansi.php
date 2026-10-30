@@ -101,6 +101,16 @@ final class Ansi
         return "\e[2J";
     }
 
+    /**
+     * Erase the whole screen and put the cursor at the top-left corner (ED 2, CUP): the start of
+     * a drawing that repaints everything. Erased cells get the current background, so select a
+     * style first (`Ansi::style()`) to fill the screen with a colour, or `reset()` for the default.
+     */
+    public static function clearHome(): string
+    {
+        return "\e[2J\e[H";
+    }
+
     /** Erase the whole current row (EL 2). */
     public static function clearLine(): string
     {

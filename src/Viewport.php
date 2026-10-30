@@ -28,12 +28,26 @@ use phasync\Tui\Surface\Host;
  */
 final class Viewport
 {
+    /**
+     * The kinds of border lines, for `setBorder()`: the corners top-left, top-right, bottom-left,
+     * bottom-right, then the horizontal and the vertical line.
+     */
+    public const BORDERS = [
+        'single' => ['┌', '┐', '└', '┘', '─', '│'],
+        'round' => ['╭', '╮', '╰', '╯', '─', '│'],
+        'double' => ['╔', '╗', '╚', '╝', '═', '║'],
+        'heavy' => ['┏', '┓', '┗', '┛', '━', '┃'],
+        'ascii' => ['+', '+', '+', '+', '-', '|'],
+    ];
+
     private int $x;
     private int $y;
     private int $width;
     private int $height;
     private bool $fit = false;
     private bool $border = false;
+    /** The line kind of the border: one of the keys of `Viewport::BORDERS`. */
+    private string $borderKind = 'single';
     private Style $borderStyle;
     private ?Style $focusStyle = null;
     private string $title = '';
@@ -178,16 +192,32 @@ final class Viewport
     /**
      * Draw a one-cell border around the inner area in $style, and in $focusStyle while the
      * viewport has the host's focus (so the user sees which window gets the keys); remove it with
-     * false. A fitted source is resized to the new inner area.
+     * false. $border is the kind of line, `'single'`, `'round'`, `'double'`, `'heavy'` or `'ascii'`
+     * (see `Viewport::BORDERS`), or true for the kind set before (single lines at first). A fitted
+     * source is resized to the new inner area.
+     *
+     * @throws \InvalidArgumentException for an unknown kind of line
      */
-    public function setBorder(bool $border, ?Style $style = null, ?Style $focusStyle = null): static
+    public function setBorder(bool|string $border, ?Style $style = null, ?Style $focusStyle = null): static
     {
-        $this->border = $border;
+        if (\is_string($border)) {
+            if (!isset(self::BORDERS[$border])) {
+                throw new \InvalidArgumentException("Unknown border '$border'; one of " . implode(', ', array_keys(self::BORDERS)));
+            }
+            $this->borderKind = $border;
+        }
+        $this->border = $border !== false;
         $this->borderStyle = $style ?? $this->borderStyle;
         $this->focusStyle = $focusStyle ?? $this->focusStyle;
         $this->fitSource();
         $this->owner->changed($this);
         return $this;
+    }
+
+    /** The kind of line the border is drawn with (see `setBorder()`), also while there is none. */
+    public function borderKind(): string
+    {
+        return $this->borderKind;
     }
 
     /** True if the viewport draws a border. */
@@ -472,7 +502,7 @@ final class Viewport
         // scrollback rows are not tracked as damage: a view showing them repaints when lines
         // were added to the scrollback or it was cleared (ED 3), even if its top row is the same
         $scrollback = $top < 0 ? $this->source->linesScrolled() . '/' . $this->source->scrollbackSize() : '';
-        return implode(',', [$this->x, $this->y, $this->width, $this->height, $this->border ? 1 : 0,
+        return implode(',', [$this->x, $this->y, $this->width, $this->height, $this->border ? $this->borderKind : 0,
             spl_object_id($style), $this->title, $top, $this->left, $this->source->cols(),
             $this->source->rows(), json_encode($this->selection), $scrollback]);
     }
@@ -536,7 +566,7 @@ final class Viewport
                     $chars = [];
                     $styles = [];
                     if ($b) {
-                        $chars[] = '│';
+                        $chars[] = self::BORDERS[$this->borderKind][5];
                         $styles[] = $style;
                     }
                     $srcRow = $top + $r - $b;
@@ -561,7 +591,7 @@ final class Viewport
                         $styles[] = $st;
                     }
                     if ($b && $w > 1) {
-                        $chars[] = '│';     // (a window one cell wide has room for one side)
+                        $chars[] = self::BORDERS[$this->borderKind][5];     // (a window one cell wide has room for one side)
                         $styles[] = $style;
                     }
                 }
@@ -604,11 +634,12 @@ final class Viewport
     private function borderRow(bool $isTop, Style $style): array
     {
         $w = $this->width;
-        $chars = array_fill(0, $w, '─');
+        [$tl, $tr, $bl, $br, $h] = self::BORDERS[$this->borderKind];
+        $chars = array_fill(0, $w, $h);
         if ($w > 1) {
-            $chars[$w - 1] = $isTop ? '┐' : '┘';
+            $chars[$w - 1] = $isTop ? $tr : $br;
         }
-        $chars[0] = $isTop ? '┌' : '└';
+        $chars[0] = $isTop ? $tl : $bl;
         if ($isTop && $this->title !== '' && $w > 4) {
             $i = 1;
             foreach (Text::clusters(' ' . $this->title . ' ') as [$g, $gw]) {

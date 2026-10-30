@@ -53,6 +53,7 @@ final class Surface implements \Stringable
     private int $focusStamp = 0;
     /** The number of the latest `takeFocus()` of this surface. */
     private int $keepStamp = 0;
+    private bool $focusable = true;
     /** @var list<Surface> for a root: the focus path its surfaces were last told about */
     private array $announced = [];
     /** Numbers focus requests: the latest one wins. */
@@ -807,6 +808,9 @@ final class Surface implements \Stringable
         $currentRank = -1;
         foreach ($host->viewports as $v) {
             $r = $v->source->rankFocus();
+            if ($r === 0 && !$v->source->focusable) {
+                $r = -1;    // never focused, and does not take the focus by itself
+            }
             if ($r > $bestRank) {
                 $best = $v;
                 $bestRank = $r;
@@ -853,6 +857,27 @@ final class Surface implements \Stringable
             self::announce(\array_slice($this->announced, 1), false);
         }
         $this->announced = [];
+    }
+
+    /**
+     * Whether this surface takes the focus by itself: a host gives its keys to the first window
+     * that does when none was focused, and `focusNext()`/`focusToward()` go only to those (and
+     * not below one that does not). Turn it off for what only shows something (a label, a
+     * status line), so keys are not lost on it. `focus()` still focuses it when asked to.
+     * Surfaces take the focus by default; a host whose windows all refuse it keeps the keys.
+     */
+    public function setFocusable(bool $focusable): void
+    {
+        if ($focusable !== $this->focusable) {
+            $this->focusable = $focusable;
+            $this->changeTree(static fn() => null);
+        }
+    }
+
+    /** True unless `setFocusable(false)` was called. */
+    public function isFocusable(): bool
+    {
+        return $this->focusable;
     }
 
     /** True if keys go to this surface or through it: it is on the focus path from its root. */
