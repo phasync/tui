@@ -214,3 +214,40 @@ it('shows the cursor of the focused window where it is', function () {
         expect($terminal->surface->cursor()->visible)->toBeFalse();
     });
 });
+
+it('reports mouse motion without a button while a program below asks for it (mode 1003)', function () {
+    onTerminal(20, 4, function (FakeTerminal $terminal, Surface $root) {
+        $pane = new Surface();
+        $mid = new Surface();
+        $root->setLayout(phasync\Tui\Split::horizontal()->add(new Surface(), 10)->add($mid));
+        $mid->setLayout(phasync\Tui\Split::vertical()->add($pane));
+        $terminal->refresh();
+        expect($terminal->surface->mode(1003))->toBeFalse();
+        $terminal->mouse(new Mouse(Mouse::MOVE, 12, 1));
+        expect($pane->input->peek())->toBe('');                 // not reported: nobody asked
+        $pane->write("\e[?1003h\e[?1006h");
+        $terminal->refresh();
+        expect($terminal->surface->mode(1003))->toBeTrue();
+        $terminal->mouse(new Mouse(Mouse::MOVE, 12, 1));
+        expect($pane->input->peek())->toBe("\e[<35;3;2M");      // motion, no button, at the pane's (2,1)
+        $pane->write("\e[?1003l");
+        $terminal->refresh();
+        expect($terminal->surface->mode(1003))->toBeFalse()->and($terminal->surface->mode(1002))->toBeTrue();
+    });
+});
+
+it('closes the root when detached, and detaches when the root is closed', function () {
+    run(function () {
+        $root = new Surface();
+        $closed = 0;
+        $root->on('close', function () use (&$closed) { $closed++; });
+        $terminal = new FakeTerminal(10, 2);
+        $terminal->attach($root);
+        $terminal->detach();
+        expect($closed)->toBe(1)->and($terminal->isAttached())->toBeFalse();
+        $terminal->attach($root);
+        $root->close();
+        expect($terminal->isAttached())->toBeFalse()->and($closed)->toBe(2)
+            ->and($terminal->surface->isAltScreen())->toBeFalse();
+    });
+});

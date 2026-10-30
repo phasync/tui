@@ -37,8 +37,15 @@ use function fiber\sleep;
  * - follows the terminal's size, resizing the root (which re-lays its windows);
  * - passes the root's title, bell and clipboard requests (OSC 52) to the terminal;
  * - keeps the terminal in raw mode on the alternate screen with mouse reporting (button events,
- *   SGR encoding), bracketed paste and focus reporting on, and the kitty keyboard protocol
+ *   SGR encoding; motion without a button too while a program in the tree asks for it with
+ *   mode 1003), bracketed paste and focus reporting on, and the kitty keyboard protocol
  *   (disambiguated keys) pushed when the terminal answers its query; `detach()` undoes all of it.
+ *
+ * **Ending.** `detach()` gives the terminal back and closes the root (`Surface::close()`), which
+ * disposes a component on it, and so the whole component tree and the programs of its
+ * `Terminal`s; closing the root (or disposing the root component) detaches the device. The
+ * device's coroutines run while it is attached, so an attached device keeps `fiber\run()` from
+ * returning; once it is detached and the programs have ended, `fiber\run()` returns.
  *
  * `attach()`, `detach()` and `wait()` must be called inside `fiber\run()`.
  */
@@ -47,7 +54,7 @@ abstract class TerminalDevice
     /** What `attach()` sends: alternate screen, cursor hidden, mouse, paste and focus reporting. */
     private const TAKEOVER = "\e[?1049h\e[?25l\e[?1000h\e[?1002h\e[?1006h\e[?2004h\e[?1004h";
     /** What `detach()` sends to undo it (`Tty` also sends it when the program dies). */
-    private const RESTORE = "\e[0m\e[<u\e[?1004l\e[?2004l\e[?1006l\e[?1002l\e[?1000l\e[0 q\e[?25h\e[?1049l";
+    private const RESTORE = "\e[0m\e[<u\e[?1004l\e[?2004l\e[?1006l\e[?1003l\e[?1002l\e[?1000l\e[0 q\e[?25h\e[?1049l";
 
     private ?Surface $root = null;
     private InputDecoder $decoder;
@@ -67,6 +74,8 @@ abstract class TerminalDevice
     private ?float $probing = null;
     private string $probe = '';
     private bool $kitty = false;
+    /** Mouse motion without a button is reported (mode 1003 on the terminal). */
+    private bool $motion = false;
 
     /** Prepare the terminal (raw mode); $restore is to be sent when it is restored, even on a crash. */
     abstract protected function open(string $restore): void;
@@ -107,6 +116,7 @@ abstract class TerminalDevice
         $this->pen = null;
         $this->shown = null;
         $this->kitty = false;
+        $this->motion = false;
         $this->open(self::RESTORE);
         $this->root = $root;
         [$cols, $rows] = $this->size();
@@ -120,6 +130,7 @@ abstract class TerminalDevice
             $root->on('title', fn(string $title) => $this->send(Ansi::title($title))),
             $root->on('bell', fn() => $this->send("\x07")),
             $root->on('clipboard', fn(string $text) => $this->clipboard($text)),
+            $root->on('close', fn() => $this->release(false)),
         ];
         // ask for the kitty keyboard protocol; the answer to primary device attributes ends the probe
         $this->probing = microtime(true);
@@ -131,11 +142,19 @@ abstract class TerminalDevice
 
     /**
      * Stop showing the root and give the terminal back: modes off, main screen, cursor shown,
-     * terminal settings restored. The device's coroutines end. Safe to call when not attached.
+     * terminal settings restored. The device's coroutines end, and the root is closed
+     * (`Surface::close()`): a component on it is disposed with its children, which hangs up the
+     * programs of its `Terminal`s. This is how a program quits. Safe to call when not attached.
      */
     public function detach(): void
     {
-        if ($this->root === null) {
+        $this->release(true);
+    }
+
+    private function release(bool $closeRoot): void
+    {
+        $root = $this->root;
+        if ($root === null) {
             return;
         }
         foreach ($this->offs as $off) {
@@ -146,6 +165,9 @@ abstract class TerminalDevice
         $this->wake?->notify();
         $this->close();
         $this->detached?->notify();
+        if ($closeRoot) {
+            $root->close();
+        }
     }
 
     /** True between `attach()` and `detach()`. */
@@ -204,6 +226,13 @@ abstract class TerminalDevice
             foreach ($damaged as $y) {
                 $out .= $this->drawRow($y, $root, $at);
             }
+            $motion = $root->mode(1003) || self::wantsMotion($root);
+            if ($motion !== $this->motion) {
+                // a program below asked for (or gave up) motion reports without a button held
+                $this->motion = $motion;
+                // (the mouse modes are one setting: leaving 1003 goes back to button events, 1002)
+                $out .= $motion ? "\e[?1003h" : "\e[?1003l\e[?1002h";
+            }
             $cursor = $root->activeCursor();
             $shown = $this->shown;
             if ($out === '' && $shown == $cursor) {
@@ -230,6 +259,17 @@ abstract class TerminalDevice
             $this->damaged = false;
             $this->lastFrame = microtime(true);
         }
+    }
+
+    /** True if a surface in the tree below $surface has mouse mode 1003 (any motion) on. */
+    private static function wantsMotion(Surface $surface): bool
+    {
+        foreach ($surface->viewports() as $v) {
+            if ($v->source->mode(1003) || self::wantsMotion($v->source)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
