@@ -16,15 +16,22 @@ use phasync\Tui\Internal\Size;
  *
  * Every surface is kept the size of its window (`Viewport::setFit()`), so a program in it (a
  * shell in a `Pty`) is resized with the host. Borders and titles are set on the viewports:
- * `$root->host($files)->setBorder(true)->setTitle('files')`. To nest, give a hosted surface a
- * layout of its own.
+ * `$root->host($files)->setBorder(true)->setTitle('files')`.
+ *
+ * Layouts nest: add a layout where a surface would go, and the split shows it in a surface of
+ * its own (the same one every time the split is arranged, even when a component's `render()`
+ * builds the layouts anew), so focus, `focusNext()` and `focusToward()` go through it:
+ *
+ *     $root->setLayout(Split::horizontal()
+ *         ->add($files, 30)
+ *         ->add(Split::vertical()->add($editor)->add($shell, '30%')));
  */
 final class Split implements Layout
 {
     public const HORIZONTAL = 'horizontal';
     public const VERTICAL = 'vertical';
 
-    /** @var list<array{Surface, int|string}> */
+    /** @var list<array{Surface|Layout, int|string}> */
     private array $items = [];
     private ?Surface $host = null;
     private Style $separatorStyle;
@@ -58,38 +65,49 @@ final class Split implements Layout
     }
 
     /**
-     * Add $surface as the next window. $size is its width (horizontal) or height (vertical):
-     * cells as an int, `'25%'` of the host, or `'2fr'` for a weighted share of what is left.
-     * Adding a surface that is already in the split changes its size.
+     * Add $item as the next window: a surface, or a layout to nest (shown in a surface the split
+     * makes for it). $size is its width (horizontal) or height (vertical): cells as an int,
+     * `'25%'` of the host, or `'2fr'` for a weighted share of what is left. Adding an item that
+     * is already in the split changes its size.
      */
-    public function add(Surface $surface, int|string $size = '1fr'): static
+    public function add(Surface|Layout $item, int|string $size = '1fr'): static
     {
         Size::parse($size);
         foreach ($this->items as $i => [$s]) {
-            if ($s === $surface) {
+            if ($s === $item) {
                 $this->items[$i][1] = $size;
                 return $this->rearrange();
             }
         }
-        $this->items[] = [$surface, $size];
+        $this->items[] = [$item, $size];
         return $this->rearrange();
     }
 
-    /** Take $surface out of the split; the others share its space. */
-    public function remove(Surface $surface): static
+    /** Take $item (a surface or a nested layout) out of the split; the others share its space. */
+    public function remove(Surface|Layout $item): static
     {
-        $this->items = array_values(array_filter($this->items, fn(array $item) => $item[0] !== $surface));
+        $this->items = array_values(array_filter($this->items, fn(array $entry) => $entry[0] !== $item));
         return $this->rearrange();
     }
 
     /**
-     * The surfaces in order.
+     * The surfaces and nested layouts, in order.
      *
-     * @return list<Surface>
+     * @return list<Surface|Layout>
      */
-    public function surfaces(): array
+    public function items(): array
     {
         return array_map(fn(array $item) => $item[0], $this->items);
+    }
+
+    /**
+     * The surface this split arranges: the one it was set on with `setLayout()`, or for a split
+     * nested in another layout, the surface made for it (to give it a border:
+     * `$inner->host()->viewport()->setBorder(true)`). Null until it is first arranged.
+     */
+    public function host(): ?Surface
+    {
+        return $this->host;
     }
 
     private function rearrange(): static
@@ -114,7 +132,9 @@ final class Split implements Layout
         $sizes = Size::distribute(array_map(fn(array $item) => Size::parse($item[1]), $this->items), max(0, $total - $gap * ($n - 1)));
         $at = 0;
         $lines = [];
-        foreach ($this->items as $i => [$surface]) {
+        $nested = 0;
+        foreach ($this->items as $i => [$item]) {
+            $surface = $item instanceof Layout ? $host->nestedSurface($nested++, $item) : $item;
             $view = $host->host($surface);
             if ($across) {
                 $view->move($at, 0)->resize($sizes[$i], $host->rows());

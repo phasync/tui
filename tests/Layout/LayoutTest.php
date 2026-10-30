@@ -127,3 +127,50 @@ describe('Stack', function () {
         expect($root->line(0))->toBe('bbaa');
     });
 });
+
+describe('nesting', function () {
+    it('nests a layout directly, in a surface the outer layout owns', function () {
+        $root = new Surface(20, 4);
+        [$a, $b, $c] = [new Surface(), new Surface(), new Surface()];
+        $inner = Split::vertical()->add($b)->add($c);
+        $root->setLayout(Split::horizontal(separators: true)->add($a, 9)->add($inner));
+        $group = $inner->host();
+        expect($group)->not->toBeNull()
+            ->and($group->parent())->toBe($root)
+            ->and($b->parent())->toBe($group)
+            ->and(windows($root, $a, $group))->toBe([[0, 0, 9, 4], [10, 0, 10, 4]])
+            ->and(windows($group, $b, $c))->toBe([[0, 0, 10, 2], [0, 2, 10, 2]]);
+        $c->write('c');
+        expect($root->text())->toBe("         │\n         │\n         │c\n         │");
+        $c->focus();
+        expect($root->focusToward('left'))->toBeTrue()->and($a->hasFocus())->toBeTrue()
+            ->and($root->focusNext())->toBeTrue()->and($b->hasFocus())->toBeTrue();
+    });
+
+    it('keeps the nested surface, its windows and focus when the layouts are built anew', function () {
+        $root = new Surface(20, 4);
+        [$a, $b, $c] = [new Surface(), new Surface(), new Surface()];
+        $build = fn() => Split::horizontal()->add($a)->add(Split::vertical()->add($b)->add($c));
+        $root->setLayout($build());
+        $c->focus();
+        $group = $c->parent();
+        $view = $group->viewport($c);
+        $root->setLayout($build());
+        $root->resize(30, 6);
+        $root->setLayout($build());
+        expect($c->parent())->toBe($group)->and($group->viewport($c))->toBe($view)
+            ->and($c->hasFocus())->toBeTrue()->and(windows($group, $b, $c))->toBe([[0, 0, 15, 3], [0, 3, 15, 3]]);
+        // a nested layout the outer one no longer has gives its windows up
+        $root->setLayout(Split::horizontal()->add($a));
+        expect($group->parent())->toBeNull()->and($c->parent())->toBeNull();
+    });
+
+    it('nests a layout in a stack, as a dialog of several windows', function () {
+        $root = new Surface(20, 6);
+        [$main, $q, $answer] = [new Surface(), vt('Save?', 10, 1), new Surface()];
+        $root->setLayout((new Stack())->add($main)->add(Split::vertical()->add($q, 1)->add($answer), 10, 2));
+        $answer->write('yes');
+        expect($root->line(2))->toBe('     Save?')->and($root->line(3))->toBe('     yes')
+            ->and($answer->area()->x)->toBe(5);
+    });
+});

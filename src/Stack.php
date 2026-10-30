@@ -19,18 +19,20 @@ use phasync\Tui\Internal\Size;
  * Sizes are cells (int), a share of the host (`'50%'`); the default `'100%'` fills it. A window
  * is placed by `$align` (`center`, `top`, `bottom`, `left`, `right`, `top-left`, `top-right`,
  * `bottom-left`, `bottom-right`) or at an explicit `$x`/`$y`. Surfaces are kept the size of their
- * windows (`Viewport::setFit()`).
+ * windows (`Viewport::setFit()`). A layout can be added where a surface would go: the stack shows
+ * it in a surface of its own (see `Split`), for a dialog made of several windows.
  */
 final class Stack implements Layout
 {
     private const ALIGN = ['center', 'top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
-    /** @var list<array{Surface, int|string, int|string, string, ?int, ?int}> */
+    /** @var list<array{Surface|Layout, int|string, int|string, string, ?int, ?int}> */
     private array $items = [];
     private ?Surface $host = null;
 
     /**
-     * Put $surface on top of the stack (or change how a surface already in it is placed).
+     * Put $item, a surface or a layout to nest, on top of the stack (or change how an item already
+     * in it is placed).
      *
      * @param int|string $width  cells, or a share of the host such as `'50%'`
      * @param int|string $height cells, or a share of the host such as `'50%'`
@@ -38,39 +40,48 @@ final class Stack implements Layout
      * @param int|null   $x      left column, overriding the horizontal part of $align
      * @param int|null   $y      top row, overriding the vertical part of $align
      */
-    public function add(Surface $surface, int|string $width = '100%', int|string $height = '100%', string $align = 'center', ?int $x = null, ?int $y = null): static
+    public function add(Surface|Layout $item, int|string $width = '100%', int|string $height = '100%', string $align = 'center', ?int $x = null, ?int $y = null): static
     {
         Size::parse($width);
         Size::parse($height);
         if (!\in_array($align, self::ALIGN, true)) {
             throw new \InvalidArgumentException("Unknown alignment '$align'");
         }
-        $item = [$surface, $width, $height, $align, $x, $y];
+        $entry = [$item, $width, $height, $align, $x, $y];
         foreach ($this->items as $i => [$s]) {
-            if ($s === $surface) {
-                $this->items[$i] = $item;
+            if ($s === $item) {
+                $this->items[$i] = $entry;
                 return $this->rearrange();
             }
         }
-        $this->items[] = $item;
+        $this->items[] = $entry;
         return $this->rearrange();
     }
 
-    /** Take $surface off the stack; what it covered shows again. */
-    public function remove(Surface $surface): static
+    /** Take $item (a surface or a nested layout) off the stack; what it covered shows again. */
+    public function remove(Surface|Layout $item): static
     {
-        $this->items = array_values(array_filter($this->items, fn(array $item) => $item[0] !== $surface));
+        $this->items = array_values(array_filter($this->items, fn(array $entry) => $entry[0] !== $item));
         return $this->rearrange();
     }
 
     /**
-     * The surfaces, bottom first.
+     * The surfaces and nested layouts, bottom first.
      *
-     * @return list<Surface>
+     * @return list<Surface|Layout>
      */
-    public function surfaces(): array
+    public function items(): array
     {
         return array_map(fn(array $item) => $item[0], $this->items);
+    }
+
+    /**
+     * The surface this stack arranges: the one it was set on, or for a stack nested in another
+     * layout, the surface made for it. Null until it is first arranged.
+     */
+    public function host(): ?Surface
+    {
+        return $this->host;
     }
 
     private function rearrange(): static
@@ -87,7 +98,11 @@ final class Stack implements Layout
         $this->host = $host;
         $cols = $host->cols();
         $rows = $host->rows();
-        foreach ($this->items as [$surface, $width, $height, $align, $x, $y]) {
+        $order = [];
+        $nested = 0;
+        foreach ($this->items as [$item, $width, $height, $align, $x, $y]) {
+            $surface = $item instanceof Layout ? $host->nestedSurface($nested++, $item) : $item;
+            $order[] = $surface;
             $w = self::measure($width, $cols);
             $h = self::measure($height, $rows);
             $x ??= match (true) {
@@ -103,7 +118,6 @@ final class Stack implements Layout
             $host->host($surface)->move($x, $y)->resize($w, $h)->setFit(true);
         }
         // hosting order is z-order: keep it the stack's order
-        $order = array_map(fn(array $item) => $item[0], $this->items);
         $current = array_values(array_filter(array_map(fn(Viewport $v) => $v->source, $host->viewports()), fn(Surface $s) => \in_array($s, $order, true)));
         if ($current !== $order) {
             foreach ($order as $surface) {
