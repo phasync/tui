@@ -93,7 +93,7 @@ final class Tree
         if ($node instanceof Component) {
             $component = $node->isMounted() ? $node : ($this->place)("\0" . ($node->attribute('key') ?? $path), $node);
             $component->inheritStyle($parent);
-            $style = $sheet->compute($component, $this->states($component, $component->surface), $parent);
+            $style = $component->style();
             $item = $this->frame(new LayoutItem($component->surface), $component, $style, 'auto', 'auto');
             $item->focusable = true;
             $border = $item->border === false ? 0 : 2;

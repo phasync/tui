@@ -19,7 +19,8 @@ namespace phasync\Tui;
  * part's states, for the pieces a widget draws (`Select::row:current`, `Editor::selection`,
  * `Dialog::button:focused`; each widget lists its parts and their states). `:focused` is true
  * for an element on the focus path (a `Box` whose content has the keys is focused), `:disabled`
- * for one made with `disabled: true`, `:hover` while the mouse is over it. There are no
+ * for one made with `disabled: true`, `:hover` for a component while the mouse is over it (the
+ * component asks for mouse motion reports then, and so takes its mouse events). There are no
  * combinators: what a parent sets for the text inherits instead (below).
  *
  * **Properties.** `color`, `background` (a name such as `red` or `bright-blue`, `default`,
@@ -148,11 +149,11 @@ final class Stylesheet
         foreach ($this->rules as $i => [$props, $selectors, , $order]) {
             foreach ($selectors as $sel) {
                 $m = self::matches($sel, $types, $id, $classes, $states, $part, $partStates);
+                $hoverAware = $hoverAware || $m === 'hover' || ($m === true && \in_array('hover', $sel[3], true));
                 if ($m === true) {
                     $matched[] = [$sel[6], $order, $props];
                     break;
                 }
-                $hoverAware = $hoverAware || $m === 'hover';
             }
         }
         usort($matched, fn(array $a, array $b) => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
@@ -162,6 +163,10 @@ final class Stylesheet
         }
         if ($part === null) {
             $set = self::merge($set, self::check($element->attribute('style')));
+        } else {
+            // a part inherits from its element
+            $parent = $this->compute($element, $states, $parent);
+            $hoverAware = $hoverAware || $parent->hoverAware;
         }
         return $this->resolve($set, $parent, $hoverAware);
     }

@@ -157,6 +157,10 @@ abstract class Component extends Element
     private static array $dirty = [];
     /** @var \WeakMap<Component, true>|null components whose last render showed a `Help` element */
     private static ?\WeakMap $helpShown = null;
+    /** @var \WeakMap<Component, bool>|null components with `:hover` rules, and whether the mouse was over them */
+    private static ?\WeakMap $hoverAware = null;
+    /** @var array{Surface, int, int}|null where the mouse was last: the root and the cell on it */
+    private static ?array $pointer = null;
 
     // ------------------------------------------------------------------------------------------
     // Hooks
@@ -310,7 +314,7 @@ abstract class Component extends Element
         $s = $this->surface;
         $this->offs = [
             $s->on('key', fn(Key $e) => $this->key($e)),
-            $s->on('mouse', fn(Mouse $e) => $this->modal($e) || $this->handle(fn() => $this->onMouse($e))),
+            $s->on('mouse', fn(Mouse $e) => $this->pointer($e) || $this->modal($e) || $this->handle(fn() => $this->onMouse($e))),
             $s->on('paste', fn(Paste $e) => ($this->dialogs === [] && $this->handle(fn() => $this->onPaste($e))) || $this->toUnshown($e)),
             $s->on('focus', function (Focus $e): void {
                 $this->handle(fn() => $this->onFocus($e));
@@ -1035,8 +1039,16 @@ abstract class Component extends Element
     {
         $sheet = $this->stylesheet();
         $own = $this->states();
-        $base = $sheet->compute($this, $own, $this->inherited ?? $this->parent?->style());
-        return $part === null ? $base : $sheet->compute($this, $own, $base, $part, array_values($states));
+        $style = $sheet->compute($this, $own, $this->inherited ?? $this->parent?->style(), $part, array_values($states));
+        if ($style->hoverAware && $this->mounted) {
+            self::$hoverAware ??= new \WeakMap();
+            if (!isset(self::$hoverAware[$this])) {
+                // motion reports without a button held, so the mouse is followed (the device asks for them)
+                $this->surface->write("\e[?1003h");
+            }
+            self::$hoverAware[$this] = \in_array('hover', $own, true);
+        }
+        return $style;
     }
 
     /** @internal The style the parent's element tree around this component gives it to inherit. */
@@ -1048,10 +1060,43 @@ abstract class Component extends Element
         }
     }
 
+    /**
+     * A mouse event reached this component: remember where the mouse is, and render the
+     * components whose `:hover` changed. Takes nothing (false).
+     */
+    private function pointer(Mouse $mouse): bool
+    {
+        $area = $this->surface->area();
+        $at = [$this->surface->root(), $area->x + $mouse->x, $area->y + $mouse->y];
+        if ($at === self::$pointer) {
+            return false;
+        }
+        self::$pointer = $at;
+        foreach (self::$hoverAware ?? [] as $component => $was) {
+            if ($component->isHovered() !== $was) {
+                $component->requestRender();
+            }
+        }
+        return false;
+    }
+
+    /** True if the mouse is over this component (as last reported). */
+    private function isHovered(): bool
+    {
+        if (self::$pointer === null || !$this->mounted) {
+            return false;
+        }
+        [$root, $x, $y] = self::$pointer;
+        return $root === $this->surface->root() && $this->surface->area()->contains($x, $y);
+    }
+
     /** @return list<string> the states of this component for the stylesheet */
     private function states(): array
     {
         $states = [];
+        if ($this->isHovered()) {
+            $states[] = 'hover';
+        }
         if ($this->mounted && $this->hasFocus()) {
             $states[] = 'focused';
         }
