@@ -40,6 +40,7 @@ final class FakeTerminal extends TerminalDevice
     private string $copied = '';
     private Signal $idle;
 
+    /** A terminal of $cols x $rows (resize it later with `resize()`). */
     public function __construct(int $cols = 80, int $rows = 24)
     {
         $this->surface = new Surface($cols, $rows, 0);
@@ -65,6 +66,7 @@ final class FakeTerminal extends TerminalDevice
         }
     }
 
+    /** The terminal's size as [cols, rows]. */
     public function size(): array
     {
         return [$this->surface->cols(), $this->surface->rows()];

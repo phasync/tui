@@ -7,6 +7,7 @@ namespace phasync\Tui;
  */
 final class Run
 {
+    /** A run of cells. */
     public function __construct(
         /** Column of the first cell. */
         public readonly int $x,

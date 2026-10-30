@@ -204,6 +204,24 @@ it('moves the focus to a component', function () {
     });
 });
 
+it('focuses a child asked for in render() once the layout shows it (regression)', function () {
+    $app = new class extends Component {
+        public ?TextInput $input = null;
+
+        protected function render(): ?Layout
+        {
+            $log = $this->child('log', fn() => new Log());
+            $this->input = $this->child('input', fn() => new TextInput());
+            $this->input->focus();
+            return Split::vertical()->add($log->surface)->add($this->input->surface, 1);
+        }
+    };
+    withApp($app, 20, 4, function (FakeTerminal $t, Component $app) {
+        $t->type('typed');
+        expect($app->input->value())->toBe('typed')->and($app->input->hasFocus())->toBeTrue();
+    });
+});
+
 describe('built-ins', function () {
     it('edits a line in a TextInput', function () {
         $submitted = [];

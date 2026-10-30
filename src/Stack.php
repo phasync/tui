@@ -81,6 +81,7 @@ final class Stack implements Layout
         return $this;
     }
 
+    /** Place the windows on $host for its size; the host calls this (see `Layout`). */
     public function arrange(Surface $host): void
     {
         $this->host = $host;

@@ -23,8 +23,8 @@ final class Input
     private bool $closed = false;
     private ?\Closure $sink = null;
     private Signal $signal;
-    private int $interrupts = 0;
 
+    /** An empty, open channel. Every Surface has one (`Surface::$input`). */
     public function __construct()
     {
         $this->signal = new Signal();
@@ -54,11 +54,7 @@ final class Input
     public function read(int $max = 8192, float $timeout = \PHP_FLOAT_MAX): string
     {
         $deadline = $timeout === \PHP_FLOAT_MAX ? \PHP_FLOAT_MAX : microtime(true) + $timeout;
-        $interrupts = $this->interrupts;
         while ($this->buffer === '' && !$this->closed) {
-            if ($this->interrupts !== $interrupts) {
-                return '';
-            }
             $left = $deadline === \PHP_FLOAT_MAX ? \PHP_FLOAT_MAX : $deadline - microtime(true);
             if ($left <= 0 || !$this->signal->wait($left)) {
                 return '';
@@ -91,13 +87,6 @@ final class Input
         }
     }
 
-    /** Make the readers that are waiting right now return '' at once, without closing. */
-    public function interrupt(): void
-    {
-        $this->interrupts++;
-        $this->signal->notify();
-    }
-
     /** End the channel: readers get the remaining bytes, then ''. Further writes are ignored. */
     public function close(): void
     {
@@ -105,6 +94,7 @@ final class Input
         $this->signal->notify();
     }
 
+    /** True after `close()`. */
     public function isClosed(): bool
     {
         return $this->closed;

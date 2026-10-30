@@ -20,6 +20,7 @@ final class StatusBar extends Component
 {
     private Style $style;
 
+    /** A bar showing $left and $right, in $style (default: inverse video). */
     public function __construct(private string $left = '', private string $right = '', ?Style $style = null)
     {
         $this->style = $style ?? Style::of(attrs: Style::INVERSE);

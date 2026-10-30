@@ -77,6 +77,7 @@ abstract class Component
     private ?array $used = null;
     private bool $mounted = false;
     private bool $renderPending = false;
+    private ?Component $focusLater = null;
     private ?Deferred $stopped = null;
     private ?Signal $wake = null;
     /** @var array<int, \stdClass> running coroutines: {fiber, awaitable, done} */
@@ -275,7 +276,8 @@ abstract class Component
 
     /**
      * Give the focus to this component: every host from the root down to it focuses the way to
-     * it, so keys and pastes come here. The parent must show this component (in its layout).
+     * it, so keys and pastes come here. Called before the parent shows it (in the parent's
+     * `render()`), it takes effect when the layout `render()` returns is applied.
      */
     public function focus(): void
     {
@@ -284,6 +286,9 @@ abstract class Component
             $host = $component->parent->surface;
             if ($host->viewport($component->surface) !== null) {
                 $host->focus($component->surface);
+            } else {
+                // not shown yet (asked for in render()): focus it once the parent's layout shows it
+                $component->parent->focusLater = $this;
             }
             $component = $component->parent;
         }
@@ -380,6 +385,11 @@ abstract class Component
         }
         if ($layout !== null) {
             $this->surface->setLayout($layout);
+            if ($this->focusLater !== null) {
+                $later = $this->focusLater;
+                $this->focusLater = null;
+                $later->focus();
+            }
             foreach ($this->children as $key => $child) {
                 if (!isset($used[$key])) {
                     unset($this->children[$key]);

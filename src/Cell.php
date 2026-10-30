@@ -11,6 +11,7 @@ namespace phasync\Tui;
  */
 final class Cell
 {
+    /** A cell as `Surface::cell()` returns it. */
     public function __construct(
         /** The grapheme in the cell: ' ' when blank, '' for the second half of a wide character. */
         public readonly string $char,

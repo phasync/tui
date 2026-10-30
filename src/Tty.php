@@ -118,6 +118,7 @@ final class Tty extends TerminalDevice
         }
     }
 
+    /** The terminal's size as [cols, rows], from `stty size` (re-read on SIGWINCH, or twice a second). */
     public function size(): array
     {
         $now = microtime(true);

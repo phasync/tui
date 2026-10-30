@@ -25,6 +25,7 @@ final class Mouse implements Event
     public const MIDDLE = 1;
     public const RIGHT = 2;
 
+    /** A mouse event; build them to test mouse handling or to send them with `Surface::dispatch()`. */
     public function __construct(
         /** One of the action constants: `Mouse::PRESS`, `Mouse::DRAG`, `Mouse::WHEEL_UP`... */
         public readonly string $action,

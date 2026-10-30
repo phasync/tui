@@ -11,6 +11,7 @@ final class Cursor
     public const UNDERLINE = 'underline';
     public const BAR = 'bar';
 
+    /** A snapshot of a cursor. */
     public function __construct(
         /** Column, 0-based. */
         public readonly int $x,

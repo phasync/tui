@@ -234,6 +234,7 @@ final class Surface implements \Stringable
         return implode("\n", $out);
     }
 
+    /** The same as `text()`. */
     public function __toString(): string
     {
         return $this->text();

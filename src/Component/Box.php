@@ -19,6 +19,12 @@ use phasync\Tui\Style;
  */
 final class Box extends Component
 {
+    /**
+     * @param Component  $content    the component inside the border (started by the box)
+     * @param string     $title      shown in the top border
+     * @param Style|null $style      the border's style
+     * @param Style|null $focusStyle the border's style while the content has the focus
+     */
     public function __construct(
         private readonly Component $content,
         private string $title = '',

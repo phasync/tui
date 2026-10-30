@@ -8,6 +8,7 @@ namespace phasync\Tui;
  */
 final class Focus implements Event
 {
+    /** A focus change. */
     public function __construct(
         /** True when focus was gained, false when it was lost. */
         public readonly bool $focused,
