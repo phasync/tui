@@ -124,3 +124,58 @@ it('hosts Claude Code in a pane next to a shell', function () {
         }
     });
 })->skip(fn() => trim((string) shell_exec('command -v claude')) === '', 'claude is not installed');
+
+it('hosts Claude Code\'s first-run screens: keys, redraws, colours and resizes, in a home of its own', function () {
+    // a fresh home, so Claude Code starts as on a new machine and writes nothing of the user's
+    $home = sys_get_temp_dir() . '/phasync-tui-claude-' . getmypid() . '-' . mt_rand();
+    mkdir($home, 0700);
+    try {
+        run(function () use ($home) {
+            $env = ['HOME' => $home, 'CLAUDE_CONFIG_DIR' => "$home/.claude", 'XDG_CONFIG_HOME' => "$home/.config", 'BROWSER' => 'true'];
+            $claude = (new Terminal([trim((string) shell_exec('command -v claude'))], cwd: $home, env: $env))->start();
+            $shell = (new Terminal('/bin/sh', env: ['PS1' => '$ ', 'ENV' => '']))->start();
+            $root = new Surface();
+            $root->setLayout(Split::horizontal(separators: true)->add($claude->surface, '75%')->add($shell->surface));
+            $t = new FakeTerminal(120, 32);
+            $t->attach($root);
+            $s = $claude->surface;
+            $selected = fn() => preg_match('/❯\s+(?:✔\s+)?(\S.*?)\s*$/mu', $s->text(), $m) ? $m[1] : null;
+            try {
+                // the theme picker: a menu with a live, syntax-highlighted preview
+                expect($t->waitFor(fn() => str_contains($s->text(), 'Choose the text style') && str_contains($s->text(), 'Syntax theme'), 20))->toBeTrue();
+                $first = $selected();
+                $theme = fn() => preg_match('/Syntax theme: (.+?) \(/u', $s->text(), $m) ? $m[1] : null;
+                $before = $theme();
+                expect($first)->not->toBeNull()
+                    ->and($s->dump())->toMatch('/fg=#[0-9a-f]{6}/');          // truecolor, as COLORTERM promises
+                // arrow keys (kitty keyboard protocol or modifyOtherKeys, as it negotiated) move the
+                // selection, and it redraws the preview for the theme under the cursor
+                $t->press('down');
+                expect($t->waitFor(fn() => $selected() !== $first && $theme() !== $before, 5))->toBeTrue();
+                $t->press('up');
+                expect($t->waitFor(fn() => $selected() === $first && $theme() === $before, 5))->toBeTrue();
+                expect($t->surface->dump())->toBe($root->dump());
+                // a resize reaches it (SIGWINCH) and it redraws its rules for the new width
+                $t->resize(100, 32);
+                $rule = fn() => preg_match('/^ (╌+)$/mu', $s->text(), $m) ? mb_strlen($m[1]) : 0;
+                expect($t->waitFor(fn() => $s->cols() === 74 && $rule() > 0 && $rule() <= 74, 5))->toBeTrue();
+                // Enter takes it to the next screen
+                $t->press('enter');
+                expect($t->waitFor(fn() => str_contains($s->text(), 'Select login method'), 10))->toBeTrue();
+                $t->press('down');
+                expect($t->waitFor(fn() => str_starts_with((string) $selected(), '2.'), 5))->toBeTrue();
+                expect($t->surface->dump())->toBe($root->dump());
+                // the shell next to it still works
+                $shell->focus();
+                $t->type("echo shell-ok\n");
+                expect($t->waitFor('shell-ok'))->toBeTrue();
+            } finally {
+                $claude->dispose();     // hung up: its first run never finished, nothing was saved
+                $shell->dispose();
+                $t->detach();
+            }
+        });
+    } finally {
+        exec('rm -rf ' . escapeshellarg($home));
+    }
+})->skip(fn() => trim((string) shell_exec('command -v claude')) === '', 'claude is not installed');
