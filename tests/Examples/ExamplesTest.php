@@ -121,3 +121,15 @@ it('runs form: fields, validation, the dropdown, the pick list, the switch, the 
         expect($app->pty()->wait(5))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();
     });
 });
+
+it('runs markdown: a document streams in, the view follows it, End and Ctrl-Q work', function () {
+    example('markdown.php', [], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('Streaming Markdown', 10))->toBeTrue();
+        expect($t->waitFor('Wide characters and emoji take two columns', 15))->toBeTrue()
+            ->and($t->text())->toContain('ctrl+r again')->toContain('┌');
+        $t->press('home');
+        expect($t->waitFor('Streaming Markdown'))->toBeTrue();
+        $t->press('ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();
+    });
+});

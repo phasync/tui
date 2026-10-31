@@ -87,7 +87,7 @@ One primitive, one structure:
    `Terminal`, `Log`, `TextInput`, `ListView`, `StatusBar`, `Box`.
 7. **Widgets** ([docs](docs/widgets.md)): `Editor` (with history and completion), `Select`
    (a list, or a dropdown), `Table`, `Dialog` and `Confirm`, `Form` with `Button` and
-   `Checkbox`, `ScrollView`, `ProgressBar`, `Spinner`.
+   `Checkbox`, `ScrollView`, `ProgressBar`, `Spinner`, `Markdown`.
 
 The surfaces form one tree, whatever is in it: every surface knows its `parent()` and its
 `area()` on the root, and focus (`focus()`, `focusNext()`, `focusToward('left')`) follows that
