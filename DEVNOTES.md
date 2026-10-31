@@ -12,7 +12,9 @@ README.md and docs/.
       measured answers kept until asked again, windows shown anew diffed against the host's
       cells (Surface::cellsAt()), Markdown's part styles cached, Tabs does not hold what its
       panes started; tests/Release/TabSwitchBeta6Test.php
-- [ ] 3. selected into view in a ScrollView; focusing elements from a program
+- [x] 3. ScrollView brings what becomes selected into view (Tree::selectedSurfaces(),
+      Component::selectedSurfaces()); the `focused:` attribute (an edge, as focus() in a
+      render); tests/Release/SelectedBeta6Test.php
 - [ ] 4. Help() follows the running instance (fresh Tree in a tab)
 - [ ] 5. small: Alt-n anywhere, 'quit' on elements doc, Tui::freeze()
 - [ ] CHANGELOG, docs, README
@@ -66,6 +68,15 @@ README.md and docs/.
 - **Tabs::owns()**: a content instance a pane started (the first render's own instance) is
   the pane's, not another owner's; holding it made the next setTabs() with a fresh instance
   stop it (it showed as a new Tree after a tab switch once layouts were deferred).
+- **`focused:` rather than `Tui::focus($element)`**: elements are values rebuilt on every
+  render, so a program says which one has the focus the way it says which is selected. It is
+  an edge per path (Tree::$wanted/$wanting): the build where it is new (or turned from false
+  to true) queues the surface (or component) and the owner focuses it after the render, so a
+  render that keeps it true does not take the focus back from where Tab moved it.
+- **Selected into view**: ScrollView::follow() brings the first selected surface of its tree
+  into view when it is another than the one brought last (`keptSelected`), with the same
+  minimal scroll as the focus (bringIntoView()); the wheel may scroll away until the
+  selection changes. Only the ScrollView's own tree is looked at (its content as given).
 - Measured (this machine): Tab + settle, 160x50 rows of Text+2 Buttons: 2 rows 1.2 ms, 200 rows
   1.8 ms (11.8 before); the bench's 50-row monitor 2.5 ms median (bars moving). What is left
   per frame when all 50 bars move is the emulator parse at each nesting level (bar, row, root,

@@ -62,6 +62,13 @@ namespace phasync\Tui;
  *   `$mouse->over()` lists the elements under the mouse, innermost first, so the release of a
  *   drag tells where it was dropped.
  *
+ * - `focused`: true gives the element the focus, from a program without classes: the render
+ *   that first shows it with `focused: true`, or that changes it from false to true, focuses it
+ *   (`focused: $s->sel === $i` on cards with `onKey:`: the card the arrows select has the keys).
+ *   It is an edge, as `Component::focus()` in a render is: a render that keeps it true does not
+ *   take the focus back after Tab moved it on. For an element that takes keys (`onKey:`, or a
+ *   component inside); on a component (`->with(focused: true)`) it calls `focus()`.
+
  * Handlers may wait (`fiber\await(Confirm::ask(...))`): the input after them goes on meanwhile.
  *
  * An element is in the state `hover` while the mouse is over it, when a `hover:` class or a
@@ -69,9 +76,9 @@ namespace phasync\Tui;
  */
 abstract class Element
 {
-    /** @var array{key: ?string, id: ?string, class: list<string>, style: array<string, mixed>, width: int|string|null, height: int|string|null, disabled: bool, state: list<string>, onFocus: ?\Closure, onBlur: ?\Closure, onKey: \Closure|array|null, onMouse: ?\Closure} */
+    /** @var array{key: ?string, id: ?string, class: list<string>, style: array<string, mixed>, width: int|string|null, height: int|string|null, disabled: bool, state: list<string>, onFocus: ?\Closure, onBlur: ?\Closure, onKey: \Closure|array|null, onMouse: ?\Closure, focused: bool} */
     private array $elementAttributes = ['key' => null, 'id' => null, 'class' => [], 'style' => [], 'width' => null, 'height' => null,
-        'disabled' => false, 'state' => [], 'onFocus' => null, 'onBlur' => null, 'onKey' => null, 'onMouse' => null];
+        'disabled' => false, 'state' => [], 'onFocus' => null, 'onBlur' => null, 'onKey' => null, 'onMouse' => null, 'focused' => false];
 
     /**
      * Set attributes (see the class description); those not given stay as they are. Returns the
@@ -101,6 +108,7 @@ abstract class Element
         ?\Closure $onBlur = null,
         \Closure|array|null $onKey = null,
         ?\Closure $onMouse = null,
+        ?bool $focused = null,
     ): static {
         $before = $this->elementAttributes;
         if ($state !== null) {
@@ -114,7 +122,7 @@ abstract class Element
             Component::normalizeBindings($onKey);     // (a mistake shows where it is made)
         }
         foreach (['key' => $key, 'id' => $id, 'width' => $width, 'height' => $height, 'disabled' => $disabled, 'style' => $style,
-            'onFocus' => $onFocus, 'onBlur' => $onBlur, 'onKey' => $onKey, 'onMouse' => $onMouse] as $name => $value) {
+            'onFocus' => $onFocus, 'onBlur' => $onBlur, 'onKey' => $onKey, 'onMouse' => $onMouse, 'focused' => $focused] as $name => $value) {
             if ($value !== null) {
                 if ($name === 'width' || $name === 'height') {
                     Internal\Size::parse($value === 'auto' ? 0 : $value);
@@ -133,7 +141,7 @@ abstract class Element
 
     /**
      * An attribute: `'key'`, `'id'`, `'class'` (a list), `'style'` (an array), `'width'`,
-     * `'height'`, `'disabled'`, `'state'` (a list), `'onFocus'`, `'onBlur'`, `'onKey'` or `'onMouse'`.
+     * `'height'`, `'disabled'`, `'state'` (a list), `'onFocus'`, `'onBlur'`, `'onKey'`, `'onMouse'` or `'focused'`.
      *
      * @throws \InvalidArgumentException for another name
      */

@@ -21,7 +21,9 @@ use phasync\Tui\Viewport;
  *
  * The content (any element tree, a prop) is laid out at the view's width and as high as it
  * needs, on a surface of its own behind the view; the view shows part of it. The element that
- * has the focus is kept in view (Tab from field to field scrolls along). The wheel scrolls it,
+ * has the focus is kept in view (Tab from field to field scrolls along), and so is the element
+ * that becomes selected (`selected: true`, `state: ['selected']`: a card the arrow keys select
+ * in a lane of two hundred), scrolled as little as shows it. The wheel scrolls it,
  * and so do Up/Down, Page Up/Page Down and Home/End when nothing in it takes them (the keys go
  * on when it cannot scroll further, to move to the next field). Without a size of its own it
  * is as high as its content (`measure()`), so it only scrolls when its box is smaller: in a
@@ -38,6 +40,8 @@ class ScrollView extends Component
     private int $top = 0;
     /** The focused element was looked for at this top already (the user scrolled away from it). */
     private ?Surface $kept = null;
+    /** The selected element that was brought into view (the user may scroll away from it). */
+    private ?Surface $keptSelected = null;
 
     /** @param Element $content what scrolls (a prop) */
     public function __construct(public Element $content)
@@ -167,19 +171,31 @@ class ScrollView extends Component
                 && \count(array_filter($host->viewports(), fn(Viewport $view) => $view->source->isFocusable())) === 1) {
                 $shown = $host;
             }
-            $v = $shown->viewport();
-            $y = $v?->y() ?? 0;
-            $h = $v?->height() ?? $shown->rows();
-            for ($s = $v?->host(); $s !== null && $s !== $this->inside && ($u = $s->viewport()) !== null; $s = $u->host()) {
-                $y += $u->y() + ($u->hasBorder() ? 1 : 0) - $u->top();
-            }
-            if ($y < $this->top) {
-                $this->top = $y;
-            } elseif ($y + $h > $this->top + $this->surface->rows()) {
-                $this->top = min($y, $y + $h - $this->surface->rows());
-            }
+            $this->bringIntoView($shown);
             $this->kept = $leaf;
         }
+        // what became selected comes into view the same way (a card the arrows select)
+        $selected = $this->selectedSurfaces()[0] ?? null;
+        if ($selected !== null && $selected !== $this->keptSelected) {
+            $this->bringIntoView($selected);
+        }
+        $this->keptSelected = $selected;
         $view->scrollTo($this->top);
+    }
+
+    /** Scroll as little as shows all of $shown (a window inside the content), its top when it is taller than the view. */
+    private function bringIntoView(Surface $shown): void
+    {
+        $v = $shown->viewport();
+        $y = $v?->y() ?? 0;
+        $h = $v?->height() ?? $shown->rows();
+        for ($s = $v?->host(); $s !== null && $s !== $this->inside && ($u = $s->viewport()) !== null; $s = $u->host()) {
+            $y += $u->y() + ($u->hasBorder() ? 1 : 0) - $u->top();
+        }
+        if ($y < $this->top) {
+            $this->top = $y;
+        } elseif ($y + $h > $this->top + $this->surface->rows()) {
+            $this->top = min($y, $y + $h - $this->surface->rows());
+        }
     }
 }

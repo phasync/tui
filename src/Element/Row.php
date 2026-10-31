@@ -38,6 +38,7 @@ final class Row extends Element
      * @param (\Closure(Element): mixed)|null $onFocus called when the focus enters it, `$onBlur` when it leaves (see `Element`)
      * @param (\Closure(Key, Element): bool)|array<string, mixed>|null $onKey its keys: it takes the focus (see `Element`)
      * @param (\Closure(Mouse, Element): mixed)|null $onMouse the mouse over it (see `Element`)
+     * @param bool $focused it takes the focus when it shows with true first, or after false (see `Element`)
      */
     public function __construct(
         array $children,
@@ -57,8 +58,9 @@ final class Row extends Element
         ?\Closure $onBlur = null,
         \Closure|array|null $onKey = null,
         ?\Closure $onMouse = null,
+        bool $focused = false,
     ) {
         $this->children = Children::of($children);
-        $this->with($key, $id, $class, Children::style($style, ['padding' => $padding, 'align-items' => $align]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur, $onKey, $onMouse);
+        $this->with($key, $id, $class, Children::style($style, ['padding' => $padding, 'align-items' => $align]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur, $onKey, $onMouse, $focused ?: null);
     }
 }

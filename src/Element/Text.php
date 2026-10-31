@@ -46,6 +46,7 @@ final class Text extends Element
      * @param (\Closure(Element): mixed)|null $onFocus called when the focus enters it, `$onBlur` when it leaves (see `Element`)
      * @param (\Closure(Key, Element): bool)|array<string, mixed>|null $onKey its keys: it takes the focus (see `Element`)
      * @param (\Closure(Mouse, Element): mixed)|null $onMouse the mouse over it (see `Element`)
+     * @param bool $focused it takes the focus when it shows with true first, or after false (see `Element`)
      */
     public function __construct(
         string|array|\Closure $content,
@@ -64,9 +65,10 @@ final class Text extends Element
         ?\Closure $onBlur = null,
         \Closure|array|null $onKey = null,
         ?\Closure $onMouse = null,
+        bool $focused = false,
     ) {
         $this->content = $content instanceof \Closure ? $content : self::runs($content);
-        $this->with($key, $id, $class, Children::style($style, ['align' => $align]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur, $onKey, $onMouse);
+        $this->with($key, $id, $class, Children::style($style, ['align' => $align]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur, $onKey, $onMouse, $focused ?: null);
     }
 
     /**
@@ -108,7 +110,7 @@ final class Text extends Element
         if (!$this->content instanceof \Closure) {
             return $this;
         }
-        $text = new self(($this->content)(), $this->wrap, null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'), state: $this->attribute('state'), onFocus: $this->attribute('onFocus'), onBlur: $this->attribute('onBlur'), onKey: $this->attribute('onKey'), onMouse: $this->attribute('onMouse'));
+        $text = new self(($this->content)(), $this->wrap, null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'), state: $this->attribute('state'), onFocus: $this->attribute('onFocus'), onBlur: $this->attribute('onBlur'), onKey: $this->attribute('onKey'), onMouse: $this->attribute('onMouse'), focused: $this->attribute('focused'));
         $text->raw = $this->raw;
         return $text;
     }

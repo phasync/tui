@@ -33,6 +33,7 @@ final class Box extends Element
      * @param (\Closure(Element): mixed)|null $onFocus called when the focus enters it, `$onBlur` when it leaves (see `Element`)
      * @param (\Closure(Key, Element): bool)|array<string, mixed>|null $onKey its keys: it takes the focus (see `Element`)
      * @param (\Closure(Mouse, Element): mixed)|null $onMouse the mouse over it (see `Element`)
+     * @param bool $focused it takes the focus when it shows with true first, or after false (see `Element`)
      */
     public function __construct(
         public readonly Element $child,
@@ -52,8 +53,9 @@ final class Box extends Element
         ?\Closure $onBlur = null,
         \Closure|array|null $onKey = null,
         ?\Closure $onMouse = null,
+        bool $focused = false,
     ) {
-        $this->with($key, $id, $class, Children::style($style, ['padding' => $padding]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur, $onKey, $onMouse);
+        $this->with($key, $id, $class, Children::style($style, ['padding' => $padding]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur, $onKey, $onMouse, $focused ?: null);
     }
 
     /** @internal This box with a closure's title as it is now (what the component that shows it renders). */
@@ -62,6 +64,6 @@ final class Box extends Element
         if (!$this->title instanceof \Closure) {
             return $this;
         }
-        return new self($this->child, (string) ($this->title)(), null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'), state: $this->attribute('state'), onFocus: $this->attribute('onFocus'), onBlur: $this->attribute('onBlur'), onKey: $this->attribute('onKey'), onMouse: $this->attribute('onMouse'));
+        return new self($this->child, (string) ($this->title)(), null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'), state: $this->attribute('state'), onFocus: $this->attribute('onFocus'), onBlur: $this->attribute('onBlur'), onKey: $this->attribute('onKey'), onMouse: $this->attribute('onMouse'), focused: $this->attribute('focused'));
     }
 }

@@ -75,6 +75,11 @@ final class Tree
     private array $below = [];
     /** @var array<string, true> the paths of the Help elements of the last build */
     private array $helps = [];
+    /** @var array<string, true> the paths whose element had `focused: true` in the last build, and in the build in progress */
+    private array $wanted = [];
+    private array $wanting = [];
+    /** @var list<Component|Surface> what `focused:` that became true asks to focus, after the build */
+    private array $focusRequests = [];
     /** A measure that placed things ran after the last build (its items are not that build's). */
     private bool $measuredSince = false;
     /** The layout the last build returned, and the style of its root container. */
@@ -285,7 +290,9 @@ final class Tree
         if ($restyle) {
             // (what is not visited stands as the last build left it)
             $this->focusing = $this->focused;
+            $this->wanting = $this->wanted;
         } else {
+            $this->wanting = [];
             $this->present = [];
             $this->claim($root);
             $this->seen = [];
@@ -360,6 +367,7 @@ final class Tree
         }
         array_push($this->focusCalls, ...$focus);
         $this->focused = $this->focusing;
+        $this->wanted = $this->wanting;
         if ($restyle) {
             return $layout;
         }
@@ -546,6 +554,7 @@ final class Tree
             $this->seen[$path] = true;
             $this->shows($path, $component->surface, $component);
             $this->placed($component, $path);
+            $this->wantsFocus($path, $node, $component);
             // (the component draws itself: what its style changes around it is its window's frame,
             // so a component whose look changed with the focus keeps its item when that did not)
             $sig = 'c' . spl_object_id($component) . '|' . self::sizes($component) . '|' . self::frameOf($style);
@@ -563,6 +572,7 @@ final class Tree
             return null;
         }
         $this->shows($path, $surface, $node);
+        $this->wantsFocus($path, $node, $surface);
         $a = $node->attributes();
         $keys = $a['onKey'] !== null && !$a['disabled'];     // (it takes the focus)
         if ($node instanceof Text || $node instanceof Help) {
@@ -875,6 +885,51 @@ final class Tree
         return $this->hovers !== [];
     }
 
+    /** `focused: true` on $node at $path, where the last build did not have it: $target gets the focus after the build. */
+    private function wantsFocus(string $path, Element $node, Component|Surface $target): void
+    {
+        if ($this->dry || !$node->attribute('focused')) {
+            return;
+        }
+        if (!isset($this->wanted[$path]) && !isset($this->wanting[$path])) {
+            $this->focusRequests[] = $target;
+        }
+        $this->wanting[$path] = true;
+    }
+
+    /**
+     * What elements that became `focused: true` in the builds since the last call ask to
+     * focus: the owner focuses them after its render.
+     *
+     * @return list<Component|Surface>
+     */
+    public function takeFocusRequests(): array
+    {
+        [$requests, $this->focusRequests] = [$this->focusRequests, []];
+        return $requests;
+    }
+
+    /**
+     * The surfaces of the elements and components of the last build in the state `selected`
+     * (`selected: true`, `state: ['selected']`, or a component's own style state), in the order
+     * they were laid out: what a `ScrollView` keeps in view.
+     *
+     * @return list<Surface>
+     */
+    public function selectedSurfaces(): array
+    {
+        $out = [];
+        foreach ($this->nodes as $path => $node) {
+            if (\in_array('selected', $node->attribute('state'), true) || ($node instanceof Component && $node->hasStyleState('selected'))) {
+                $surface = $node instanceof Component ? $node->surface : ($this->surfaces[$path] ?? null);
+                if ($surface !== null && $surface !== $this->owner->surface) {
+                    $out[] = $surface;
+                }
+            }
+        }
+        return $out;
+    }
+
     /**
      * The onFocus/onBlur callbacks that came due in the builds since the last call, with
      * their elements: the owner calls them after its render.
@@ -925,6 +980,7 @@ final class Tree
         if (!$this->dry) {
             $live->inheritStyle($parent);
             $this->placed($live, $path);
+            $this->wantsFocus($path, $node, $live);
         }
         $sig = 'v' . spl_object_id($live) . '|' . self::sizes($node);
         if (($item = $this->kept($path, $sig, $style)) !== null) {

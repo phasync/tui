@@ -1642,6 +1642,9 @@ abstract class Component extends Element
         if (!$same) {
             $this->show($layout);
         }
+        foreach ($this->tree?->takeFocusRequests() ?? [] as $target) {
+            $target->focus();       // (elements that became `focused: true`)
+        }
         $this->firstShown();
         if ($returned !== null) {
             foreach ($this->children as $key => $child) {
@@ -1746,6 +1749,18 @@ abstract class Component extends Element
             $this->show($layout);
             $this->firstShown();
         }
+    }
+
+    /**
+     * The surfaces of the elements (and child components) in the state `selected` in the tree
+     * the last render returned or `layoutElement()` laid out, in the order they were laid out:
+     * for a container that keeps what is selected in view, as `ScrollView` does.
+     *
+     * @return list<Surface>
+     */
+    final protected function selectedSurfaces(): array
+    {
+        return $this->tree?->selectedSurfaces() ?? [];
     }
 
     /**
