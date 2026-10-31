@@ -39,6 +39,12 @@ final class Mouse implements Event
         public readonly bool $ctrl = false,
         public readonly bool $alt = false,
         public readonly bool $shift = false,
+        /** In a `Canvas`: the position in the canvas's units (cells and fractions), null elsewhere. */
+        public readonly ?float $canvasX = null,
+        /** In a `Canvas`: the position's other coordinate, null elsewhere. */
+        public readonly ?float $canvasY = null,
+        /** True when `canvasX`/`canvasY` are exact to the pixel; false when they are the middle of the cell (all a terminal reports). */
+        public readonly bool $precise = false,
     ) {
     }
 
@@ -48,7 +54,15 @@ final class Mouse implements Event
     /** The same event at another position (for coordinates relative to a window). */
     public function at(int $x, int $y): Mouse
     {
-        $copy = new Mouse($this->action, $x, $y, $this->button, $this->ctrl, $this->alt, $this->shift);
+        $copy = new Mouse($this->action, $x, $y, $this->button, $this->ctrl, $this->alt, $this->shift, $this->canvasX, $this->canvasY, $this->precise);
+        $copy->finder = $this->finder;
+        return $copy;
+    }
+
+    /** @internal The same event with its position in a canvas's units (see `canvasX`). */
+    public function inCanvas(float $x, float $y, bool $precise): Mouse
+    {
+        $copy = new Mouse($this->action, $this->x, $this->y, $this->button, $this->ctrl, $this->alt, $this->shift, $x, $y, $precise);
         $copy->finder = $this->finder;
         return $copy;
     }

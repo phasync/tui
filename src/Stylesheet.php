@@ -227,6 +227,7 @@ final class Stylesheet
             'Checkbox::box:checked' => ['color' => '$accent'],
             'Checkbox:disabled' => ['dim' => true],
             'ProgressBar::bar' => ['color' => '$accent'],
+            'Canvas' => ['color' => '$accent'],
             'Spinner::sign' => ['color' => '$accent'],
             'Form::error' => ['color' => '$error'],
             '*:invalid' => ['color' => '$error'],
