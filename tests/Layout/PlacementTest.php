@@ -42,3 +42,14 @@ it('places a window by the table of cases', function (array $anchor, array $root
 it('refuses another placement', function () {
     Placement::for(new Rect(0, 0, 1, 1), new Rect(0, 0, 10, 10), [2, 2], 'left');
 })->throws(InvalidArgumentException::class);
+
+it('leaves a rectangle to keep uncovered when the window fits on the other side', function (array $anchor, array $desired, string $place, ?array $keep, array $expected) {
+    $rect = Placement::for(new Rect(...$anchor), new Rect(0, 0, 60, 20), $desired, $place, $keep === null ? null : new Rect(...$keep));
+    expect(placed($rect))->toBe($expected);
+})->with([
+    'below covers the buttons: above'          => [[2, 10, 50, 1], [50, 4], 'below', [2, 13, 20, 1], [2, 6, 50, 4]],
+    'below misses them: below'                 => [[2, 10, 50, 1], [50, 2], 'below', [2, 13, 20, 1], [2, 11, 50, 2]],
+    'above would cover them too: preferred'    => [[2, 10, 50, 1], [50, 4], 'below', [2, 5, 20, 10], [2, 11, 50, 4]],
+    'only below fits: below, covering'         => [[2, 3, 50, 1], [50, 4], 'below', [2, 6, 20, 1], [2, 4, 50, 4]],
+    'nothing to keep'                          => [[2, 10, 50, 1], [50, 4], 'below', null, [2, 11, 50, 4]],
+]);

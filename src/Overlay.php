@@ -26,6 +26,8 @@ final class Overlay
     private mixed $result = null;
     /** @internal Where it shows, in the coordinates of the root component's surface. */
     public ?Rect $rect = null;
+    /** @internal The anchor and the root it was placed for last: [Rect, Rect]. */
+    public ?array $placedFor = null;
     /** @internal The focus path had reached the opener or the overlay since it opened. */
     public bool $wasFocused = false;
 

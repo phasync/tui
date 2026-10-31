@@ -22,15 +22,19 @@ use phasync\Tui\Text;
  *     $tabs->setTabs([...$more]);          // add, remove and rename at runtime; the current tab stays by key
  *
  * Each tab is `key => ['label' => ..., 'content' => Component|Element, 'closable' => ?bool]`. A
- * content that is a component keeps its state while its tab is hidden (a `Terminal` goes on
- * running and receiving output; it starts when its tab is first shown, as it is sized then);
- * an element is built into the tree while its tab is shown. Hidden tabs are not laid out.
+ * content that is a component is a child kept alive while its tab is hidden (see
+ * `Component::keep()`): it keeps its state, and a `Terminal` goes on running and receiving
+ * output (it starts when its tab is first shown, as it is sized then); it is stopped when its
+ * tab goes. An element is built into the tree while its tab is shown. Hidden tabs are not laid
+ * out.
  *
  * **Keys.** On the bar: Left/Right (Home/End) change tab, Tab or Enter move the focus into the
  * shown content, Delete closes the current tab when it is closable. In the content: Escape
  * moves the focus back to the bar (when the content did not take it; a `Terminal` keeps its
- * Escape). Everywhere in the tabs, before the content sees them: Ctrl-Tab and Ctrl-Shift-Tab
- * (around), Alt-1 to Alt-9. **Mouse**: a click on a tab selects it and focuses the bar, on its
+ * Escape): a plain binding, which comes after the content. Everywhere in the tabs, before the
+ * content sees them: Ctrl-Tab and Ctrl-Shift-Tab (around; bindings marked `first`), Alt-1 to
+ * Alt-9 (in `onKey()`, which sees keys on their way to the content). **Mouse**: a click on a tab
+ * selects it and focuses the bar, on its
  * `×` closes it, a middle click closes it, the wheel on the bar changes tab, `‹` and `›` step
  * to the previous or next one. When the labels are wider than the bar it scrolls, with `‹` and
  * `›` at its ends, and the current tab is always in view.
@@ -42,8 +46,9 @@ use phasync\Tui\Text;
  *
  * **Style**: `Tabs`; parts `Tabs::bar` (the row), `Tabs::tab` (states `current`, `hover`,
  * `focused` for the current tab while the bar has the focus), `Tabs::hint` (the number),
- * `Tabs::close` (the `×`) and `Tabs::more` (`‹` `›`). Parts compose in that order, so a tab
- * inherits the bar's background. Labels are plain text.
+ * `Tabs::close` (the `×`) and `Tabs::more` (`‹` `›`). Parts compose in that order, in the tab's
+ * states, so a tab inherits the bar's background and a hint the tab's. A `:hover` rule for a
+ * tab (the default theme has one) makes the bar follow the mouse. Labels are plain text.
  */
 class Tabs extends Component
 {
@@ -107,6 +112,8 @@ class Tabs extends Component
             'tab' => ['focusContent', 'into the tab'], 'enter' => 'focusContent',
             'escape' => ['focusBar', 'tab bar'],
             'delete' => 'closeCurrent',
+            'ctrl+tab' => ['nextTab', 'next tab', 'first' => true],
+            'ctrl+shift+tab' => ['previousTab', 'first' => true],
         ];
     }
 
@@ -137,7 +144,11 @@ class Tabs extends Component
     {
         $old = $this->current;
         $oldIndex = $old === null ? 0 : (int) array_search($old, array_keys($this->tabs), true);
+        $went = $this->childKeys();
         $this->tabs = self::check($tabs);
+        foreach (array_diff_key($went, $this->childKeys()) as $childKey => $_) {
+            $this->child($childKey)?->stop();      // the tab went (or has another component now)
+        }
         $keys = array_keys($this->tabs);
         if ($current !== null && isset($this->tabs[$current])) {
             $this->current = $current;
@@ -168,6 +179,18 @@ class Tabs extends Component
         return true;
     }
 
+    /** @return array<string, true> the keys of the children that show the component tabs */
+    private function childKeys(): array
+    {
+        $out = [];
+        foreach ($this->tabs as $key => $tab) {
+            if ($tab['content'] instanceof Component) {
+                $out[$this->childKey((string) $key, $tab['content'])] = true;
+            }
+        }
+        return $out;
+    }
+
     /** The next tab; false at the last one (the key goes on). */
     public function next(): bool
     {
@@ -180,14 +203,28 @@ class Tabs extends Component
         return $this->step(-1, false);
     }
 
+    /** The first tab (Home on the bar); false in the content, so the key goes on there. */
     public function first(): bool
     {
         return $this->inContent() ? false : $this->select((string) array_key_first($this->tabs));
     }
 
+    /** The last tab (End on the bar); false in the content. */
     public function last(): bool
     {
         return $this->inContent() ? false : $this->select((string) array_key_last($this->tabs));
+    }
+
+    /** The next tab, after the last the first (Ctrl-Tab, from the bar or the content); false with one tab. */
+    public function nextTab(): bool
+    {
+        return $this->step(1, true);
+    }
+
+    /** The previous tab, around (Ctrl-Shift-Tab). */
+    public function previousTab(): bool
+    {
+        return $this->step(-1, true);
     }
 
     private function step(int $by, bool $around): bool
@@ -285,14 +322,9 @@ class Tabs extends Component
         return true;
     }
 
+    /** Alt-1 to Alt-9, on their way to the content: a map of nine bindings would say less. */
     protected function onKey(Key $key): bool
     {
-        if ($key->is('ctrl+tab')) {
-            return $this->step(1, true);
-        }
-        if ($key->is('ctrl+shift+tab')) {
-            return $this->step(-1, true);
-        }
         if ($key->alt && !$key->ctrl && !$key->shift && preg_match('/^[1-9]$/', $key->name)) {
             $keys = array_keys($this->tabs);
             return isset($keys[(int) $key->name - 1]) && $this->select((string) $keys[(int) $key->name - 1]);
@@ -332,7 +364,11 @@ class Tabs extends Component
             return false;
         }
         if ($hit === null) {
-            return $mouse->button === Mouse::LEFT && (bool) $this->focusBarAlways();
+            if ($mouse->button === Mouse::LEFT) {
+                $this->focus();
+                return true;
+            }
+            return false;
         }
         if ($mouse->button === Mouse::MIDDLE) {
             if ($hit[3] !== null && $this->isClosable($hit[3])) {
@@ -343,19 +379,13 @@ class Tabs extends Component
         if ($mouse->button !== Mouse::LEFT) {
             return false;
         }
-        $this->focusBarAlways();
+        $this->focus();
         match ($hit[2]) {
             'close' => $this->close($hit[3]),
             'prev' => $this->step(-1, false),
             'next' => $this->step(1, false),
             default => $this->select($hit[3]),
         };
-        return true;
-    }
-
-    private function focusBarAlways(): bool
-    {
-        $this->focus();
         return true;
     }
 
@@ -464,7 +494,7 @@ class Tabs extends Component
             $c = $tab['content'];
             if ($c instanceof Component) {
                 // every component tab stays alive while hidden; only the current one is in the tree
-                $child = $this->child($this->childKey($key, $c), fn() => $c);
+                $child = $this->keep($this->childKey($key, $c), fn() => $c);
                 if ($key === $this->current) {
                     $content = $child->with(height: '1fr');
                 }

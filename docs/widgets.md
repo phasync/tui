@@ -210,14 +210,17 @@ by `/`; keys are unique in the tree, and a duplicate throws), `icon` (shown befo
 when first shown), `leaf` (never has children). With `load`, an item without `children` is a
 branch whose children are fetched when it is first opened.
 
-**Lazy children.** `load` returns the items, or an awaitable of them (`fiber\await()` is used),
-and while it is awaited the node shows a spinning sign in place of ▸/▾ and the tree stays usable.
+**Lazy children.** `load` returns the items (an array or any `Traversable`, a generator
+included), or an awaitable of them: **any other object is taken for an awaitable** and passed to
+`fiber\await()` in a coroutine of the tree, so a `fiber\go()` handle, a `fiber\Deferred` or a
+promise with `then()` all work. While it is awaited the node shows a spinning sign in place of
+▸/▾ and the tree stays usable.
 The children are kept: closing and opening again does not load again (`reload($key)` does). When
 the load fails the node closes (state `failed`) and opening it tries again.
 
 | Keys | Action | |
 |---|---|---|
-| Up/Down, Ctrl-P/Ctrl-N | `previous`, `next` | False on the first/last node (the key goes on). |
+| Up/Down | `previous`, `next` | False on the first/last node (the key goes on). Add Ctrl-P/Ctrl-N or j/k with `bind()`. |
 | Page Up/Page Down, Home/End | `pageUp`, `pageDown`, `first`, `last` | |
 | Right | `open` | Open a closed node; on an open one go to its first child. |
 | Left | `close` | Close an open node; else go to the parent. |
@@ -237,7 +240,7 @@ marks (with `multiple`), the wheel scrolls three rows.
 | `value($key)`, `label($key)`, `parentOf($key)` | What an item holds. |
 | `setItems(array)` | New items; which nodes are open, marked and current is kept by key, and so are loaded children. |
 | `reload($key)` | Forget the loaded children of a lazy node and load them again if it is open. |
-| `visibleCount()`, `visibleKeys()`, `topIndex()` | The nodes shown (the open ones) and the row at the top of the view. |
+| `visibleCount()`, `visibleKeys()` | The nodes shown (the open ones). The view scrolls as `Scrollable` says: `scrollTop()` (the row at the top), `scrollTo()`, the `scroll` event. |
 
 **Events** (for `on()`): `select`, `expand`, `collapse`, `activate` (each with the key and the
 tree) and `change` (the marked keys and the tree).
@@ -247,8 +250,11 @@ so 100,000 nodes cost what a screenful does; opening or closing a node walks the
 A wide label is cut with "…", and wide characters and emoji count two columns.
 
 **Style**: parts `Tree::node` (states `current`, `selected` for a marked node, `loading`,
-`failed`), `Tree::marker` and `Tree::guide`. The default theme shows the current node inverted,
-the markers in the accent colour and the guides muted.
+`failed`), `Tree::marker` and `Tree::guide`, in the same states. The marker and the guides are
+drawn on their node's row: they inherit its colours and attributes, so one without a colour of
+its own keeps the current row one inverted bar (see [parts on one row](components.md#parts-on-one-row)).
+The default theme shows the current node inverted, the markers in the accent colour and the
+guides muted.
 
 ```php
 $app->setStylesheet(Stylesheet::default()->with([

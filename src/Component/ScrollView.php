@@ -8,6 +8,7 @@ use phasync\Tui\Internal\ScrollLayout;
 use phasync\Tui\Key;
 use phasync\Tui\Layout;
 use phasync\Tui\Mouse;
+use phasync\Tui\Resize;
 use phasync\Tui\Surface;
 use phasync\Tui\Viewport;
 
@@ -110,6 +111,12 @@ class ScrollView extends Component
         // a key that moves the focus inside may need the view to follow: lay out again after it
         $this->markDirty();
         return false;
+    }
+
+    /** A new height: the focused element is brought into view again (a dialog that shrank). */
+    protected function onResize(Resize $size): void
+    {
+        $this->kept = null;
     }
 
     protected function onMouse(Mouse $mouse): bool

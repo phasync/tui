@@ -36,10 +36,10 @@ final class Jobs extends Component
 
     protected function bindings(): array
     {
-        return ['ctrl+c' => 'stop'];
+        return ['ctrl+c' => 'quit'];
     }
 
-    public function stop(): void
+    public function quit(): void
     {
         $this->dispose();
     }

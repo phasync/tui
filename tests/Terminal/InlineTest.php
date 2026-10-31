@@ -35,7 +35,7 @@ final class Builds extends Component
     {
         $rows = [];
         foreach ($this->done as $i => $d) {
-            $rows[] = new ProgressBar($d / 100, label: "job $i $d%");
+            $rows[] = new ProgressBar($d / 100, label: "job $i");      // (the percentage follows the label)
         }
         $rows[] = new Text('total ' . array_sum($this->done) . '/500');
         return new Column($rows);

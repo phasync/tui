@@ -96,7 +96,7 @@ it('fills a ProgressBar to its value with a label, and moves an indeterminate on
         $before = explode("\n", $t->text())[1];
         \fiber\sleep(0.25);
         $t->settle();
-        expect(explode("\n", $t->text())[0])->toBe('█████████████████ done')
+        expect(explode("\n", $t->text())[0])->toBe('████████████ done 100%')       // the label, and the percentage after it
             ->and(explode("\n", $t->text())[1])->not->toBe($before)->and(explode("\n", $t->text())[1])->toEndWith(' wait');
     });
 });

@@ -40,7 +40,15 @@ use phasync\Tui\Element\Text;
  * Enter in a field submits the form and, when it is valid, answers the dialog with its first
  * button's answer; a button whose answer is not the dialog's cancel answer submits the form
  * first and answers only when it is valid; the cancel button and Escape close the dialog
- * without validating. The dialog's `accept()` is asked after the form was valid.
+ * without validating. The dialog's `accept()` is asked after the form was valid (a `submit()`
+ * there does nothing). **Where to read the values**: in `$onSubmit` (it runs before the dialog
+ * closes), in the dialog's `accept()` with `values()`, or after the dialog closed with
+ * `values()`, which then gives those of the last submit (the fields are gone):
+ *
+ *     $form = new Form($fields, validate: ...);
+ *     if (fiber\await($this->dialog(new Dialog('Add', $form, ['Add' => 'add', 'Cancel' => null]))) === 'add') {
+ *         $this->add($form->values());
+ *     }
  *
  * **Style**: `Form`, the part `Form::error` for the messages.
  */
@@ -48,6 +56,10 @@ class Form extends Component
 {
     /** @var array<string, string> the errors of the last submit, by field id */
     private array $errors = [];
+    /** @var array<string, mixed>|null the values of the last submit */
+    private ?array $last = null;
+    /** A Dialog's accept() runs: submit() does nothing. */
+    private bool $held = false;
 
     /**
      * @param Element $content the fields (and anything else) in an element tree
@@ -84,13 +96,13 @@ class Form extends Component
      */
     public function nextField(): bool
     {
-        return $this->surface->focusNext(false, !$this->insideTabOrder());
+        return $this->focusNext(!$this->insideTabOrder());
     }
 
     /** Shift-Tab: the field before (as `nextField()`, the other way). */
     public function previousField(): bool
     {
-        return $this->surface->focusNext(true, !$this->insideTabOrder());
+        return $this->focusPrevious(!$this->insideTabOrder());
     }
 
     /** True if a component around the form moves the focus with Tab too: the form is part of its order. */
@@ -124,10 +136,25 @@ class Form extends Component
         return $out;
     }
 
-    /** @return array<string, mixed> each field's `value()`, by id */
+    /**
+     * Each field's `value()`, by id. Once the form has ended (the dialog it was in closed, so
+     * its fields are gone), the values of its last `submit()`: what a coroutine that awaited
+     * the dialog reads.
+     *
+     * @return array<string, mixed>
+     */
     public function values(): array
     {
+        if (!$this->isMounted() && $this->last !== null) {
+            return $this->last;
+        }
         return array_map(fn(Field $f) => $f->value(), $this->fields());
+    }
+
+    /** @internal Hold submit() (a Dialog's accept() runs). */
+    public function hold(bool $on): void
+    {
+        $this->held = $on;
     }
 
     /** @return array<string, string> the errors of the last submit, by field id */
@@ -136,10 +163,18 @@ class Form extends Component
         return $this->errors;
     }
 
-    /** Validate, then call `$onSubmit` (see the class description). True when it was valid. */
+    /**
+     * Validate, then call `$onSubmit` (see the class description). True when it was valid.
+     * While a `Dialog` the form is in asks its `accept()` (the form was submitted just before,
+     * and valid), it does nothing and returns true.
+     */
     public function submit(): bool
     {
+        if ($this->held) {
+            return $this->errors === [];
+        }
         $values = $this->values();
+        $this->last = $values;
         $errors = $this->validate === null ? [] : ($this->call($this->validate, $values, $this) ?? []);
         $this->errors = array_map('strval', $errors);
         $first = null;

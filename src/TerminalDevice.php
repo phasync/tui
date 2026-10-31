@@ -312,6 +312,66 @@ abstract class TerminalDevice
     }
 
     /**
+     * Inline mode: keep rows of the live region as they show now, above it, in the terminal's
+     * scrollback, never to change again: a finished job's progress line, a result, a step that
+     * is done. $what is a row of the root, or a surface shown on it (a component's: its rows,
+     * `$tty->freeze($row->surface)`). They are written above the region at the next frame, as
+     * `println()` lines are; the program then stops showing them (removes the row from its
+     * render), and the region shrinks under them. It takes the rows as the root shows them at
+     * the call: renders come in the next frame, so from a component's coroutine set the final
+     * state, `$this->sleep(0)` (the render runs meanwhile), then freeze. Full screen, the rows
+     * are kept and written after `detach()`, as `println()` lines are. Not attached: nothing.
+     */
+    public function freeze(int|Surface $what): void
+    {
+        $root = $this->root;
+        if ($root === null) {
+            return;
+        }
+        if ($what instanceof Surface) {
+            $area = $what->area();
+            $top = $area->y - $root->area()->y;
+            $rows = $area->isEmpty() ? [] : range(max(0, $top), min($root->rows(), $top + $area->height) - 1);
+        } else {
+            $rows = $what >= 0 && $what < $root->rows() ? [$what] : [];
+        }
+        foreach ($rows as $y) {
+            [$chars, $styles] = $root->rowData($y);
+            if ($this->inline) {
+                $this->printed[] = [$chars, $styles];
+            } else {
+                $this->held[] = self::rowText($chars, $styles) . "\e[0m\r\n";
+            }
+        }
+        $this->damage();
+    }
+
+    /**
+     * A row's cells as text with SGR sequences, trailing blanks cut.
+     *
+     * @param list<string> $chars
+     * @param list<Style>  $styles
+     */
+    private static function rowText(array $chars, array $styles): string
+    {
+        $plain = Style::plain();
+        $end = \count($chars);
+        while ($end > 0 && ($chars[$end - 1] === ' ' || $chars[$end - 1] === '') && $styles[$end - 1] === $plain) {
+            $end--;
+        }
+        $out = '';
+        $pen = $plain;
+        for ($i = 0; $i < $end; $i++) {
+            if ($styles[$i] !== $pen) {
+                $out .= Ansi::style($styles[$i]);
+                $pen = $styles[$i];
+            }
+            $out .= $chars[$i];
+        }
+        return $out;
+    }
+
+    /**
      * True if the terminal shows OSC 8 hyperlinks, so the device writes the cells' links to it;
      * else it writes their text alone. `Tty` knows it from the environment (`TERM_PROGRAM`,
      * `VTE_VERSION`, `TERM` and the like) or from the name the terminal answers when attached,

@@ -90,13 +90,26 @@ use function fiber\current;
  *
  * **Keys.** `bindings()` maps keys to public methods (`['ctrl+s' => 'save']`); the
  * application changes them with `bind()`, and a `Help` element lists them. A key goes down the
- * focus path: each component's `onKey()` on the way sees it first (the root's first); at the
- * component it ends at (the focused one) its own bindings come first, then its `onKey()`, then
- * the bindings of its parents, nearest first. A key nobody takes goes to the focused surface's
- * program (a `Terminal`'s shell). So a text field types the letters an application binds, and
- * an application's Ctrl-Q works wherever the focus is. While a modal overlay (a dialog) a
- * component opened is open, that component's own keys wait, except bindings marked `always`
- * (`'ctrl+q' => ['quit', 'quit', 'always' => true]`); its parents' bindings work.
+ * focus path: each component on the way sees it first, the root's first, through its bindings
+ * marked `first` and its `onKey()`; at the component it ends at (the focused one) its own
+ * bindings come first, then its `onKey()`, then the bindings of its parents, nearest first. A
+ * key nobody takes goes to the focused surface's program (a `Terminal`'s shell). So a text
+ * field types the letters an application binds, and an application's Ctrl-Q works wherever
+ * the focus is. A container that wants some keys before its content (Ctrl-Tab, whatever is
+ * focused) marks them `first`; the keys it wants only when the content did not take them
+ * (Escape) are plain bindings:
+ *
+ *     protected function bindings(): array
+ *     {
+ *         return [
+ *             'ctrl+tab' => ['nextTab', 'next tab', 'first' => true],    // before the content
+ *             'escape'   => ['toBar', 'tab bar'],                        // after it, if untaken
+ *         ];
+ *     }
+ *
+ * While a modal overlay (a dialog) a component opened is open, that component's own keys wait,
+ * except bindings marked `always` (`'ctrl+q' => ['quit', 'quit', 'always' => true]`); its
+ * parents' bindings work.
  *
  * **Events.** `onKey()`, `onMouse()`, `onPaste()` and `onFocus()` receive the events that reach
  * the component's surface (see `Surface::dispatch()`): a component sees them before its focused
@@ -149,6 +162,8 @@ abstract class Component extends Element
     private array $ending = [];
     /** @var array<string, true>|null keys asked for by the render in progress */
     private ?array $used = null;
+    /** @var array<string, true> keys of the children made with keep(): no render disposes them */
+    private array $kept = [];
     private bool $mounted = false;
     private bool $rendered = false;
     private bool $renderPending = false;
@@ -171,6 +186,8 @@ abstract class Component extends Element
     /** True while render() and the layout of what it returned run: its own state writes render nothing. */
     private bool $rendering = false;
     private ?Tree $tree = null;
+    /** The element tree the last render returned (null: it drew itself or returned a layout). */
+    private ?Element $shown = null;
     private ?Stylesheet $stylesheet = null;
     /** The style a parent's element tree gives this component to inherit. */
     private ?ComputedStyle $inherited = null;
@@ -296,11 +313,16 @@ abstract class Component extends Element
     /**
      * The keys of this component and the public methods they run: `['ctrl+s' => ['save', 'Save'],
      * 'enter' => 'submit']`, a key in `Key::parse()` notation and a method name, or `[method,
-     * description]` for a key that `Help` lists. The application changes them with `bind()`. A bound method runs when the key
-     * reaches the component (see the class description on the order); one that returns false
-     * did not take the key, which goes on. A render follows.
+     * description]` for a key that `Help` lists, with optional flags: `'first' => true` runs it
+     * before the focused component inside this one gets the key (a container's Ctrl-Tab),
+     * `'always' => true` keeps it working while a modal dialog this component opened is open.
+     * The application changes them with `bind()`. A bound method runs when the key reaches the
+     * component (see the class description on the order); one that returns false did not take
+     * the key, which goes on. A render follows. `onKey()` is for what a map cannot say (any
+     * letter, a key with a computed meaning); it runs on the way down (after the `first`
+     * bindings) in a component the key passes, after all its bindings in the focused one.
      *
-     * @return array<string, string|array{string, string}>
+     * @return array<string, string|array<int|string, string|bool>>
      */
     protected function bindings(): array
     {
@@ -476,11 +498,15 @@ abstract class Component extends Element
     }
 
     /**
-     * Signal the end to the component and its subtree, and arrange it: the end (end()) runs when
-     * the coroutines and the children have ended, at once when nothing is pending, else in a
-     * coroutine that waits for them, $timeout at most.
+     * End the component without waiting for its end: what `dispose()` does, except that it
+     * returns at once. Its children are stopped, `stopped()` resolves and `sleep()` returns
+     * false, and `unmount()` runs when its coroutines have returned and its children have ended
+     * ($timeout seconds at the latest). Use it for a child the parent no longer wants (a tab
+     * that was closed, a `keep()` child) from a render or a key handler, which should not wait;
+     * use `dispose()` where the end must be complete when the call returns. A child that is
+     * stopped leaves its parent at once (`child($key)` gives null). Safe to call twice.
      */
-    private function stop(float $timeout = 1.0): void
+    final public function stop(float $timeout = 1.0): void
     {
         if (!$this->mounted) {
             return;
@@ -500,7 +526,7 @@ abstract class Component extends Element
             // no longer the parent's child (child() makes a new one), but the parent's end waits for it
             $key = array_search($this, $this->parent->children, true);
             if ($key !== false) {
-                unset($this->parent->children[$key]);
+                unset($this->parent->children[$key], $this->parent->kept[$key]);
             }
             $this->parent->ending[] = $this;
         }
@@ -508,6 +534,7 @@ abstract class Component extends Element
             $child->stop($timeout);
         }
         $this->children = [];     // (those of another owner stay theirs)
+        $this->kept = [];
         $this->stopped->resolve();
         $this->wake->notify();
         // the end: once the coroutines (told to stop just now) and the children have ended
@@ -708,37 +735,44 @@ abstract class Component extends Element
         $done = [];
         $later = [];
         $error = null;
-        while (self::$dirty !== []) {
-            $batch = self::$dirty;
-            self::$dirty = [];
-            uasort($batch, fn(Component $a, Component $b) => $a->depth() <=> $b->depth());
-            foreach ($batch as $id => $component) {
-                if (isset($done[$id])) {
-                    $later[$id] = $component;   // asked again by a render of this frame: the next one
-                    continue;
-                }
-                $done[$id] = true;
-                $component->renderPending = false;
-                if ($component->mounted) {
-                    try {
-                        $component->guard($component->renderNow(...));
-                    } catch (\Throwable $e) {
-                        $error ??= $e;      // (a root's failure: the others still render)
+        // (passes: an overlay placed anew lays its content out before the overlays after it)
+        for ($pass = 0; $pass < 16; $pass++) {
+            while (self::$dirty !== []) {
+                $batch = self::$dirty;
+                self::$dirty = [];
+                uasort($batch, fn(Component $a, Component $b) => $a->depth() <=> $b->depth());
+                foreach ($batch as $id => $component) {
+                    if (isset($done[$id])) {
+                        $later[$id] = $component;   // asked again by a render of this frame: the next one
+                        continue;
+                    }
+                    $done[$id] = true;
+                    $component->renderPending = false;
+                    if ($component->mounted) {
+                        try {
+                            $component->guard($component->renderNow(...));
+                        } catch (\Throwable $e) {
+                            $error ??= $e;      // (a root's failure: the others still render)
+                        }
                     }
                 }
+            }
+            // after the layout pass, before painting: every overlay goes where its anchor is now
+            $again = false;
+            foreach (self::$floatingRoots as $root) {
+                try {
+                    $again = $root->placeOverlays() || $again;
+                } catch (\Throwable $e) {
+                    $error ??= $e;
+                }
+            }
+            if (!$again) {
+                break;
             }
         }
         foreach ($later as $component) {
             $component->renderPending = false;
             $component->markDirty();
-        }
-        // after the layout pass, before painting: every overlay goes where its anchor is now
-        foreach (self::$floatingRoots as $root) {
-            try {
-                $root->placeOverlays();
-            } catch (\Throwable $e) {
-                $error ??= $e;
-            }
         }
         if ($error !== null) {
             throw $error;
@@ -796,6 +830,24 @@ abstract class Component extends Element
         } else {
             $this->surface->focus();        // on to the descendant it focused, or its first
         }
+    }
+
+    /**
+     * Move the focus to the next field inside this component, in the order they show (depth
+     * first through its windows, as `Surface::focusNext()`), wrapping around after the last
+     * (with $wrap false: stopping there and returning false, so the key goes on to a parent
+     * that moves on from this group). How a container binds Tab: `'tab' => 'focusNext'`.
+     * Returns false when there is no other field to go to.
+     */
+    public function focusNext(bool $wrap = true): bool
+    {
+        return $this->surface->focusNext(false, $wrap);
+    }
+
+    /** As `focusNext()`, backwards (Shift-Tab): `'shift+tab' => 'focusPrevious'`. */
+    public function focusPrevious(bool $wrap = true): bool
+    {
+        return $this->surface->focusNext(true, $wrap);
     }
 
     /**
@@ -962,6 +1014,30 @@ abstract class Component extends Element
     }
 
     /**
+     * The child under $key, made with $create the first time, that lives until it is stopped,
+     * however many renders do not show it: the panes of hidden tabs, a dialog's content kept
+     * for the next time, a `Terminal` that goes on running in the background. A child made
+     * with `child()` is disposed by the first render that neither asks for it nor shows it; a
+     * kept one is not. Show it by placing it in a render (`$this->keep('shell', fn() => new
+     * Terminal('sh'))` returned in the tree, or `child('shell')` there) or not; end it with
+     * `$kept->stop()` (or `dispose()`) when it is no longer wanted, or with this component. It is
+     * started at once, and sized and rendered when a render first shows it (a `Terminal` starts
+     * its program then). `child($key)` finds it.
+     *
+     * @template T of Component
+     * @param \Closure(): T $create
+     * @return T
+     */
+    protected function keep(string $key, \Closure $create): Component
+    {
+        $child = $this->child($key, $create);
+        if ($child->parent === $this) {
+            $this->kept[$key] = true;
+        }
+        return $child;
+    }
+
+    /**
      * Start another coroutine that belongs to the component: an exception in it is contained
      * like one in `run()`, and the component's end (`unmount()`) waits for it. Make it end when
      * `sleep()` returns false or `isMounted()` is false. When it ends after it waited (a fetch,
@@ -1021,6 +1097,9 @@ abstract class Component extends Element
         try {
             // the pen is the component's style: what render() clears (ESC [2J) or writes plainly is in its colours
             $this->surface->write("\e[0m" . Ansi::style($this->style()->text));
+            if (!isset(self::$hoverAware[$this]) && $this->wantsPointer()) {
+                $this->followPointer($this->isHovered());
+            }
             $result = $this->render();
             $layout = $this->layoutOf($result);
             $used = $this->used;
@@ -1048,7 +1127,7 @@ abstract class Component extends Element
         }
         if ($returned !== null) {
             foreach ($this->children as $key => $child) {
-                if (!isset($used[$key]) && !$child->isShownIn($this->surface)) {
+                if (!isset($used[$key]) && !isset($this->kept[$key]) && !$child->isShownIn($this->surface)) {
                     if ($child->parent === $this) {
                         $child->stop();     // a render does not wait for its coroutines
                     } else {
@@ -1065,6 +1144,7 @@ abstract class Component extends Element
         foreach ($this->overlays as $key => $_) {
             $this->child($key);         // (keeps their content)
         }
+        $this->shown = $result instanceof Element ? $result : null;
         if ($result instanceof Element) {
             $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
             $layout = $this->tree->build($result, $this->stylesheet(), $this->style());
@@ -1077,6 +1157,27 @@ abstract class Component extends Element
             return $layout;
         }
         return $result;
+    }
+
+    /**
+     * The size the component needs within $cols x $rows, for a parent that lays it out with
+     * the size `'auto'` (what a component element in a `Column` or `Row` gets when no width or
+     * height is given); null when it takes the room it is given. By default: the size of the
+     * element tree its last render returned (a component rendering a `Row` of one-line things is
+     * one row high, so a `Column` of them needs no `height:`), and null for one that draws itself
+     * or has not rendered yet. Its first render may change the answer, and the parent then lays
+     * it out again, before the frame is drawn. A component that draws itself and knows its size
+     * (a one-line field) overrides it.
+     *
+     * @return array{int,int}|null
+     */
+    public function measure(int $cols, int $rows): ?array
+    {
+        if ($this->shown === null) {
+            return null;
+        }
+        $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
+        return $this->tree->measure($this->shown, $cols, $rows, $this->stylesheet(), $this->style(), place: false);
     }
 
     /**
@@ -1112,10 +1213,17 @@ abstract class Component extends Element
     // ------------------------------------------------------------------------------------------
     // Element trees, props, styles
 
-    /** The child for a component element made anew by a render: the one at its place, with the new props. */
-    private function place(string $key, Component $fresh): Component
+    /**
+     * The child for a component element made anew by a render: the one at its place, with the
+     * new props. Without $create (a measure that changes nothing): the one at its place if it is
+     * of the same class, else null.
+     */
+    private function place(string $key, Component $fresh, bool $create = true): ?Component
     {
         $existing = $this->child($key);
+        if (!$create) {
+            return $existing !== null && $existing::class === $fresh::class ? $existing : null;
+        }
         if ($existing !== null && $existing::class === $fresh::class) {
             $existing->receive($fresh);
             return $existing;
@@ -1198,9 +1306,14 @@ abstract class Component extends Element
      *     $this->style('row', 'current')       // the part `Select::row:current`
      *     $this->style(['quote', 'link'])      // a link inside a quote: both, the inner one winning
      *
-     * Parts given as a list apply together, outermost first: attributes add up, and the
-     * innermost colour that is set wins (see `Stylesheet::compute()`); the states are the
-     * innermost part's.
+     * Every part inherits the component's own style. Parts given as a list apply together,
+     * outermost first: attributes add up, and the innermost colour that is set wins (see
+     * `Stylesheet::compute()`); the states apply to each part of the list. That is how a widget
+     * draws several parts on one row (a marker, a label, a hint) in the row's state, without
+     * merging styles itself:
+     *
+     *     $row    = $this->style('node', 'current');              // the bar
+     *     $marker = $this->style(['node', 'marker'], 'current');  // on the bar, its own colour if any
      *
      * @param string|list<string>|null $part
      */
@@ -1209,15 +1322,38 @@ abstract class Component extends Element
         $sheet = $this->stylesheet();
         $own = $this->states();
         $style = $sheet->compute($this, $own, $this->inherited ?? $this->parent?->style(), $part, array_values($states));
-        if ($style->hoverAware && $this->mounted) {
-            self::$hoverAware ??= new \WeakMap();
-            if (!isset(self::$hoverAware[$this])) {
-                // motion reports without a button held, so the mouse is followed (the device asks for them)
-                $this->surface->write("\e[?1003h");
-            }
-            self::$hoverAware[$this] = \in_array('hover', $own, true);
+        if ($style->hoverAware) {
+            $this->followPointer(\in_array('hover', $own, true));
         }
         return $style;
+    }
+
+    /**
+     * Whether the component follows the mouse: it gets every motion of the mouse over it in
+     * `onMouse()` (`Mouse::MOVE`, no button held), and its `:hover` state is kept, so it can
+     * light up what is under the pointer (a tab, a menu item, a link). By default it does when
+     * the stylesheet has a `:hover` rule for it or one of its parts (`Tabs::tab:hover`).
+     * Override it to return true for a component that tracks the pointer itself. While it
+     * follows the mouse, its surface asks for motion reports (mode 1003), so it takes its mouse
+     * events itself (a drag in it does not select text).
+     */
+    protected function wantsPointer(): bool
+    {
+        return false;
+    }
+
+    /** Ask for motion reports (once) and keep the hover state; $hovered: the mouse is over it now. */
+    private function followPointer(bool $hovered): void
+    {
+        if (!$this->mounted) {
+            return;
+        }
+        self::$hoverAware ??= new \WeakMap();
+        if (!isset(self::$hoverAware[$this])) {
+            // motion reports without a button held, so the mouse is followed (the device asks for them)
+            $this->surface->write("\e[?1003h");
+        }
+        self::$hoverAware[$this] = $hovered;
     }
 
     /**
@@ -1321,11 +1457,12 @@ abstract class Component extends Element
     // Keys
 
     /**
-     * A key on its way down the focus path. On the way, each component's `onKey()` may take it
-     * (the root's first). At the component it ends at (nothing focused further down): its own
-     * bindings, its `onKey()`, then its parents' bindings, nearest first; Escape closes a
-     * non-modal overlay on the way. A component with a modal overlay open is suspended: only
-     * its bindings marked `always` work, its parents' do.
+     * A key on its way down the focus path. On the way, each component's bindings marked
+     * `first` and its `onKey()` may take it (the root's first). At the component it ends at
+     * (nothing focused further down): its own bindings, its `onKey()`, then its parents'
+     * bindings, nearest first (those marked `first` only where the key did not pass on the way
+     * down); Escape closes a non-modal overlay on the way. A component with a modal overlay open
+     * is suspended: only its bindings marked `always` work, its parents' do.
      */
     private function key(Key $key): bool
     {
@@ -1334,13 +1471,15 @@ abstract class Component extends Element
         }
         $mine = !$this->suspended() && !$this->attribute('disabled');
         if (!$this->isKeyEnd()) {
-            return ($mine && $this->handle(fn() => $this->onKey($key))) || $this->toUnshown($key);
+            return (!$this->attribute('disabled') && $this->runBinding($key, $this->suspended(), true))
+                || ($mine && $this->handle(fn() => $this->onKey($key))) || $this->toUnshown($key);
         }
         if ($mine && ($this->runBinding($key) || $this->handle(fn() => $this->onKey($key)))) {
             return true;
         }
         for ($c = $this; $c !== null; $c = $c->parent) {
-            if ($c !== $this && !$c->attribute('disabled') && $c->runBinding($key, $c->suspended())) {
+            // (a parent the key passed on its way down had its `first` bindings asked then)
+            if ($c !== $this && !$c->attribute('disabled') && $c->runBinding($key, $c->suspended(), $this->isShownIn($c->surface) ? false : null)) {
                 return true;
             }
             if ($c === $this && $this->suspended() && $this->runBinding($key, true)) {
@@ -1382,11 +1521,14 @@ abstract class Component extends Element
         return true;
     }
 
-    /** Run the method bound to $key (with $always, only a binding marked `always`); true if it took the key. */
-    private function runBinding(Key $key, bool $always = false): bool
+    /**
+     * Run the method bound to $key (with $always, only a binding marked `always`; with $first
+     * true only one marked `first`, false only one that is not); true if it took the key.
+     */
+    private function runBinding(Key $key, bool $always = false, ?bool $first = null): bool
     {
         $binding = $this->bindingsInForce()[(string) $key] ?? null;
-        if ($binding === null || ($always && !$binding[2])) {
+        if ($binding === null || ($always && !$binding[2]) || ($first !== null && $binding[3] !== $first)) {
             return false;
         }
         $method = $binding[0];
@@ -1425,9 +1567,9 @@ abstract class Component extends Element
 
     /**
      * The keys in force for this component: `bindings()` with what `bind()` changed, as
-     * [method, description or null, always] by key notation (`ctrl+s`).
+     * [method, description or null, always, first] by key notation (`ctrl+s`).
      *
-     * @return array<string, array{string, ?string, bool}>
+     * @return array<string, array{string, ?string, bool, bool}>
      */
     public function bindingsInForce(): array
     {
@@ -1448,7 +1590,7 @@ abstract class Component extends Element
 
     /**
      * @param array<string, mixed> $bindings
-     * @return array<string, array{string, ?string, bool}|null>
+     * @return array<string, array{string, ?string, bool, bool}|null>
      */
     private static function normalize(array $bindings): array
     {
@@ -1458,9 +1600,9 @@ abstract class Component extends Element
             if ($action === null) {
                 $out[$key] = null;
             } elseif (\is_array($action)) {
-                $out[$key] = [(string) $action[0], isset($action[1]) ? (string) $action[1] : null, (bool) ($action['always'] ?? false)];
+                $out[$key] = [(string) $action[0], isset($action[1]) ? (string) $action[1] : null, (bool) ($action['always'] ?? false), (bool) ($action['first'] ?? false)];
             } else {
-                $out[$key] = [(string) $action, null, false];
+                $out[$key] = [(string) $action, null, false, false];
             }
         }
         return $out;
@@ -1709,17 +1851,24 @@ abstract class Component extends Element
 
     /**
      * On a root: decide where each open overlay goes now (`Placement`), cancel those whose
-     * opener is gone, not shown, or (not modal) no longer focused, and arrange them.
+     * opener is gone, not shown, or (not modal) no longer focused, and arrange them. In the
+     * order they opened, each after the one before it was arranged: an overlay opened from
+     * inside another (a dropdown in a dialog) is anchored where its opener is once the outer one
+     * was placed. Returns true when an overlay was arranged anew and that made components
+     * render (the outer overlay's content laid out for its new size): render them, then call
+     * this again for the overlays after it.
      */
-    private function placeOverlays(): void
+    private function placeOverlays(): bool
     {
         if (!$this->mounted) {
-            return;
+            return false;
         }
         $cols = $this->surface->cols();
         $rows = $this->surface->rows();
         $origin = $this->surface->area();
+        $root = new Rect(0, 0, $cols, $rows);
         $changed = false;
+        $again = false;
         foreach ($this->floating as $overlay) {
             $opener = $overlay->content->parent;
             if ($opener === null || !$opener->mounted || !$overlay->content->mounted
@@ -1745,20 +1894,53 @@ abstract class Component extends Element
             $place = $overlay->place instanceof Rect
                 ? new Rect($ox + $overlay->place->x, $oy + $overlay->place->y, $overlay->place->width, $overlay->place->height)
                 : $overlay->place;
-            $rect = Placement::for($anchor, new Rect(0, 0, $cols, $rows), self::desired($overlay->content, $cols, $rows), $place);
+            if (\is_string($place) && $place !== 'center' && $overlay->rect !== null && $overlay->placedFor == [$anchor, $root]) {
+                // only its size changed: it stays on the side it is on while it still fits there
+                $place = $overlay->rect->y >= $anchor->y + $anchor->height ? 'below' : 'above';
+            }
+            $rect = Placement::for($anchor, $root, self::desired($overlay->content, $cols, $rows), $place, $opener->keepUncovered($origin));
+            $overlay->placedFor = [$anchor, $root];
             if ($rect != $overlay->rect) {
                 $overlay->rect = $rect;
-                $changed = true;
+                $this->arrangeOverlays();
+                $changed = false;
+                if (self::$dirty !== []) {
+                    $again = true;      // its content lays out for its new place first
+                    break;
+                }
             }
         }
         if ($changed || ($this->floating !== [] && $this->surface->layout() !== $this->overlayLayout)) {
-            $this->surface->setLayout($this->withOverlays($this->overlayLayout?->inner ?? $this->surface->layout()));
+            $this->arrangeOverlays();
         }
         foreach ($this->floating as $overlay) {
             if ($overlay->content->mounted && !$overlay->content->rendered && $overlay->content->surface->viewport() !== null) {
                 $overlay->content->firstRender();
             }
         }
+        return $again;
+    }
+
+    /** On a root: put its overlays where they were last placed. */
+    private function arrangeOverlays(): void
+    {
+        $this->surface->setLayout($this->withOverlays($this->overlayLayout?->inner ?? $this->surface->layout()));
+    }
+
+    /**
+     * The rectangle an overlay this component opens should leave uncovered when it can (in the
+     * coordinates of the root at $origin): the buttons of the dialog it is in, so a dropdown in
+     * a dialog goes the way that keeps them in view.
+     */
+    private function keepUncovered(Rect $origin): ?Rect
+    {
+        for ($c = $this; $c !== null; $c = $c->parent) {
+            if ($c instanceof Dialog && $c->overlaid !== null) {
+                $buttons = $c->buttonsArea();
+                return $buttons === null ? null : new Rect($buttons->x - $origin->x, $buttons->y - $origin->y, $buttons->width, $buttons->height);
+            }
+        }
+        return null;
     }
 
     /**

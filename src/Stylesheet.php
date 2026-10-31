@@ -19,9 +19,11 @@ namespace phasync\Tui;
  * part's states, for the pieces a widget draws (`Select::row:current`, `Editor::selection`,
  * `Dialog::button:focused`; each widget lists its parts and their states). `:focused` is true
  * for an element on the focus path (a `Box` whose content has the keys is focused), `:disabled`
- * for one made with `disabled: true`, `:hover` for a component while the mouse is over it (the
- * component asks for mouse motion reports then, and so takes its mouse events). There are no
- * combinators: what a parent sets for the text inherits instead (below).
+ * for one made with `disabled: true`, `:hover` for a component while the mouse is over it, and
+ * on a part (`Tabs::tab:hover`) for the piece under the mouse, as the widget tells it. A
+ * `:hover` rule for a component or one of its parts makes the component follow the mouse: it
+ * asks for mouse motion reports and takes its mouse events, as `Component::wantsPointer()`
+ * does. There are no combinators: what a parent sets for the text inherits instead (below).
  *
  * **Properties.** `color`, `background` (a name such as `red` or `bright-blue`, `default`,
  * `'#rrggbb'`, a palette index 0-255, or a variable `'$accent'`); `bold`, `dim`, `italic`,
@@ -110,7 +112,6 @@ final class Stylesheet
             '*:invalid' => ['color' => '$error'],
             '*::scrollbar' => ['color' => '$muted'],
             '*::scrollbar:thumb' => ['color' => '$accent'],
-            'Tabs:hover' => [],
             'Tabs::tab' => ['color' => '$muted'],
             'Tabs::tab:current' => ['color' => '$accent', 'bold' => true, 'underline' => true],
             'Tabs::tab:current:focused' => ['inverse' => true, 'underline' => false],
@@ -182,10 +183,15 @@ final class Stylesheet
      * its $part in $partStates. Widgets use `Component::style()`, which fills in the element's
      * states; this is for code that draws elements of its own.
      *
-     * **Parts that apply together** (a `strong` inside an `h2`, a `link` inside a `quote`): give
-     * $part as a list, outermost first (`['quote', 'link']`). Each part inherits from the one
-     * around it as an element inherits from its parent, so the attributes add up and the
-     * innermost colour that is set wins; $partStates are those of the innermost part.
+     * **Parts that apply together** (a `strong` inside an `h2`, a `link` inside a `quote`, the
+     * marker of a tree's row inside the row): give $part as a list, outermost first
+     * (`['quote', 'link']`, `['node', 'marker']`). Each part inherits from the one around it as
+     * an element inherits from its parent, and the first from the element itself, so the
+     * attributes add up and the innermost colour that is set wins; $partStates apply to every
+     * part of the list (the marker of the current row is in the state `current`, as the row
+     * is). So a marker without a colour of its own keeps the highlighted row one bar, and one
+     * with a colour shows it on the row's background. This is the one merge the library uses;
+     * a widget that draws several parts on a row asks for each this way.
      *
      * @param string|list<string>|null $part
      * @param list<string> $states     the element's states: `focused`, `disabled`, `hover`
@@ -198,9 +204,8 @@ final class Stylesheet
         }
         if (\is_array($part)) {
             $style = $this->compute($element, $states, $parent);
-            $last = array_key_last($part);
-            foreach ($part as $i => $name) {
-                [$set, $hover] = $this->matching($element, $states, $name, $i === $last ? $partStates : []);
+            foreach ($part as $name) {
+                [$set, $hover] = $this->matching($element, $states, $name, $partStates);
                 $style = $this->resolve($set, $style, $hover || $style->hoverAware);
             }
             return $style;
@@ -234,7 +239,7 @@ final class Stylesheet
         foreach ($this->rules as $i => [$props, $selectors, , $order]) {
             foreach ($selectors as $sel) {
                 $m = self::matches($sel, $types, $id, $classes, $states, $part, $partStates);
-                $hoverAware = $hoverAware || $m === 'hover' || ($m === true && \in_array('hover', $sel[3], true));
+                $hoverAware = $hoverAware || $m === 'hover' || ($m === true && \in_array('hover', [...$sel[3], ...$sel[5]], true));
                 if ($m === true) {
                     $matched[] = [$sel[6], $order, $props];
                     break;
@@ -289,7 +294,8 @@ final class Stylesheet
     }
 
     /**
-     * True when the selector matches; 'hover' when only the hover state is missing.
+     * True when the selector matches; 'hover' when only the hover state is missing (of the
+     * element or of the part).
      *
      * @param array{list<string>, ?string, list<string>, list<string>, ?string, list<string>, array{int,int,int}} $sel
      */
@@ -304,7 +310,8 @@ final class Stylesheet
         if ($missing === []) {
             return true;
         }
-        return $missing === ['hover'] && \in_array('hover', $sstates, true) ? 'hover' : false;
+        // (a rule for the element or one of its parts under the mouse: the widget follows the mouse)
+        return $missing === ['hover'] ? 'hover' : false;
     }
 
     /**

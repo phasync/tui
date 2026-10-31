@@ -35,9 +35,11 @@ final class Tree
     private array $seen = [];
     /** The last build had a `Help` element (it follows the focus). */
     public bool $showsHelp = false;
+    /** A measure that places nothing: component elements are only looked up (see measure()). */
+    private bool $dry = false;
 
     /**
-     * @param \Closure(string $key, Component $fresh): Component $place  the child component for a component element
+     * @param \Closure(string $key, Component $fresh, bool $create): ?Component $place  the child component for a component element (without $create: the one there, or null)
      * @param \Closure(?Component $for, string $show): list<array{string, string}> $help the bindings for a Help element
      */
     public function __construct(
@@ -70,13 +72,22 @@ final class Tree
 
     /**
      * The outer size $root needs within $cols x $rows (null: it takes any), as the next build
-     * lays it out: the surfaces and child components it makes are those the build uses.
+     * lays it out: the surfaces and child components it makes are those the build uses. With
+     * $place false nothing is made or changed: a component element is measured by the child it
+     * matches, and one that matches none (or was disposed since) takes any room (a measure of
+     * a tree rendered earlier, whose components may have gone).
      *
      * @return array{int,int}|null
      */
-    public function measure(Element $root, int $cols, int $rows, Stylesheet $sheet, ComputedStyle $base): ?array
+    public function measure(Element $root, int $cols, int $rows, Stylesheet $sheet, ComputedStyle $base, bool $place = true): ?array
     {
-        return $this->item($root, 'r', $sheet, $base)->natural($cols, $rows);
+        $dry = $this->dry;
+        $this->dry = !$place;
+        try {
+            return $this->item($root, 'r', $sheet, $base)->natural($cols, $rows);
+        } finally {
+            $this->dry = $dry;
+        }
     }
 
     private function container(Column|Row|Layers $node, string $path, Stylesheet $sheet, ComputedStyle $style): ElementLayout
@@ -103,8 +114,13 @@ final class Tree
     {
         if ($node instanceof Component) {
             $key = $node->attribute('key');
-            $component = $node->isMounted() ? $node : ($this->place)($key !== null ? "\0k:" . $key : "\0p:" . $path, $node);
-            $component->inheritStyle($parent);
+            $component = $node->isMounted() ? $node : ($this->place)($key !== null ? "\0k:" . $key : "\0p:" . $path, $node, !$this->dry);
+            if ($component === null || !$component->isMounted()) {
+                return new LayoutItem(new Surface(1, 1, 0));     // (a dry measure: gone, it takes any room)
+            }
+            if (!$this->dry) {
+                $component->inheritStyle($parent);
+            }
             $style = $component->style();
             $item = $this->frame(new LayoutItem($component->surface), $component, $style, 'auto', 'auto');
             $item->focusable = true;

@@ -9,6 +9,7 @@ use phasync\Tui\Element\Box;
 use phasync\Tui\Element\Column;
 use phasync\Tui\Element\Row;
 use phasync\Tui\Element\Text;
+use phasync\Tui\Rect;
 
 /**
  * A modal dialog with a message (or any element tree: a form) and buttons, whose answer is an
@@ -80,6 +81,10 @@ class Dialog extends Component
      * Decide whether $answer, the answer of a pressed button, closes the dialog: return false
      * to keep it open (a form whose fields are not valid yet; show why in the dialog). Not asked
      * for the cancel answer (Escape) nor by `close()`. The default accepts every answer.
+     *
+     * With a `Form` in the content, it is asked after the form was submitted and found valid:
+     * read the values with `$form->values()` here (or take them in the form's `onSubmit`, which
+     * ran just before); calling `$form->submit()` again in it does nothing and returns true.
      */
     protected function accept(mixed $answer): bool
     {
@@ -137,7 +142,7 @@ class Dialog extends Component
     /** Tab: to the next field or button (the content's first, then the buttons, around). */
     public function nextField(): bool
     {
-        $moved = $this->surface->focusNext();
+        $moved = $this->focusNext();
         $this->markDirty();     // (the content's ScrollView follows the focus)
         return $moved;
     }
@@ -145,7 +150,7 @@ class Dialog extends Component
     /** Shift-Tab: to the field or button before. */
     public function previousField(): bool
     {
-        $moved = $this->surface->focusNext(true);
+        $moved = $this->focusPrevious();
         $this->markDirty();
         return $moved;
     }
@@ -208,7 +213,19 @@ class Dialog extends Component
                 $this->submitting = false;
             }
         }
-        if ($this->accept($answer)) {
+        // the forms were submitted and are valid: a submit() in accept() does nothing (see Form::submit())
+        $forms = $this->forms();
+        foreach ($forms as $form) {
+            $form->hold(true);
+        }
+        try {
+            $accepted = $this->accept($answer);
+        } finally {
+            foreach ($forms as $form) {
+                $form->hold(false);
+            }
+        }
+        if ($accepted) {
             $this->close($answer);
         }
     }
@@ -294,6 +311,26 @@ class Dialog extends Component
             }
             yield from $this->fields($child);
         }
+    }
+
+    /**
+     * @internal The row of the buttons on the screen (`Surface::area()` coordinates), null
+     * without buttons or before they show: what an overlay opened inside the dialog (a
+     * dropdown's list) leaves uncovered when it can.
+     */
+    public function buttonsArea(): ?Rect
+    {
+        $area = null;
+        for ($i = 0; $i < \count($this->buttons); $i++) {
+            $b = $this->child("button$i")?->surface->area();
+            if ($b === null || $b->isEmpty()) {
+                continue;
+            }
+            $area = $area === null ? $b : new Rect(min($area->x, $b->x), min($area->y, $b->y),
+                max($area->x + $area->width, $b->x + $b->width) - min($area->x, $b->x),
+                max($area->y + $area->height, $b->y + $b->height) - min($area->y, $b->y));
+        }
+        return $area;
     }
 
     /** As large as the title, the content (a message wrapped at 60 columns) and the buttons need; or the size given with `with()`. */

@@ -60,6 +60,8 @@ final class Select extends Table implements Field
     private string $filter = '';
     private bool $filtering = false;
     private ?Overlay $list = null;
+    /** The natural width of the open list (its widest row). */
+    private int $listWidth = 0;
     /** The list of a dropdown: one click picks. */
     private bool $pickOnClick = false;
 
@@ -317,8 +319,8 @@ final class Select extends Table implements Field
         );
         $list->pickOnClick = true;
         $list->setSelection($this->selection());
-        [$natural] = $list->measure(\PHP_INT_MAX >> 8, 1);
-        $list->with(width: max($this->surface->cols(), $natural));
+        [$this->listWidth] = $list->measure(\PHP_INT_MAX >> 8, 1);
+        $list->with(width: max($this->surface->cols(), $this->listWidth));
         $this->list = $this->overlay($list, place: 'below');
         if ($this->current() !== null) {
             $list->setCurrent($this->current());
@@ -375,6 +377,8 @@ final class Select extends Table implements Field
             return parent::render();
         }
         $cols = $this->surface->cols();
+        // the open list is as wide as the field, also when the field changed its width (a resize)
+        $this->list()?->with(width: max($cols, $this->listWidth));
         $current = $this->current();
         $label = $current === null ? '' : implode(' ', $this->rows[$current]);
         $style = Ansi::style($this->style()->text);

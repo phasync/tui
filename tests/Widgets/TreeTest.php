@@ -60,14 +60,19 @@ it('moves with Up, Down, Home, End, PageUp and PageDown and shows the current no
         $t->press('end');
         expect($tree->current())->toBe('README.md');
         $t->settle();
-        expect($tree->topIndex())->toBe(2)->and(lines($t)[2])->toBe('  * README.md');
+        expect($tree->scrollTop())->toBe(2)->and(lines($t)[2])->toBe('  * README.md');
         $t->press('pageup');
         expect($tree->current())->toBe('src/Surface.php');
         $t->press('pagedown', 'pagedown');
         expect($tree->current())->toBe('README.md');
         $t->press('home');
         expect($tree->current())->toBe('src')->and($seen->getArrayCopy())->toContain('src/Component', 'README.md');
-        $t->press('ctrl+n', 'ctrl+p');
+        $t->press('ctrl+n');                // not a default: added with bind()
+        expect($tree->current())->toBe('src');
+        $tree->bind(['ctrl+n' => 'next', 'ctrl+p' => 'previous']);
+        $t->press('ctrl+n');
+        expect($tree->current())->toBe('src/Component');
+        $t->press('ctrl+p');
         expect($tree->current())->toBe('src');
     });
 });
@@ -147,11 +152,11 @@ it('clicks: a row becomes current, the marker opens and closes, the wheel scroll
         $t->settle();
         $t->mouse(new Mouse(Mouse::WHEEL_DOWN, 2, 1));
         $t->settle();
-        expect($tree->topIndex())->toBe(3)->and($tree->current())->toBe('src');
+        expect($tree->scrollTop())->toBe(3)->and($tree->current())->toBe('src');
         $t->mouse(new Mouse(Mouse::WHEEL_UP, 2, 1));
         $t->mouse(new Mouse(Mouse::WHEEL_UP, 2, 1));
         $t->settle();
-        expect($tree->topIndex())->toBe(0);
+        expect($tree->scrollTop())->toBe(0);
     });
 });
 

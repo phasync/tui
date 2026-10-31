@@ -7,15 +7,22 @@ use phasync\Tui\Component;
 use phasync\Tui\Text;
 
 /**
- * How far something has come: a bar filled to `$value` (0 to 1) with a label after it, or, with
- * the value null, an indeterminate bar (a block moving to and fro, animated by itself).
+ * How far something has come: a bar filled to `$value` (0 to 1) with a label and the percentage
+ * after it, or, with the value null, an indeterminate bar (a block moving to and fro, animated by
+ * itself) with its label.
  *
- *     new ProgressBar($done / $total, label: "$done/$total files")
- *     new ProgressBar(null, label: 'connecting')       // indeterminate
+ *     new ProgressBar($done / $total, label: "$done/$total files")    // ████░░░░ 3/10 files 30%
+ *     new ProgressBar($v, label: 'upload {percent} of 2 GB')          // ████░░░░ upload 30% of 2 GB
+ *     new ProgressBar(null, label: 'connecting')                      // indeterminate
+ *
+ * The label may hold `{percent}` (the value as a percentage, `30%`) and `{value}` (the value
+ * with two decimals, `0.30`); a label with one of them is shown as it is, any other label is
+ * followed by the percentage, and without a label the percentage is shown alone. So a runner
+ * that shows a name and how far it is needs no `Text` around the bar. The label takes at most
+ * half the width (cut with "…"), and nothing is drawn past the bar's own width.
  *
  * `$value` and `$label` are props: place a `new ProgressBar(...)` in the tree on every render,
- * or set them with `setValue()`. Without a label the percentage is shown. One row; it takes the
- * width it is given.
+ * or set them with `setValue()`. One row; it takes the width it is given.
  *
  * **Style**: `ProgressBar` (the label and the empty part), the part `ProgressBar::bar` (the
  * filled part; the default theme: the accent colour).
@@ -26,7 +33,7 @@ class ProgressBar extends Component
 
     /**
      * @param float|null $value from 0 to 1 (clamped), null for indeterminate
-     * @param string     $label after the bar; '' shows the percentage
+     * @param string     $label after the bar, followed by the percentage unless it holds `{percent}` or `{value}`
      * @param string|list<string>|null $class
      * @param array<string, mixed>|null $style
      */
@@ -69,8 +76,9 @@ class ProgressBar extends Component
     protected function render(): null
     {
         $cols = $this->surface->cols();
-        $label = $this->label !== '' ? $this->label : ($this->value === null ? '' : (int) round(max(0, min(1, $this->value)) * 100) . '%');
-        $label = Text::truncate($label, max(0, intdiv($cols, 2)));
+        $label = $this->labelText();
+        $room = intdiv($cols, 2) - 1;           // (and the space before it)
+        $label = $room < 1 ? '' : Text::truncate($label, $room);
         $width = max(0, $cols - ($label === '' ? 0 : Text::width($label) + 1));
         if ($this->value === null) {
             $block = max(1, intdiv($width, 5));
@@ -85,8 +93,24 @@ class ProgressBar extends Component
         $n = min($n, $width - $from);
         $base = Ansi::style($this->style()->text);
         $bar = Ansi::style($this->style('bar')->text);
-        $out = "\e[?25l\e[2J\e[H" . $base . str_repeat('░', $from) . $bar . str_repeat('█', $n) . $base . str_repeat('░', max(0, $width - $from - $n));
-        $this->surface->write($out . ($label === '' ? '' : ' ' . $label));
+        // (no autowrap: nothing goes past the last column, whatever the label holds)
+        $out = "\e[?25l\e[?7l\e[2J\e[H" . $base . str_repeat('░', $from) . $bar . str_repeat('█', $n) . $base . str_repeat('░', max(0, $width - $from - $n));
+        $this->surface->write($out . ($label === '' ? '' : ' ' . $label) . "\e[?7h");
         return null;
+    }
+
+    /** The label with its placeholders filled in, or followed by the percentage (see the class description). */
+    private function labelText(): string
+    {
+        $label = str_replace(["\r", "\n", "\t", "\e"], ' ', $this->label);
+        if ($this->value === null) {
+            return str_replace(['{percent}', '{value}'], '', $label);
+        }
+        $value = max(0.0, min(1.0, $this->value));
+        $percent = (int) round($value * 100) . '%';
+        if (str_contains($label, '{percent}') || str_contains($label, '{value}')) {
+            return str_replace(['{percent}', '{value}'], [$percent, number_format($value, 2)], $label);
+        }
+        return $label === '' ? $percent : "$label $percent";
     }
 }

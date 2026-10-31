@@ -6,7 +6,6 @@ use phasync\Tui\Ansi;
 use phasync\Tui\Component;
 use phasync\Tui\Key;
 use phasync\Tui\Mouse;
-use phasync\Tui\Style;
 use phasync\Tui\Text;
 
 /**
@@ -31,13 +30,16 @@ use phasync\Tui\Text;
  * fetched when it is opened first.
  *
  * **Lazy children**: `load(array $node)` is called with the node (`key`, `label`, `icon`, `value`,
- * `depth`) and returns the list of its items, or an awaitable of it (`fiber\await()` is used),
+ * `depth`) and returns the list of its items (an array, or any `Traversable`: a generator), or
+ * an awaitable of it: any other object is taken for one and passed to `fiber\await()` in a
+ * coroutine of the tree (a `fiber\go()` handle, a `fiber\Deferred`, a promise with `then()`),
  * which keeps the tree usable meanwhile and shows a spinning sign in place of the marker. The
  * children are kept: closing and opening again does not load again. When loading fails the node
  * closes again (state `failed`), and opening it tries once more. `reload($key)` forgets the
  * children of a node.
  *
- * **Keys**: Up/Down (Ctrl-P/Ctrl-N), Page Up/Page Down, Home/End move the current node. Right
+ * **Keys**: Up/Down, Page Up/Page Down, Home/End move the current node (add more with
+ * `bind()`: `$tree->bind(['ctrl+p' => 'previous', 'ctrl+n' => 'next', 'k' => 'previous'])`). Right
  * opens a closed node, on an open one goes to its first child; Left closes an open node, else
  * goes to the parent. Enter opens or closes a branch and activates the node; Space does the
  * same for a branch, but with `multiple` it marks or unmarks the node instead. Typing letters
@@ -54,14 +56,19 @@ use phasync\Tui\Text;
  *
  * **Size**: it takes the room it is given. Only the rows in view are laid out and drawn, so a
  * hundred thousand nodes cost what a screenful does (opening or closing a node walks the open
- * nodes once).
+ * nodes once). The view scrolls as `Scrollable` says (`scrollTop()`, `scrollTo()`, the `scroll`
+ * event); the wheel moves the view without moving the current node, and the next move brings
+ * the current node back into view.
  *
  * **Style** parts: `Tree::node` (states `current`, `selected` for a marked node, `loading`,
- * `failed`), `Tree::marker` and `Tree::guide` (the same states). The default theme shows the
- * current node inverted.
+ * `failed`), `Tree::marker` and `Tree::guide` (the same states). The marker and the guides are
+ * drawn on the node's row (`style(['node', 'marker'], ...)`): without a colour of their own
+ * they keep a highlighted row one bar. The default theme shows the current node inverted.
  */
 class Tree extends Component
 {
+    use Scrollable;
+
     /** @var array<int|string, array{key: int|string, label: string, icon: string, value: mixed, parent: int|string|null, depth: int, children: list<int|string>|null, lazy: bool, loaded: bool, loading: bool, failed: bool}> */
     private array $nodes = [];
     /** @var list<int|string> */
@@ -79,7 +86,6 @@ class Tree extends Component
     /** @var list<int|string> open lazy nodes that still need their children */
     private array $needLoad = [];
     private int|string|null $currentKey = null;
-    private int $top = 0;
     /** The wheel moved the view away from the current node; the next move brings it back. */
     private bool $free = false;
     private ?array $builtFrom = null;
@@ -97,6 +103,8 @@ class Tree extends Component
      * @param (\Closure(array): mixed)|null $load children of a lazy node: a list of items or an awaitable of it
      * @param bool $multiple Space marks nodes
      * @param bool $guides   draw ├─ └─ │ lines (off: two spaces of indent per level)
+     * @param string|list<string>|null $class
+     * @param array<string, mixed>|null $style
      */
     public function __construct(
         public array $items = [],
@@ -108,8 +116,18 @@ class Tree extends Component
         private readonly ?\Closure $onCollapse = null,
         private readonly ?\Closure $onActivate = null,
         private readonly ?\Closure $onChange = null,
+        ?string $key = null,
+        ?string $id = null,
+        string|array|null $class = null,
+        ?array $style = null,
     ) {
+        $this->with($key, $id, $class, $style);
         $this->rebuild();
+    }
+
+    protected function contentRows(): int
+    {
+        return \count($this->rows);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -439,12 +457,6 @@ class Tree extends Component
         return $this->rows;
     }
 
-    /** The position (from 0) among the shown nodes of the row at the top of the view. */
-    public function topIndex(): int
-    {
-        return $this->top;
-    }
-
     /**
      * The marked nodes' keys (with `multiple`), in the order of the tree; without `multiple`
      * the current node's.
@@ -549,7 +561,7 @@ class Tree extends Component
     protected function bindings(): array
     {
         return [
-            'up' => 'previous', 'ctrl+p' => 'previous', 'down' => 'next', 'ctrl+n' => 'next',
+            'up' => 'previous', 'down' => 'next',
             'pageup' => 'pageUp', 'pagedown' => 'pageDown', 'home' => 'first', 'end' => 'last',
             'right' => 'open', 'left' => 'close', 'enter' => 'activate', 'space' => 'toggleOrMark',
         ];
@@ -740,17 +752,14 @@ class Tree extends Component
             return false;
         }
         if ($mouse->isWheel()) {
-            if ($mouse->action === Mouse::WHEEL_UP || $mouse->action === Mouse::WHEEL_DOWN) {
-                $this->free = true;
-                $this->top = max(0, min(max(0, \count($this->rows) - $this->surface->rows()), $this->top + ($mouse->action === Mouse::WHEEL_UP ? -3 : 3)));
-            }
+            $this->free = $this->scrollWheel($mouse) || $this->free;
             return true;
         }
         if ($mouse->action !== Mouse::PRESS || $mouse->button !== Mouse::LEFT) {
             return $mouse->action === Mouse::RELEASE || $mouse->action === Mouse::DRAG;
         }
         $this->focus();
-        $at = $this->top + $mouse->y;
+        $at = $this->scrollTop() + $mouse->y;
         if ($mouse->y < 0 || $at >= \count($this->rows)) {
             return true;
         }
@@ -773,19 +782,6 @@ class Tree extends Component
         return $this->nodes[$key]['depth'] * ($this->guides ? 3 : 2);
     }
 
-    /** $part's colours and attributes over $row's, so that a highlighted row stays one bar. */
-    private static function over(Style $row, Style $part, bool $plainRow): Style
-    {
-        if ($plainRow) {
-            return $part;
-        }
-        return Style::of(
-            $part->fg !== \phasync\Tui\Color::DEFAULT ? $part->fg : $row->fg,
-            $part->bg !== \phasync\Tui\Color::DEFAULT ? $part->bg : $row->bg,
-            $row->attrs | $part->attrs,
-        );
-    }
-
     protected function render(): null
     {
         $this->loadWaiting();
@@ -794,16 +790,17 @@ class Tree extends Component
         $count = \count($this->rows);
         $cur = $this->current();
         if ($cur !== null && !$this->free) {
+            // the current node in view
             $at = $this->pos[$cur];
-            $this->top = min(max($this->top, $at - $body + 1), $at);
+            $this->scrollTo(min(max($this->scrollTop(), $at - $body + 1), $at));
         }
-        $this->top = max(0, min($this->top, max(0, $count - $body)));
+        $top = $this->scrollTop();
         $base = $this->style();
         $out = "\e[0m\e[?7l\e[?25l" . Ansi::style($base->text) . "\e[2J";
         $this->drawn = [];
         $signs = Spinner::DOTS;
-        for ($r = 0; $r < $body && $this->top + $r < $count; $r++) {
-            $key = $this->rows[$this->top + $r];
+        for ($r = 0; $r < $body && $top + $r < $count; $r++) {
+            $key = $this->rows[$top + $r];
             $this->drawn[$r] = $key;
             $node = $this->nodes[$key];
             $states = [];
@@ -819,10 +816,10 @@ class Tree extends Component
             if ($node['failed']) {
                 $states[] = 'failed';
             }
+            // the guide and the marker on the row: in its state, its colours under theirs
             $row = $this->style('node', ...$states)->text;
-            $plain = !array_intersect($states, ['current', 'selected']);
-            $guide = Ansi::style(self::over($row, $this->style('guide', ...$states)->text, $plain));
-            $marker = Ansi::style(self::over($row, $this->style('marker', ...$states)->text, $plain));
+            $guide = Ansi::style($this->style(['node', 'guide'], ...$states)->text);
+            $marker = Ansi::style($this->style(['node', 'marker'], ...$states)->text);
             $rowSgr = Ansi::style($row);
             $y = $r;
             $line = Ansi::moveTo(0, $y) . $rowSgr . str_repeat(' ', $cols) . Ansi::moveTo(0, $y);
@@ -853,6 +850,7 @@ class Tree extends Component
             $out .= $line;
         }
         $this->surface->write($out . "\e[0m\e[?7h");
+        $this->scrolled();
         return null;
     }
 
@@ -861,10 +859,5 @@ class Tree extends Component
         $parent = $this->nodes[$key]['parent'];
         $siblings = $parent === null ? $this->roots : $this->nodes[$parent]['children'];
         return $siblings[array_key_last($siblings)] === $key;
-    }
-
-    public function measure(int $cols, int $rows): ?array
-    {
-        return null;
     }
 }
