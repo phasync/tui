@@ -472,6 +472,102 @@ good-looking in all three themes, correct under `FakeTerminal` at 60×20 and 160
 at 10 Hz, and the same program runs in inline mode with `Tui::inline()` showing the three
 boxes only. The README shows it with a screenshot.
 
+## 10. Graphics: canvas, charts, gradients, images (phase 4, from 0.0.4)
+
+php-tui (MIT, a ratatui port) is the reference for this part: its Canvas with Braille/half-block/
+block/dot markers and shapes (Line, Rectangle, Circle, Points, Sprite, a world Map), its Chart
+(axes, datasets, line/scatter/bar graph types), BarChart, Sparkline, Gauge, LinearGradient, and
+image rendering through ImageMagick and BDF bitmap fonts. This library offers the same things on its
+own model: every one of them is a component that paints through `write()` into its Surface, so a
+graph in a pane composites, scrolls, resizes and freezes (inline mode) like any other content.
+
+### 10.1 Canvas
+
+`Canvas(marker:)` is a dot grid over its cells — `braille` (2x4 dots per cell, the default),
+`half` (1x2 blocks), `quarter` (2x2), `block`, `dot` — with **the browser's 2D context API**
+(decided by Frode 2026-11-01), so what PHP programmers know from `CanvasRenderingContext2D` works:
+paths (`beginPath`, `moveTo`, `lineTo`, `arc`, `arcTo`, `bezierCurveTo`, `quadraticCurveTo`,
+`rect`, `closePath`, `stroke`, `fill`, `fillRect`, `strokeRect`, `clearRect`), state
+(`fillStyle`/`strokeStyle` taking a colour or a gradient from `createLinearGradient()`/
+`createRadialGradient()` with `addColorStop()`, `lineWidth`, `globalAlpha` blending toward the
+background, `save`/`restore`, `translate`/`scale`/`rotate`/`transform`, `clip`), text and images
+(`fillText` places real glyphs at the nearest cell, one cell high, or a BDF font from 10.4;
+`drawImage` samples an image into the dot grid or cells), pixels (`getImageData`/`putImageData`
+on the dot grid). Stated differences from a browser: a pixel is a marker dot; colour is per cell
+(dots sharing a cell share a foreground; a fill wins over a stroke where they meet; Braille dots
+are glyphs, so their background cannot be set independently, which is what the block markers are
+for); no anti-aliasing; `lineWidth` quantised to dots. Conveniences on top: `line`, `circle`,
+`points`, `polyline`, `sprite`, and `map()` (the world coastline data php-tui ships, as data).
+The canvas paints by assembling the dot grid into graphemes and SGR runs once per frame; one
+whose drawing did not change paints nothing. A `draw: fn(Canvas $c)` closure draws from a
+`State`, so the dashboard's graphs are live, and charts (10.2) draw through the same context so a
+program can draw on top of a chart.
+
+Pointer: a canvas with `onMouse:` or `:hover` asks for any-motion tracking (1003) and, when the device
+probed it as supported, SGR-Pixels (`CSI ?1016 h`: xterm >= 359, foot, WezTerm, mlterm, kitty, Ghostty;
+not VTE, Konsole, Windows Terminal or xterm.js). Its `Mouse` events carry the cell as always and the
+position in the canvas's own coordinate space as floats (`x`, `y`): exact to the pixel where the
+terminal reports pixels (mapped through the cell size from `CSI 16 t`), the cell's centre elsewhere,
+with `precise: bool` saying which. The emulator understands 1016 so a hosted program gets pixel
+reports when the outer terminal gives them.
+
+### 10.2 Charts
+
+`Chart(datasets:, x:, y:)` with `Axis(title:, bounds:, labels:)` and `Dataset(points, type:
+line|scatter|bar, marker:, color:)` renders through a Canvas; `BarChart` (groups, labels, values
+on the bars, horizontal or vertical), `Sparkline(values, max:)` (one row of ▁▂▃▄▅▆▇█, or more rows),
+`Gauge(ratio, label:)` (a ProgressBar with a gradient fill and a centred label) complete the set.
+They take closures for their data like every other element, so a `Sparkline(fn() => $s->samples)`
+updates when the State does. Default colours come from the theme's accent and its palette;
+`class:` utilities apply.
+
+### 10.3 Gradients
+
+`Gradient::linear([$from, $to], angle:)` with any number of stops, and `Gradient::radial()`;
+accepted wherever a colour is: a `Text`'s `text-` colour (per grapheme along the string), a `bg-`
+(across the element's box), a bar, a canvas shape, a border. Resolved per cell at paint time, to
+truecolour, and degraded by the device like every colour. Utility class: `bg-gradient-to-r`,
+`from-sky-500`, `to-emerald-500` (Tailwind's spelling).
+
+### 10.4 Pixel canvases and the image protocols
+
+There is no separate image component (decided by Frode 2026-11-01): the Canvas is the only
+graphics primitive. Its marker decides what its raster is. The glyph markers (`braille`, `half`,
+`quarter`, `block`, `dot`) draw a dot grid with a small pure-PHP rasteriser and output text cells,
+on every terminal. The `pixels` marker makes the raster a real bitmap of the canvas's cells times
+the terminal's cell size in pixels (`CSI 16 t`, else 8x16 assumed), emitted as one image through
+the device's protocol, probed once like hyperlinks (`FakeTerminal` configurable), in this order:
+Kitty graphics (kitty, WezTerm, Ghostty, Konsole; its own query), iTerm2 inline images (`OSC 1337
+File=`: iTerm2, WezTerm, Konsole and xterm.js with `@xterm/addon-image`, so VS Code's terminal and
+a browser terminal; PNG, truecolour), Sixel (xterm, foot, mlterm, iTerm2, Windows Terminal,
+xterm.js; 256 colours per image, dithered; DA1 `;4`). With no protocol the same bitmap is
+downsampled to `quarter` blocks; the program does not change. With `ext-gd` the pixel raster *is* a
+`GdImage` and the context methods map onto GD's drawing, `imagepng` for Kitty/iTerm2 and
+`imagetruecolortopalette` with GD's dithering for Sixel; `drawImage()` takes a `GdImage`, an
+`Imagick`, a path or PNG bytes (a CDP screencast frame, a Phame frame), and `fillText()` with a
+TTF path or a BDF font draws real type (the Figlet of this library is a canvas). Without GD the
+pure-PHP rasteriser and a built-in PNG encoder do the same, slower.
+
+In the cells: an image is interned like a hyperlink, one id per `(image, column offset, row
+offset)`, so `copyArea`/`drawArea` copy it and the diff compares it without knowing what it is;
+clipping and overlapping windows need nothing special. The device, after the diff, groups changed
+image cells into rectangles of contiguous offsets: Kitty places fragments by cell (`c=`, `r=`,
+`x=`, `y=`), the image bytes uploaded once per id; iTerm2 and Sixel cannot place fragments, so a
+cropped copy is encoded per visible rectangle and cached by (id, rect). A glyph written over an
+image cell drops the image id (the glyph wins, as in xterm and kitty). The emulator understands all
+three protocols so a hosted program's images show too, with the same cell ids. A canvas may redraw
+every frame (a `Browser` pane whose `draw:` closure `drawImage`s the latest screencast frame, with
+the pane's keys and mouse forwarded through CDP), placements following per frame.
+
+### 10.5 Acceptance
+
+`examples/graphs.php` becomes: a line Chart with two datasets and axes, a BarChart, a Sparkline
+and a Gauge, all live from coroutines, in a dashboard that also shows an `Image` (the project
+logo) and a `BigText` title, in the three themes, at 60x20 and 160x50, flicker-free at 10 Hz;
+inline mode shows the Sparkline and Gauge only. A `Canvas` test draws the world Map at two sizes
+and compares with recorded screens; a gradient test checks the per-cell colours; the image tests
+run with and without GD/Imagick and on a Sixel, a Kitty and a plain device.
+
 ## The benchmark: an advanced program in a window
 
 The library is judged first by hosting a demanding full-screen program in a window, with
