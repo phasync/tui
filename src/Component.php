@@ -423,6 +423,7 @@ abstract class Component extends Element
             // a terminal device's frame (and freeze(), and Surface::flush()) draws the renders asked for first
             self::$flushing = true;
             Surface::onFlush(static function (): void {
+                State::flush();     // (arrays changed in place since they were read)
                 if (self::$dirty !== [] && !self::$framing) {
                     self::renderFrame();
                 }

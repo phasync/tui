@@ -241,6 +241,18 @@ Writes to the terminal never block other coroutines and never interleave.
 
 ## FakeTerminal
 
+**In a test, call `settle()` after input and before reading the screen**: `text()` right after
+`press()` shows what the key's handler changed at once, but not what a coroutine it started
+(a `go()`, an awaited dialog, a `Tui::go()`) changes afterwards; `settle()` waits for those
+frames too.
+
+**A test that fails ends the program.** An exception in the test code after `Tui::headless()`
+(a failed `expect()`, in the closure given to `fiber\run()`) detaches the terminal, ends the
+program (its coroutines, its `Terminal`s, an open dialog) and comes out of `fiber\run()` at
+once. Start coroutines of test code with `Tui::go()`, not `fiber\go()`: an exception in a
+plain `fiber\go()` coroutine is kept by `fiber\run()` until everything else has ended, which a
+program still on its terminal never does (fiber-interop/api has no way to learn of it sooner).
+
 A device whose terminal is itself a `Surface` (`$terminal->surface`): the device's output is
 parsed by the same emulator, which also answers the device's queries. So in a headless program
 or a test, **what the terminal shows must equal the root's cells**, and the library's own output

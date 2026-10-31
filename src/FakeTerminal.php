@@ -41,8 +41,9 @@ use function fiber\sleep;
  * before (a shell prompt, for a test); `frozen()` is the text above the region, scrollback
  * included, and `region()` the region's.
  *
- * **Reading the screen after input**: renders come in the next frame, so call `settle()` after
- * the input and before `text()`. Never `usleep()` in a coroutine: it blocks the loop, so nothing
+ * **Reading the screen after input**: call `settle()` after the input and before `text()`.
+ * `text()` draws what is pending (what a handler changed is there right after `press()`), but
+ * a coroutine a handler started changes the screen in later frames, which `settle()` waits for. Never `usleep()` in a coroutine: it blocks the loop, so nothing
  * renders while it sleeps. Wrap a test in `run()`, which detaches the terminal afterwards also
  * when the test throws, so a failing test fails instead of hanging `fiber\run()`.
  */

@@ -184,6 +184,15 @@ class State
         self::$lenders[spl_object_id($this)] = $this;
     }
 
+    /** @internal The arrays written in place since they were read render their components now (before a frame is drawn). */
+    final public static function flush(): void
+    {
+        if (self::$lenders !== null && self::$lenders !== []) {
+            self::check();
+            self::$lenders = [];    // (the coroutine scheduled for them finds nothing)
+        }
+    }
+
     /** The arrays written in place since they were handed out render their components. */
     private static function check(): void
     {

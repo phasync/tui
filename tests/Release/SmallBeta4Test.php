@@ -225,3 +225,74 @@ it('renders when an element of a State array is written in place', function () {
         }
     });
 });
+
+it('shows what a key handler changed in text() right after press()', function () {
+    fiber\run(function () {
+        $s = new State(['n' => 0, 'a' => [0]]);
+        $t = Tui::headless(fn() => new Column([new Text("n={$s->n} a={$s->a[0]}"), new Button('inc', fn() => $s->n++), new Editor('')]), 40, 6,
+            keys: ['f2' => fn() => $s->n += 10, 'f3' => function () use ($s) { $s->a[0]++; }]);
+        try {
+            $t->settle();
+            $t->press('enter');
+            expect(screenRows($t)[0])->toBe('n=1 a=0');
+            $t->press('f2');
+            expect(screenRows($t)[0])->toBe('n=11 a=0');
+            $t->press('f3');
+            expect(screenRows($t)[0])->toBe('n=11 a=1');
+            $t->press('tab');
+            $t->type('hey');
+            expect($t->text())->toContain('hey');
+        } finally {
+            $t->detach();
+        }
+    });
+});
+
+dataset('failing test code', [
+    'right after Tui::headless()' => 'plain',
+    'with a dialog open' => 'dialog',
+    'after waitFor()' => 'waitfor',
+    'in an inline headless program' => 'inline',
+]);
+
+it('ends fiber\run() with the exception of test code that fails after Tui::headless(), at once', function (string $mode) {
+    $started = microtime(true);
+    $caught = null;
+    try {
+        fiber\run(function () use ($mode) {
+            $t = Tui::headless(fn() => new Column([
+                new Button('ask', fn() => fiber\await(\phasync\Tui\Component\Confirm::ask('Q', 'Sure?'))),
+                new \phasync\Tui\Component\Terminal(['sh', '-c', 'trap "" HUP; sleep 30']),
+                new \phasync\Tui\Component\Spinner(),
+            ]), 40, 8, inline: $mode === 'inline');
+            $t->settle();
+            match ($mode) {
+                'dialog' => $t->press('enter'),
+                'waitfor' => $t->waitFor('never shown', 0.1),
+                default => null,
+            };
+            $t->settle();
+            throw new RuntimeException("the test failed ($mode)");
+        });
+    } catch (RuntimeException $e) {
+        $caught = $e->getMessage();
+    }
+    expect($caught)->toBe("the test failed ($mode)")->and(microtime(true) - $started)->toBeLessThan(3.0);
+})->with('failing test code');
+
+it('ends the program when a coroutine of test code started with Tui::go() fails under Tui::headless()', function () {
+    $caught = null;
+    try {
+        fiber\run(function () {
+            $t = Tui::headless(fn() => new \phasync\Tui\Component\Spinner(), 20, 3);
+            Tui::go(function () use ($t) {
+                $t->settle();
+                throw new RuntimeException('a coroutine of the test failed');
+            });
+            expect($t->waitFor(fn() => $t->component() === null, 2))->toBeTrue();     // the program ended
+        });
+    } catch (RuntimeException $e) {
+        $caught = $e->getMessage();
+    }
+    expect($caught)->toBe('a coroutine of the test failed');
+});
