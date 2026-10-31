@@ -1401,9 +1401,13 @@ abstract class Component extends Element
         $id = ++$this->taskCount;
         $this->tasks[$id] = null;
         $started = false;
-        $handle = \fiber\go(function () use ($id, $task, &$started): void {
-            // known here already when the runtime starts the task before go() returns
-            $this->tasks[$id] ??= current();
+        \fiber\go(function () use ($id, $task, &$started): void {
+            // the task's own handle, for runs(): from fiber\current(), never from what go()
+            // returned (opaque); a runtime that tells it only after a first suspension gets one
+            if (current() === null) {
+                \fiber\sleep(0);
+            }
+            $this->tasks[$id] = current();
             try {
                 $this->guard($task);
             } finally {
@@ -1417,9 +1421,6 @@ abstract class Component extends Element
             }
         });
         $started = true;
-        if (\array_key_exists($id, $this->tasks)) {
-            $this->tasks[$id] ??= $handle;
-        }
     }
 
     /**

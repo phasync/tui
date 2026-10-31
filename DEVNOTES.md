@@ -69,8 +69,9 @@ view (Tab, Shift-Tab, focus(), after the user scrolled away, element stops).
   running root, else by the next program Tui starts (Tui::start() claims self::$unclaimed);
   ended by `$root->stopped()->then(...)` (a Deferred's then(): synchronous, no coroutine), or
   by Tui::starting() when a runner fails before its program starts. The job is found from
-  inside by `fiber\current()` as a WeakMap key (identity only, as `===`), registered from
-  inside the task too (phasync runs it before go() returns). Tui::sleep() waits on the job's
+  inside by `fiber\current()` as a WeakMap key (identity only), registered by the task itself
+  from its own `current()`, never from what go() returned (opaque); on a runtime whose
+  current() is null in a task's first stretch, the task sleeps(0) once first. Tui::sleep() waits on the job's
   Signal (the shared clock); outside a job it makes a job for the running root on the spot.
 - **running()/handedTo**: receive() notes the running instance on the fresh one; hasFocus() of
   an unstarted instance answers for it. In the render that makes it, it is not handed over yet

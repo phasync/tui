@@ -77,7 +77,7 @@ final class Tui
      */
     private static ?array $failure = null;
 
-    /** @var \WeakMap<object, Internal\Job>|null the coroutines of go(), by the handle fiber\go() gave */
+    /** @var \WeakMap<object, Internal\Job>|null the coroutines of go(), by their task's fiber\current() */
     private static ?\WeakMap $jobs = null;
     /** @var list<Internal\Job> coroutines of go() started while no program ran: the next program's */
     private static array $unclaimed = [];
@@ -121,10 +121,15 @@ final class Tui
             self::$unclaimed[] = $job;
         }
         self::$jobs ??= new \WeakMap();
-        $handle = \fiber\go(static function () use ($task, $job): void {
+        \fiber\go(static function () use ($task, $job): void {
+            // which job Tui::sleep() is asked from: known by the task's own fiber\current()
+            // (on a runtime that tells it only after the task's first suspension, after one)
+            if (\fiber\current() === null) {
+                \fiber\sleep(0);
+            }
             $me = \fiber\current();
             if ($me !== null) {
-                self::$jobs[$me] = $job;      // (known from the start: a runtime that runs it before go() returns)
+                self::$jobs[$me] = $job;
             }
             try {
                 $task();
@@ -137,7 +142,6 @@ final class Tui
                 throw $e;
             }
         });
-        self::$jobs[$handle] = $job;
     }
 
     /**
