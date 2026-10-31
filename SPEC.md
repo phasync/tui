@@ -353,6 +353,95 @@ one a terminal user expects:
 Also: `Ansi::clearHome()` and the small helpers users kept writing; a clear error when a program
 is started with a `fiber-interop/api` older than required.
 
+## 9. Simple to build, good-looking by default (phase 3, from 0.0.3)
+
+The emulator, the hosting and the widgets exist. The next measure is how little a programmer has
+to know and write to get a dynamic UI that looks good. symfony/tui is the reference for this
+part: its Tailwind-style utility classes, its one-object entry point and its markup in text are
+what PHP programmers will expect; this library offers the same vocabulary on top of its own
+model, and is judged by the sixty-line dashboard at the end of this section.
+
+### 9.1 One file, no class
+
+A program is an element tree and a runner. `Tui::run($root)` takes an element, a component or a
+closure returning either, attaches the `Tty`, runs until the root quits (Ctrl-Q by default when
+nothing binds it) and gives the terminal back; `Tui::inline($root)` does the same in inline
+mode (4.1); `Tui::headless($root, cols, rows)` returns the `FakeTerminal`. A closure is a
+component: it is rendered again whenever state it reads changes, so
+
+```php
+$s = new State(['done' => 0]);
+fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+Tui::inline(fn() => new Column([
+    new Text("Working… {$s->done}%"),
+    new ProgressBar($s->done / 100),
+]));
+```
+
+is a whole program. Element content may be a closure (`new Text(fn() => ...)`) so a single
+element can be dynamic without the tree around it being rebuilt. Classes stay for anything with
+behaviour of its own; a closure component is the same thing without a name.
+
+### 9.2 Utility classes
+
+`class:` takes utility classes next to the program's own, resolved by the stylesheet with the
+Tailwind vocabulary (as symfony/tui spells it, so what people know works here):
+
+- spacing: `p-{n}`, `px-`, `py-`, `pt-`/`pr-`/`pb-`/`pl-`, `gap-{n}`, `m-{n}` (margin, the
+  element's space inside its parent);
+- border: `border`, `border-round`, `border-double`, `border-heavy`, `border-ascii`,
+  `border-none`, `border-{color}`, `title-center`;
+- colour: `text-{color}` and `bg-{color}`, where a colour is a Tailwind family and shade
+  (`sky-400`, `slate-800`), a hex (`[#ff5500]`), a palette index, or one of the 16 names
+  (`red`, `bright-blue`); the device degrades truecolour to 256 or 16 colours when the terminal
+  has no more, by nearest colour, in one place;
+- text: `bold`, `dim`, `italic`, `underline`, `strike`, `inverse`, `text-left/center/right`,
+  `truncate`, `wrap`/`nowrap`;
+- size and layout: `w-{n}`, `h-{n}`, `w-1/2`, `w-full`, `grow`, `grow-{n}` (fr), `shrink-0`,
+  `items-start/center/end`, `justify-start/center/end/between`, `hidden`;
+- variants: `focus:`, `hover:`, `disabled:`, `selected:` prefixes for states, and `sm:`, `md:`,
+  `lg:` for the root's width (under 60, under 100, 100 and more columns), so
+  `class: "flex-col md:flex-row"` is a responsive layout.
+
+Order in the cascade: stylesheet rules, then utility classes (later ones win), then `style:`.
+Everything a utility class does is a stylesheet property too, so themes and utilities compose.
+
+### 9.3 Markup in text
+
+`Text` and every label (`Box` titles, `Button` labels, `Table` cells, `Help`, `Log` lines)
+accept the markup PHP programmers know from symfony/console: `<b>`, `<i>`, `<u>`, `<dim>`,
+`<s>`, `<fg=red>`, `<bg=blue>`, `<fg=#ff5500>`, `<span class="text-sky-400 bold">`, closed by
+`</>`, with `\<` escaping and `Text::raw()` for none. Markup is parsed once per string and
+renders through the same `write()` path as everything else.
+
+### 9.4 Good by default
+
+`Stylesheet::default()` looks like a modern tool with no styling at all: rounded borders,
+one accent colour, the focused window's border in the accent, dimmed titles elsewhere, a
+visible cursor only where text is edited, `Select` rows in inverse, dialogs with a shadow.
+Three themes ship (`dark`, `light`, `mono`), chosen by `Tui::run($root, theme: ...)` or
+automatically from the terminal's background (OSC 11, dark by default), and a theme is a
+stylesheet, so a program's own rules refine it. Every widget takes the common things as
+constructor arguments (`Box(title:, class:)`, `Column(gap:, padding:, align:)`,
+`Text(align:)`) so no stylesheet is needed for the first version of anything.
+
+### 9.5 What a programmer no longer meets
+
+No `child()` for elements placed with `new` (keys do it), no `requestRender()` (state does it),
+no `Split`/`Stack` for ordinary screens (Row/Column/Layers), no sizes in most places (9.2's
+auto rules), no `Surface` unless hosting a program or writing a widget. docs/ gets a
+"Cookbook" of ten screens, each under forty lines, and the README opens with the dashboard.
+
+### 9.6 The acceptance test: a sixty-line dashboard
+
+`examples/dashboard.php`, under sixty lines, no class: a header row with a `Spinner` and a title,
+three `Box`es side by side with a `ProgressBar` and a `Text` each, updated by three coroutines at
+different rates, a `Log` that receives events from them, a `Markdown` pane with release notes,
+and a `Help` line; styled with utility classes only, stacked vertically under 80 columns,
+good-looking in all three themes, correct under `FakeTerminal` at 60×20 and 160×50, flicker-free
+at 10 Hz, and the same program runs in inline mode with `Tui::inline()` showing the three
+boxes only. The README shows it with a screenshot.
+
 ## The benchmark: an advanced program in a window
 
 The library is judged first by hosting a demanding full-screen program in a window, with
