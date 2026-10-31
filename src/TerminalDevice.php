@@ -93,6 +93,8 @@ abstract class TerminalDevice
     private ?Signal $wake = null;
     private ?Signal $detached = null;
     private bool $damaged = false;
+    /** A render was asked for while a frame was being drawn (see drawsFrames()). */
+    private bool $frameAgain = false;
     private bool $drawing = false;
     private bool $redraw = true;
     private float $lastFrame = 0.0;
@@ -483,6 +485,10 @@ abstract class TerminalDevice
             $this->drawing = false;
             $this->damaged = false;
             $this->lastFrame = microtime(true);
+            if ($this->frameAgain) {
+                $this->frameAgain = false;
+                $this->damage();
+            }
         }
     }
 
@@ -801,6 +807,23 @@ abstract class TerminalDevice
             $this->redraw = true;      // a width change: the region is drawn anew
         }
         $this->damage();
+    }
+
+    /**
+     * @internal Whether the frame loop runs, and if so, ask it for a frame: its refresh renders
+     * the components marked for a render first (Component::markDirty() asks this).
+     */
+    final public function drawsFrames(): bool
+    {
+        if ($this->root === null || $this->wake === null) {
+            return false;
+        }
+        if ($this->drawing) {
+            $this->frameAgain = true;     // (asked during a frame: the next one)
+        } else {
+            $this->damage();
+        }
+        return true;
     }
 
     private function damage(): void

@@ -181,13 +181,13 @@ it('announces the end of a Terminal\'s program as an event and an awaitable, and
             $seen[] = $code;
         }))->start(new Surface(20, 3));
         expect(fiber\await($term->exited(), 5))->toBe(4);
-        sleep(0.01);
+        frame();
         expect($seen)->toBe([4])->and($term->surface->line(0))->toBe('run');
         $first = $term->exited();
         $term->restart();
         expect($term->exited())->not->toBe($first)
             ->and(fiber\await($term->exited(), 5))->toBe(4);
-        sleep(0.01);
+        frame();
         expect($seen)->toBe([4, 4]);
         // restarting a running program hangs it up without announcing it
         $long = (new Terminal('exec sleep 30', onExit: function () use (&$seen) { $seen[] = 'long'; }))->start(new Surface(20, 3));
@@ -243,7 +243,7 @@ it('focuses a component in a layout nested directly in another, across renders',
         expect($app->c['c']->hasFocus())->toBeTrue()->and($app->c['c']->sizes)->toBe([[10, 2]]);
         $app->c['b']->focus();
         $app->requestRender();      // a new layout object; the focus asked for in render() wins again
-        sleep(0.01);
+        frame();
         expect($app->c['c']->hasFocus())->toBeTrue();
         $t->surface->dispatch(new phasync\Tui\Key('q'));
         expect($app->c['c']->surface->input->peek())->toBe('q');
@@ -300,22 +300,22 @@ it('keeps the keyboard working after a modal over a nested layout opens and clos
         $app->inputs['c']->focus();
         $t->type('one');
         $t->press('ctrl+o');
-        sleep(0.01);
+        frame();
         expect($t->text())->toContain('Name');
         $t->type('dlg');
         $t->press('enter');
-        sleep(0.01);
+        frame();
         expect($t->text())->not->toContain('Name');
         $t->type('two');                        // back where it was before the dialog
         expect($app->inputs['c']->value())->toBe('onetwo')
             ->and($app->inputs['dialog']->value())->toBe('dlg');
         // and again, with several renders in between
         $t->press('ctrl+o');
-        sleep(0.01);
+        frame();
         $app->requestRender();
-        sleep(0.01);
+        frame();
         $t->press('enter');
-        sleep(0.01);
+        frame();
         $t->type('3');
         expect($app->inputs['c']->value())->toBe('onetwo3');
         $t->detach();
@@ -328,12 +328,12 @@ it('sends the keys typed right after a focus change to the new focus, before the
         $app->inputs['b']->focus();
         $t->press('ctrl+o', 'x', 'y');          // no render in between: the dialog is not shown yet
         expect($app->inputs['dialog']->value())->toBe('xy')->and($app->inputs['b']->value())->toBe('');
-        sleep(0.01);
+        frame();
         $t->type('z');
         $app->refocusOnClose = true;
         $t->press('enter', 'q');                // the focus moves to a at once, the dialog is still up
         expect($app->inputs['dialog']->value())->toBe('xyz')->and($app->inputs['a']->value())->toBe('q');
-        sleep(0.01);
+        frame();
         expect($t->text())->not->toContain('Name');
         $t->detach();
     });
@@ -380,10 +380,10 @@ it('starts a component\'s work that depends on its size when it is sized, not at
     };
     run(function () use ($app, $probe) {
         $app->start($t = new FakeTerminal(30, 5));
-        sleep(0.01);
+        frame();
         expect($probe->log)->toBe(['mount 80']);       // not shown yet: not sized
         $app->show();
-        sleep(0.01);
+        frame();
         expect($probe->log)->toBe(['mount 80', 'sized 20', 'render 20']);
         $t->detach();
     });

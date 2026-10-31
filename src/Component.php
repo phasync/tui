@@ -774,6 +774,9 @@ abstract class Component extends Element
         }
         $this->renderPending = true;
         self::$dirty[spl_object_id($this)] = $this;
+        if (TerminalDevice::of($this->surface->root())?->drawsFrames()) {
+            return;     // the terminal's next frame renders it (they are at most 60 a second)
+        }
         $now = microtime(true);
         if ($now - self::$frameAsked > 0.5) {
             // one coroutine renders everything asked for in this moment (one asked for long ago
@@ -814,7 +817,7 @@ abstract class Component extends Element
                 uasort($batch, fn(Component $a, Component $b) => $a->depth() <=> $b->depth());
                 foreach ($batch as $id => $component) {
                     if (isset($done[$id])) {
-                        $later[$id] = $component;   // asked again by a render of this frame: the next one
+                        $later[$id] = $component;   // asked again by a render of this pass: after it
                         continue;
                     }
                     $done[$id] = true;
@@ -836,6 +839,14 @@ abstract class Component extends Element
                 } catch (\Throwable $e) {
                     $error ??= $e;
                 }
+            }
+            if ($later !== [] && $pass < 3) {
+                // asked again by a render of this frame (a child's size changed its parent's
+                // layout): once more in this frame, so no half-done state is drawn
+                self::$dirty += $later;
+                $done = array_diff_key($done, $later);
+                $later = [];
+                $again = true;
             }
             if (!$again) {
                 break;

@@ -307,13 +307,13 @@ describe('ListView', function () {
         onScreen($list, 8, 3, function (FakeTerminal $t, ListView $list) use (&$events) {
             expect($t->dump())->toBe("[inverse]item 1  [/]\nitem 2\nitem 3")->and($list->selected())->toBe('k1');
             $t->press('down', 'down', 'down');
-            sleep(0.01);
+            frame();
             expect($t->text())->toBe("item 2\nitem 3\nitem 4")->and($list->selected())->toBe('k4');
             $t->press('end');
-            sleep(0.01);
+            frame();
             expect($t->text())->toBe("item 8\nitem 9\nitem 10");
             $t->press('pageup', 'enter');
-            sleep(0.01);
+            frame();
             expect($list->selected())->toBe('k8')->and($list->selectedLabel())->toBe('item 8')
                 ->and($events)->toBe(['select k2', 'select k3', 'select k4', 'select k10', 'select k8', 'activate k8']);
         });
@@ -330,10 +330,10 @@ describe('ListView', function () {
             $t->click(0, 1);
             $t->click(0, 1);
             $t->scroll(0, 0, 1);
-            sleep(0.01);
+            frame();
             expect($events)->toBe(['select 1', 'activate 1'])->and($t->text())->toBe("d\ne");
             $t->click(0, 0);
-            sleep(0.01);
+            frame();
             expect($list->selected())->toBe(3);
         });
     });
@@ -342,7 +342,7 @@ describe('ListView', function () {
         $list = new ListView(['x' => 'x', 'y' => "\e[32mgreen\e[0m y", 'z' => 'z']);
         onScreen($list, 10, 3, function (FakeTerminal $t, ListView $list) {
             $list->select('y');
-            sleep(0.01);
+            frame();
             expect($t->dump())->toBe("x\n[inverse fg=2]green[/][inverse] y   [/]\nz");
             $list->setItems(['new' => 'new', 'y' => 'y', 'z' => 'z']);
             expect($list->selected())->toBe('y');
@@ -363,16 +363,16 @@ describe('ListView', function () {
         onScreen($list, 10, 5, function (FakeTerminal $t, ListView $list) use (&$seen) {
             expect($seen)->toBe([[0, 4]]);          // the first render
             $t->press('down', 'down');              // the selection stays in view: no scroll
-            sleep(0.01);
+            frame();
             expect($seen)->toBe([[0, 4]]);
             $list->select(9);
-            sleep(0.01);
+            frame();
             expect(end($seen))->toBe([5, 9])->and($t->text())->toStartWith('item 5');
             $t->scroll(1, 1, 1);                    // the wheel, three down
-            sleep(0.01);
+            frame();
             expect(end($seen))->toBe([8, 12]);
             $t->resize(10, 8);
-            sleep(0.01);
+            frame();
             expect(end($seen))->toBe([8, 15]);
         });
     });

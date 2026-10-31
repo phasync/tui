@@ -106,7 +106,7 @@ function withApp(Component $root, int $cols, int $rows, Closure $test): void
         $root->start();
         $terminal = new FakeTerminal($cols, $rows);
         $terminal->attach($root->surface);
-        sleep(0.01);    // the render after the resize to the terminal's size
+        frame();    // the render after the resize to the terminal's size
         try {
             $test($terminal, $root);
         } finally {
@@ -122,7 +122,7 @@ it('mounts, renders, and lays out children by key', function () {
         $a = $panel->label('a');
         $panel->keys = ['a', 'c'];
         $panel->requestRender();
-        sleep(0.01);
+        frame();
         expect($t->text())->toBe("a         c\n")
             ->and($panel->label('a'))->toBe($a)
             ->and($a->log)->toBe(['mount']);
@@ -134,7 +134,7 @@ it('disposes children a render no longer asks for', function () {
         $b = $panel->label('b');
         $panel->keys = ['a'];
         $panel->requestRender();
-        sleep(0.01);
+        frame();
         expect($b->isMounted())->toBeFalse()->and($b->log)->toBe(['mount', 'unmount'])
             ->and($t->text())->toBe("a\n");
     });
@@ -146,7 +146,7 @@ it('batches render requests', function () {
         $label->requestRender();
         $label->requestRender();
         $label->requestRender();
-        sleep(0.01);
+        frame();
         expect($label->renders)->toBe($before + 1);
     });
 });
@@ -155,7 +155,7 @@ it('renders again when resized', function () {
     withApp(new Label('x'), 10, 1, function (FakeTerminal $t, Label $label) {
         $before = $label->renders;
         $t->resize(12, 2);
-        sleep(0.01);
+        frame();
         expect($label->renders)->toBe($before + 1);
     });
 });
@@ -192,7 +192,7 @@ it('contains a failing child to its rectangle', function () {
         }
     };
     withApp($panel, 40, 3, function (FakeTerminal $t) {
-        sleep(0.01);
+        frame();
         expect($t->text())->toContain('fine')->toContain('✖ RuntimeException:')->toContain('broken widget');
     });
 });
@@ -243,23 +243,23 @@ describe('built-ins', function () {
             $t->type('👍');
             $t->press('home', 'delete', 'end');
             $t->paste("x\ny");
-            sleep(0.01);
+            frame();
             expect($input->value())->toBe('ell👍o x y')
                 ->and($t->text())->toBe('> ell👍o x y');
             $c = $t->surface->cursor();
             expect([$c->x, $c->visible])->toBe([12, true]);
             $t->press('enter');
-            sleep(0.01);
+            frame();
             expect($submitted)->toBe(['ell👍o x y'])->and($t->text())->toBe('> type');
         });
     });
 
     it('scrolls a long TextInput value to keep the cursor in view', function () {
         withApp(new TextInput('abcdefghijklmnop'), 6, 1, function (FakeTerminal $t, TextInput $input) {
-            sleep(0.01);
+            frame();
             expect($t->text())->toBe('lmnop');
             $t->press('home');
-            sleep(0.01);
+            frame();
             expect($t->text())->toBe('abcdef')->and($t->surface->cursor()->x)->toBe(0);
         });
     });
@@ -285,14 +285,14 @@ describe('built-ins', function () {
         withApp(new StatusBar('left side', 'right'), 20, 1, function (FakeTerminal $t, StatusBar $bar) {
             expect($t->text())->toBe('left side      right');
             $bar->set('a much longer left text', 'R');
-            sleep(0.01);
+            frame();
             expect($t->text())->toBe('a much longer lef… R');
         });
     });
 
     it('draws a Box around its content', function () {
         withApp(new Box(new Label('in'), 'title'), 12, 4, function (FakeTerminal $t, Box $box) {
-            sleep(0.01);
+            frame();
             expect($t->text())->toBe("┌ title ───┐\n│in        │\n│          │\n└──────────┘");
         });
     });
@@ -327,7 +327,7 @@ describe('built-ins', function () {
             }
         };
         withApp($app, 12, 3, function (FakeTerminal $t, Component $app) {
-            sleep(0.01);
+            frame();
             expect($t->text())->toBe("┌ name ────┐\n│          │\n└──────────┘")
                 ->and($app->box()->content())->toBe($app->input());
             $t->type('ab');
@@ -338,7 +338,7 @@ describe('built-ins', function () {
             $box = $app->box();
             $app->boxed = false;
             $app->requestRender();
-            sleep(0.01);
+            frame();
             expect($box->isMounted())->toBeFalse()
                 ->and($app->input()->isMounted())->toBeTrue()
                 ->and($t->text())->toStartWith('ab');

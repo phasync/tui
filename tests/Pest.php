@@ -40,8 +40,11 @@ function mountOn(\phasync\Tui\Component $component, int $cols, int $rows, Closur
     });
 }
 
-/** Let the frame that follows a change render (renders are batched into the next tick). */
+/**
+ * Let the frame that follows a change render: on a terminal, renders go with its next frame
+ * (at most 60 a second); elsewhere they are batched into the next tick.
+ */
 function frame(): void
 {
-    \fiber\sleep(0.005);
+    \fiber\sleep(1 / 60 + 0.005);
 }

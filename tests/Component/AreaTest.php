@@ -48,13 +48,13 @@ it('renders a component again when a layout moves it without resizing it', funct
             expect($t->text())->toContain('12x1@2,1');
             $app->x = 7;
             $app->requestRender();
-            sleep(0.01);
+            frame();
             expect($t->text())->toContain('12x1@7,1');
             $t->resize(40, 4);                      // the root resized, the probe neither moved nor resized
-            sleep(0.01);
+            frame();
             $renders = $app->probe->renders;
             $t->resize(41, 4);
-            sleep(0.01);
+            frame();
             expect($app->probe->renders)->toBe($renders);
         } finally {
             $t->detach();
@@ -79,11 +79,11 @@ it('renders a component in a nested layout again when the layout around it moves
         try {
             expect($t->text())->toContain('30x5@10,1');
             $t->resize(50, 8);
-            sleep(0.01);
+            frame();
             expect($t->text())->toContain('40x7@10,1');
             $app->left = 20;
             $app->requestRender();
-            sleep(0.01);
+            frame();
             expect($t->text())->toContain('30x7@20,1');
         } finally {
             $t->detach();
@@ -98,10 +98,10 @@ it('renders a component again when a window it is in is moved by hand', function
         $probe = (new WhereAmI())->start($inner = new Surface(10, 1, 0));
         $panel->host($inner, 1, 1);
         $view = $root->host($panel, 0, 0);
-        sleep(0.01);
+        frame();
         expect($inner->line(0))->toBe('10x1@1,1');
         $view->move(5, 2);                          // the panel moves: the probe's area with it
-        sleep(0.01);
+        frame();
         expect($inner->line(0))->toBe('10x1@6,3');
         $probe->dispose();
     });

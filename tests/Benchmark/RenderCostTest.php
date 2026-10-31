@@ -168,3 +168,80 @@ it('renders, measures and paints one row when the state of a row component chang
             ->and(paintedSince($before, $app->surface))->toBe(1);
     });
 });
+
+/** Asks for a render every millisecond. */
+final class Eager extends Component
+{
+    public int $renders = 0;
+
+    protected function run(): void
+    {
+        while ($this->sleep(0.001)) {
+        }
+    }
+
+    protected function render(): Element
+    {
+        $this->renders++;
+        return new Text("{$this->renders}");
+    }
+}
+
+it('renders a component on a terminal with the terminal\'s frames, at most 60 a second', function () {
+    mountOn(new Eager(), 20, 2, function (FakeTerminal $t, Eager $app) {
+        $t->settle();
+        $before = $app->renders;
+        fiber\sleep(0.5);
+        expect($app->renders - $before)->toBeLessThanOrEqual(33)->toBeGreaterThan(5);
+    });
+});
+
+/** A child as many rows high as it showed last (it knows its new size only once it rendered). */
+final class Grower extends Component
+{
+    private int $shown = 1;
+
+    public function grow(): void
+    {
+        $this->state->n = ($this->state->n ?? 1) + 1;
+    }
+
+    public function measure(int $cols, int $rows): ?array
+    {
+        return [$cols, $this->shown];
+    }
+
+    protected function render(): Element
+    {
+        $this->shown = $this->state->n ?? 1;
+        return new Text(implode("\n", array_map(fn($i) => "line $i", range(1, $this->shown))));
+    }
+}
+
+final class GrowerParent extends Component
+{
+    public ?Grower $grower = null;
+    public string $below = 'below';
+
+    protected function render(): Element
+    {
+        $this->grower = $this->child('grower', fn() => new Grower());
+        return new Column([$this->grower->with(height: 'auto'), new Text($this->below)]);
+    }
+}
+
+it('draws a child\'s new size and the parent\'s layout for it in one frame', function () {
+    mountOn(new GrowerParent(), 20, 5, function (FakeTerminal $t, GrowerParent $app) {
+        $t->settle();
+        $t->takeOutput();
+        // both change in one moment: the parent renders first, then the child, whose size
+        // changed, so the parent lays out again, in the same frame
+        $app->below = 'under';
+        $app->requestRender();
+        $app->grower->grow();
+        frame();
+        frame();
+        expect(substr_count($t->takeOutput(), "\e[?2026h"))->toBe(1)   // one frame, not one per render
+            ->and($t->text())->toBe("line 1\nline 2\nunder\n\n");
+    });
+});

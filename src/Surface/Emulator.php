@@ -739,10 +739,23 @@ final class Emulator
                 $chars .= $piece;
             }
         });
-        $inter = $chars;
-        if ($final === '') {
-            return;
+        if ($final !== '') {
+            $this->dispatchEsc($chars, $final);
         }
+    }
+
+    /**
+     * A well-formed escape sequence with nothing embedded, as programs send them: ESC, the
+     * intermediates, the final character (the grammar's fast path; the same as esc()).
+     */
+    public function escSequence(string $seq): void
+    {
+        $end = \strlen($seq) - 1;
+        $this->dispatchEsc(substr($seq, 1, $end - 1), $seq[$end]);
+    }
+
+    private function dispatchEsc(string $inter, string $final): void
+    {
         if ($inter === '') {
             switch ($final) {
                 case '7':

@@ -69,7 +69,7 @@ it('keeps the focus on a dialog shown by a render that builds new layouts, with 
             expect($app->dialog->value())->toBe('ab')
                 ->and($app->dialog->hasFocus())->toBeTrue()
                 ->and($app->main()->hasFocus())->toBeFalse();
-            sleep(0.01);
+            frame();
             expect($t->text())->toContain('Dialog');
             $t->type('cd');                         // after the frame that shows it
             expect($app->dialog->value())->toBe('abcd')
@@ -79,7 +79,7 @@ it('keeps the focus on a dialog shown by a render that builds new layouts, with 
             // more renders, each with new layout objects and a new header surface
             for ($i = 0; $i < 3; $i++) {
                 $app->requestRender();
-                sleep(0.01);
+                frame();
                 $t->type((string) $i);
             }
             expect($app->dialog->value())->toBe('abcd012')

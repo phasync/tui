@@ -63,7 +63,7 @@ it('ends a parent after its children, each after its coroutines', function () {
     };
     run(function () use ($app, &$log) {
         $app->start(new Surface(20, 2));
-        sleep(0.01);
+        frame();
         $app->dispose();                        // waits for the end of the whole tree
         expect($log)->toBe(['b returned', 'b unmounted', 'a returned', 'a unmounted', 'app unmounted']);
     });
@@ -116,7 +116,7 @@ it('unmounts after the timeout when a coroutine does not listen', function () {
     $deaf = new Ender('deaf', $log, deaf: true);
     run(function () use ($deaf, &$log) {
         $deaf->start(new Surface(10, 1));
-        sleep(0.01);
+        frame();
         $start = microtime(true);
         $deaf->dispose(0.1);
         expect($log)->toBe(['deaf unmounted'])
@@ -161,12 +161,12 @@ it('has unmounted when dispose() returns, called from a key handler or another c
         $app->start($t = new FakeTerminal(30, 3));
         try {
             $app->open('dialog', 0.05);
-            sleep(0.01);
+            frame();
             $t->press('escape');                    // a key handler closes the dialog
             expect($log)->toBe(['dialog returned', 'dialog unmounted', 'dispose returned']);
             $log = [];
-            $dialog = $app->open('second', 0.02);
-            sleep(0.01);
+            $dialog = $app->open('second', 0.05);
+            frame();
             $other = fiber\go(function () use ($dialog, &$log) {
                 $dialog->dispose();                 // from a coroutine that is not the dialog's
                 $log[] = 'dispose returned';
@@ -259,7 +259,7 @@ it('drops a child a render no longer asks for without waiting, and still ends th
     };
     run(function () use ($app, &$log) {
         $app->start(new Surface(20, 2));
-        sleep(0.01);
+        frame();
         $app->show = false;
         $start = microtime(true);
         $app->requestRender();

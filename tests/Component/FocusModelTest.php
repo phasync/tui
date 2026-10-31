@@ -69,7 +69,7 @@ it('keeps a focus given before a component is shown after the render shows it, d
             $t->type('ab');                         // before the frame: the dialog is not shown yet
             expect($app->dialog->input->value())->toBe('ab')
                 ->and($app->dialog->input->hasFocus())->toBeTrue();
-            sleep(0.01);
+            frame();
             expect($t->text())->toContain('Name');
             $t->type('cd');                         // after the frame
             expect($app->dialog->input->value())->toBe('abcd')
@@ -134,7 +134,7 @@ it('passes keys to the content of a box focused before it is shown, below a pane
                 ->and($box->content()->hasFocus())->toBeTrue()
                 ->and($app->left->field->hasFocus())->toBeFalse()
                 ->and($app->right->hasFocus())->toBeFalse();
-            sleep(0.01);
+            frame();
             expect($t->text())->toContain('Find');
             $t->type('y');
             expect($box->content()->value())->toBe('xy')
@@ -187,7 +187,7 @@ it('gives the keys to the latest focus among components not shown yet, and nothi
                 ->and($a->hasFocus())->toBeTrue()->and($b->hasFocus())->toBeFalse();
             $app->show = true;
             $app->requestRender();
-            sleep(0.01);
+            frame();
             $t->type('4');
             expect($a->value())->toBe('34')->and($a->hasFocus())->toBeTrue()->and($b->hasFocus())->toBeFalse();
         } finally {

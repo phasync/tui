@@ -24,13 +24,15 @@
 
 Stream = (!$ Item)* $          # (an item is only looked for where input is left)
 
+# The sequence rules start differently after ESC (CSI "[", OSC "]", DCS "P", the strings "X^_",
+# Esc everything else), so their order only decides how soon the common ones are found.
 Item = Text
      | Control
      | Csi
+     | Esc
      | Osc
      | Dcs
      | Str
-     | Esc
      | C1
      | Incomplete
 
@@ -103,7 +105,11 @@ StrEnd = /\x1b\\|\x{9c}/
 # Examples: ESC 7 (DECSC), ESC M (RI), ESC ( 0 (DEC line drawing into G0), ESC # 8 (DECALN).
 # Without intermediates the finals [ ] P X ^ _ introduce CSI and the strings above, so they are
 # not finals here: a cut-off "ESC [" matches nothing and is left to Incomplete.
-Esc = /\x1b/ pre:Embedded* inter:Intermediates end:EscEnd   <? $state['vt']->esc($pre, $inter, $end); return true; ?>
+#
+# The first alternative is the well-formed sequence with nothing embedded (ESC 7, ESC ( B), what
+# programs and compositing send, matched as one terminal; the others are the general rule.
+Esc = /\x1b(?:[\x20-\x2f]+[\x30-\x7e]|[\x30-\x4f\x51-\x57\x59\x5a\x5c\x60-\x7e])/   <? $state['vt']->escSequence($_0); return true; ?>
+    | /\x1b/ pre:Embedded* inter:Intermediates end:EscEnd   <? $state['vt']->esc($pre, $inter, $end); return true; ?>
     | /\x1b/ pre:Embedded* end:EscFinal                     <? $state['vt']->esc($pre, [], $end); return true; ?>
 
 Intermediates = /[\x20-\x2f]+/ (Embedded | /[\x20-\x2f]+/)*

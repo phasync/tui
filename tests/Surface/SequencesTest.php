@@ -429,6 +429,18 @@ describe('unknown and malformed sequences', function () {
         expect(cursorAt($s))->toBe([3, 1]);
     });
 
+    it('applies an escape sequence the same with controls embedded in it as without', function () {
+        // (the plain form is the grammar's fast path, the embedded one its general rule)
+        $plain = vt("ab\e7\e[2;3Hx\e8y\e(0q\e(Bq\e#8", 6, 3);
+        $embedded = vt("ab\e\x007\e[2;3Hx\e\x0e8y\e(\x000q\e(\x00Bq\e#\x008", 6, 3);
+        expect(rows($embedded))->toBe(rows($plain))
+            ->and(rows($plain))->toBe('EEEEEE|EEEEEE|EEEEEE');       // DECALN fills the screen last
+        $s = vt("a\e7\e[2;2Hb\e8c\e(0qx\e(Bq", 8, 2);
+        expect(rows($s))->toBe('ac─│q   | b      ');
+        $s = vt("a\e\x0b7b", 8, 2);                                  // VT embedded: executed, then DECSC
+        expect(rows($s))->toBe('a       | b      ');
+    });
+
     it('cancels a sequence with CAN or SUB', function () {
         expect(vt("a\e[31\x18b\e[1\x1ac")->line(0))->toBe('abc')
             ->and(vt("a\e[31\x18b")->cell(1, 0)->style)->toBe(Style::plain());
