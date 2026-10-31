@@ -1,8 +1,93 @@
 # Changelog
 
-## Unreleased
+## 0.0.2-beta4 (2026-10-31)
 
-**Added**
+Nothing hangs silently any more, overlays in dialogs survive resizes, and two contributed
+widgets: `Tree` and `Tabs`. Everything from 0.0.2-beta3 works as before, except where an entry
+says what changed.
+
+**Fixed**
+
+- A program whose own code throws no longer hangs with the terminal in raw mode: when the code
+  that started a root component fails after `start()` (a typo in the closure given to
+  `fiber\run()`, a protected method called from outside), the component tree is disposed, the
+  terminal is restored (modes reset, the alternate screen left), and the exception comes out of
+  `fiber\run()` with its message, as it does without a terminal UI. The same for an exception
+  in a component's `run()` or `go()` coroutine that no error boundary contains, also when the
+  root was started on a plain `Surface` or attached with `TerminalDevice::attach()`. This
+  needs fiber-interop/api newer than 0.3.1 and, on phasync, fiber-interop/phasync newer than
+  0.4.1 (their main branches until the next tags); with the older versions `start()` behaves as
+  before for the code that started it, and `Tui::run()` (below) is the way to get this.
+- A dialog with an open dropdown no longer falls apart when the terminal is resized: the
+  dialog is centred again, the list stays next to its field inside the dialog (or closes when
+  the field is no longer shown), and nothing of the dialog is left blank. The same in a nested
+  instance and through a storm of resizes. A dropdown in a dialog opens on the side that keeps
+  the dialog's buttons visible when it fits on both.
+- A dialog whose small terminal hides the focused field scrolls it back into view after a
+  resize (`ScrollView` brings the focus into view again), so an open list stays open.
+- A dropdown's list follows the width of its field when the field grows or shrinks.
+- `Dialog::accept()` overriding with `$form->submit()` no longer recurses forever: while the
+  dialog is asking `accept()`, `submit()` of its forms does nothing and returns whether the
+  form is valid.
+- `Form::values()` after its dialog closed gives the values it was submitted with (the fields
+  are gone by then), so `await($this->dialog(...))` followed by `$form->values()` works.
+- A completion popup that shrinks while it is open stays on the side it opened on: filtering
+  four candidates above the field to one no longer moves the one row below the field, over the
+  box's bottom border.
+- A `ProgressBar` never draws past its own width: a long label in an export dialog no longer
+  shows one cell over the border.
+- A `Column` of components that each need one row (progress bars, your own row components)
+  takes the rows they need without a `height:`: a component without its own `measure()` is
+  measured by the element tree it renders.
+
+**The program and its end**
+
+- `Tui::run($root)`, `Tui::inline($root)` and `Tui::headless($root, $cols, $rows)`: the runner.
+  `run()` and `inline()` are a whole program (`Tui::run(new App());`): they wrap it in
+  `fiber\run()`, start the root on the terminal, return the ended root when it quits and
+  throw what failed, with the terminal given back, on any version of fiber-interop. A root run
+  this way quits on Ctrl-Q when no component binds that key (`Help` lists it as "quit").
+  `headless()` starts the root on a `FakeTerminal` for tests, inside your own `fiber\run()`.
+- `Component::quitOn('ctrl+q')`: the key that disposes a root component when nothing took it;
+  `null` turns it off.
+
+**Changed**
+
+- `ProgressBar` shows its label *and* the percentage (`████░░ 3/10 files 30%`), so an inline
+  runner needs no `Text` beside it. A label may hold `{percent}` (`42%`) and `{value}`
+  (`0.42`) to place them itself; then nothing is added. Before, a label replaced the
+  percentage. The label takes at most half the width.
+- `Component::stop()` is public and final: a parent stops a child it no longer shows without
+  waiting (it was private). A component of yours with a method `stop()` of its own must rename
+  it (`examples/inline-progress.php` calls its method `quit()` now).
+- The fiber-interop versions the tests run on are the main branches (require-dev
+  `fiber-interop/api: 0.3.x-dev`, `fiber-interop/phasync: 0.4.x-dev`); the library itself
+  still requires `fiber-interop/api: ^0.3.1`.
+
+**Components: what widget authors asked for**
+
+- `wantsPointer()`: a component returns true to get mouse motion (for `:hover` of its own);
+  a stylesheet rule with `:hover` on a part (`Tabs::tab:hover`) asks for it too, so hovering a
+  tab highlights it.
+- `keep($key, fn)`: a child the current render does not show stays mounted and keeps its
+  state (a `Terminal` goes on running); `stop()` ends one the parent no longer wants.
+- Bindings with `'first' => true` run before the focused child gets the key (Ctrl-Tab in a
+  tab container, Ctrl-Q while a `Terminal` has the focus); plain bindings run after it, only
+  when nothing took the key (Escape unless a field took it). `Help` lists both. The whole order
+  is in docs/components.md, "Key bindings", with an example.
+- A part's style inherits the component's base style and the state of the row it is drawn on
+  (`$this->style(['node', 'marker'], 'current')`): a marker without a colour of its own keeps
+  the highlighted row one bar.
+- `focusNext()` and `focusPrevious()` on `Component`, for Tab handling without `$this->surface`.
+- `TerminalDevice::freeze($row)` (a row number or a component's surface): inline, the row
+  goes above the region into the scrollback as it shows now, and the region shrinks when the
+  program drops it; full screen, it is written after the terminal is given back, as
+  `println()` is. A finished job no longer needs formatting a second time for `println()`.
+- docs/components.md now states when a parent renders again from a child's state (a callback
+  or an event it listens to, with the two remedies) and that a `load:`-style callback may
+  return any object other than a `Traversable` as an awaitable, passed to `fiber\await()`.
+
+**Tree and Tabs (contributed)**
 
 - `Tree`: hierarchical items with expand/collapse (Right/Left/Enter/Space and a click on the
   ▸/▾ marker), lazy children through a callable that may return an awaitable (a spinning sign
@@ -18,6 +103,14 @@
   `Tabs::bar`, `Tabs::tab` (`current`, `hover`, `focused`), `Tabs::hint`, `Tabs::close`,
   `Tabs::more`; Tab/Enter into the content, Escape back to the bar. Default theme rules added
   to `Stylesheet::default()`. docs/widgets.md, examples/tabs.php.
+- Merged and aligned with the library: `Tree` scrolls with `Scrollable` (**changed** from the
+  branch: `topIndex()` is `scrollTop()`, and Ctrl-P/Ctrl-N are not bound by default; add them,
+  or j/k, with `bind()`), composes its parts with `$this->style([...])` and takes `key`, `id`,
+  `class` and `style`. `Tabs` keeps its component tabs with `keep()` (stopped when
+  `setTabs()` drops their tab), binds Ctrl-Tab and Ctrl-Shift-Tab as `first` bindings
+  (`nextTab()`, `previousTab()`), and its `Tabs::tab:hover` rule works without a rule on the
+  element itself.
+- README tour: tabs with a shell that keeps running, and a tree of 100,000 nodes.
 
 ## 0.0.2-beta3 (2026-10-31)
 

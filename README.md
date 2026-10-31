@@ -55,7 +55,11 @@ composer require phasync/tui fiber-interop/phasync     # or fiber-interop/revolt
 ```
 
 `fiber-interop/api` is the only runtime dependency; install one adapter to choose the event
-loop. Optional: ext-phasync 2.0.7+ (bundled with `phasync/phasync`) captures `echo` of a PHP coroutine
+loop. An exception in the code that started a component (the closure given to `fiber\run()`)
+ends the program only with fiber-interop/api newer than 0.3.1 and, on phasync,
+fiber-interop/phasync newer than 0.4.1: until they are tagged, their main branches
+(`composer require fiber-interop/api:0.3.x-dev fiber-interop/phasync:0.4.x-dev`). With the
+tagged versions, run the program with `Tui::run()`, which always sees that exception. Optional: ext-phasync 2.0.7+ (bundled with `phasync/phasync`) captures `echo` of a PHP coroutine
 into a window; ext-pcntl gives immediate resizes and terminal restore on SIGTERM.
 
 ## The model
@@ -261,6 +265,58 @@ final class Answer extends Component
 }
 ```
 
+**Tabs, with a shell that keeps running.** `Tabs` shows one content per tab; a component in
+a hidden tab keeps its state, so the shell goes on running while the notes show. `Tui::run()`
+is the whole program: it runs the root until it quits and gives the terminal back.
+
+```php
+final class Workspace extends Component
+{
+    protected function bindings(): array
+    {
+        return ['ctrl+q' => ['dispose', 'quit', 'first' => true]];     // before the shell sees it
+    }
+
+    protected function render(): Element
+    {
+        return $this->child('tabs', fn() => new Tabs([
+            'shell' => ['label' => 'Shell', 'content' => new Terminal(getenv('SHELL') ?: '/bin/sh')],
+            'notes' => ['label' => 'Notes', 'content' => new Markdown("# Notes\n\nThe shell keeps running.")],
+        ]));
+    }
+}
+
+Tui::run(new Workspace());
+```
+
+Left/Right or a click change tab on the bar, Enter goes into the shell; Ctrl-Tab changes tab
+from anywhere, also from inside the shell. A `first` binding runs before the focused child gets
+the key (a plain binding runs after it, when nothing took the key), so Ctrl-Q quits even while
+the shell has the focus. `examples/tabs.php` adds and closes tabs.
+
+**A tree of 100,000 nodes.** `Tree` lays out and draws only the rows in view, so a large tree
+costs what a screenful does; lazy children may come from an awaitable (`load:`).
+
+```php
+final class Outline extends Component
+{
+    protected function render(): Element
+    {
+        $tree = $this->child('tree', fn() => new Tree(
+            items: array_map(fn(int $i) => ['label' => "section $i", 'expanded' => true, 'children' => array_map(
+                fn(int $j) => ['label' => "item $i.$j", 'leaf' => true], range(1, 99))], range(1, 1000)),
+            onActivate: fn(string $key) => $this->state->picked = $key,
+        ));
+        return new Box($tree, $this->state->picked ?? 'outline');
+    }
+}
+
+Tui::run(new Outline());
+```
+
+Up/Down, Page Up/Page Down and Home/End move, Left closes a section, Enter on an item puts its
+key in the title. `examples/tree.php` browses a directory, loading folders as they open.
+
 **Inline, under the shell's output.** `Tty::inline()` shows the same components as a live
 region at the bottom of the terminal instead of taking it over; `println()` writes lines above
 it into the terminal's scrollback, and when the program ends the last frame stays with the
@@ -300,8 +356,11 @@ fiber\run(fn() => (new Copy($tty))->start($tty));
 the root component, closing the root surface, or detaching the device; each leads to the others)
 disposes the component tree: `Terminal`s hang their programs up with everything those started
 (a shell's foreground `vim` or `sleep` too), coroutines are told to stop,
-the terminal is restored. An exception in the root component does the same and is then thrown
-to you, by `start()` or by `fiber\run()`. A `Pty` you start yourself is yours to end.
+the terminal is restored. An exception in the root component, in a coroutine of it, or in the
+code that started it does the same and is then thrown to you, by `start()` or by
+`fiber\run()`, with the terminal already given back. `Tui::run($root)`, `Tui::inline($root)`
+and `Tui::headless($root, $cols, $rows)` are the runner: they start the root, quit it on Ctrl-Q
+when nothing binds that key, and return when it ended. A `Pty` you start yourself is yours to end.
 
 **Test it headless.** `FakeTerminal` is a terminal device in memory; what it shows must equal
 the root's cells, and input is encoded as a real terminal would: `type()` for text, `press()`
@@ -335,6 +394,9 @@ Renders come in the next frame: read the screen after `settle()`, not right afte
   arrives, scrolled with the keys and the wheel.
 - `examples/form.php`: a form built from elements: one-line and multi-line editors, a pick list
   with filtering and marks, a confirmation dialog, the keys in a footer.
+- `examples/tabs.php`: tabs holding a shell, a log that fills by itself and help pages; tabs
+  added with Ctrl-N and closed with Delete.
+- `examples/tree.php [directory]`: a directory browser whose folders load as they are opened.
 
 ## How it compares
 

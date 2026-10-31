@@ -58,6 +58,7 @@ fiber\run(function () use ($tty) {
 | `terminalName(): string` | The name the terminal gave when asked (XTVERSION) at `attach()`, such as `kitty(0.36.4)`; `''` when it did not answer. |
 | `isInline(): bool` | True for a device made with `inline()` (see below). |
 | `println(string $text = '')` | Plain output of the program: in inline mode above the live region, at the next frame; not attached, to the terminal at once; attached full screen, after `detach()` (the alternate screen would hide it). Escape sequences in it work; a line break ends each call. |
+| `freeze(int\|Surface $what)` | Keep rows of the root as they show now: a row by number, or the rows a surface covers (a component's: `$tty->freeze($bar->surface)`). Inline, they go above the region at the next frame, into the scrollback, never to change; full screen, they are written after `detach()`. See "Freezing a finished row". |
 
 **Hyperlinks.** A cell's style carries the hyperlink it is in (see [surface](surface.md)); the
 device writes OSC 8 around such cells only when `supportsHyperlinks()` is true, so a program
@@ -78,8 +79,7 @@ shows. Nothing else changes: the same root, the same component tree, attached wi
 `attach()` or `$app->start($device)`.
 
 ```php
-fiber
-un(function () {
+fiber\run(function () {
     $root = new Surface();
     $tty = Tty::inline();
     $tty->attach($root);
@@ -122,6 +122,24 @@ un(function () {
 `examples/inline-progress.php` runs a few jobs with a progress bar each and a total, as a
 component tree; the same tree runs full screen with `new Tty()`.
 
+### Freezing a finished row
+
+A program that runs jobs and shows a line for each keeps the finished ones as they ended, above
+the live part, with `freeze()`: the row goes into the terminal's scrollback exactly as the
+region shows it, and the program stops showing it, so the region is only what still runs. No
+second formatting for `println()`:
+
+```php
+// in the component's coroutine, when a job ends
+$this->state->done[$job] = 1.0;
+$this->sleep(0);                                  // the render that shows 100% runs meanwhile
+$this->tty->freeze($this->child("job:$job")->surface);
+unset($this->state->done[$job]);                  // the next render leaves it out
+```
+
+`freeze()` takes the rows as the root shows them at the call, so let the render that drew the
+final state run first (renders come in the next frame).
+
 | Method | What it does |
 |---|---|
 | `Tty::inline($in = STDIN, $out = STDOUT, bool $keep = true)` | The terminal in inline mode. |
@@ -151,11 +169,20 @@ And this is what ends them:
   coroutines) ends the program the same way, then the exception is thrown: by `start()` when it
   happened there, else by `fiber\run()`. A failure inside a child component is contained: the
   child and its children are disposed (their programs hung up) and its rectangle shows the error.
+- **A failure of the code that attached** (the closure given to `fiber\run()` throws after
+  `attach()` or `start()`, or the coroutine that called them does): the device detaches by
+  itself, so the terminal is restored, the tree is disposed, and `fiber\run()` throws the
+  exception, which PHP then prints. The device watches the task that called `attach()`
+  through `fiber\current()`; that needs fiber-interop/api newer than 0.3.1 and, on phasync,
+  fiber-interop/phasync newer than 0.4.1 (their main branches until the next tags). With older
+  versions, use `Tui::run()`, which owns the run and always sees the exception.
 
 ```php
 fiber\run(function () {
     (new App())->start(new Tty());   // run() returns once the app quits (or rethrows its failure)
 });
+
+Tui::run(new App());                 // the same in one call, Ctrl-Q quitting by default
 ```
 
 ## Tty

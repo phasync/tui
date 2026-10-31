@@ -3,6 +3,77 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.2-beta4; TODO-0.0.2-beta4.md)
+
+All items of TODO-0.0.2-beta4.md done, in CHANGELOG.md; tests green with and without
+ext-phasync (on fiber-interop/api and fiber-interop/phasync main, see the fiber\ notes).
+
+- [x] 1. A failing starter ends the program: Internal\Runtime::watch() from Component::start()
+      (non-device targets) and TerminalDevice::attach(); Tui::run()/inline()/headless() with
+      quitOn('ctrl+q'); tests/Component/FailureTest.php (FakeTerminal and a forked pty process,
+      tests/fixtures/programs/crash.php: stderr message, modes reset, non-zero exit within 1s,
+      for the run closure, attach(), a run() coroutine, a go() coroutine and Tui::run())
+- [x] 2. Overlays in a dialog across resizes: placement passes in renderFrame(), immediate
+      arrangeOverlays(), the side kept per [anchor, root], Placement::for(keep:) for the
+      dialog's buttons, Select's list width following the field, ScrollView onResize;
+      tests/Widgets/DialogResizeTest.php (sizes, too small, nested instance, storm)
+- [x] 3. widget/Tree and widget/Tabs merged (5e8b7e0, b6d1c3f) and aligned in 3f3bba8; README
+      tour entries (Tabs with a Terminal, Tree of 100k), run in tests/Examples/ReadmeTest.php
+- [x] 4. wantsPointer() and part :hover; keep() and public final stop(); 'first' bindings and
+      the key order paragraph; parent/child reactivity rule; parts in the row state;
+      awaitables convention; focusNext()/focusPrevious(); Column of row components (default
+      measure() by the shown tree); tests/Elements/ContractTest.php
+- [x] 5. Dialog accept/submit guard (Form::hold()), Form::values() after close, popup side
+      stickiness, ProgressBar label + percent + placeholders + no overdraw, freeze();
+      tests/Widgets/SmallFixesTest.php
+
+## Design decisions (0.0.2-beta4)
+
+- **The watcher is gated by version, not probed.** Awaiting `fiber\current()` from a task
+  started inside it re-runs the run() closure on api 0.3.1 / adapter 0.4.1 (the beta2 finding),
+  so `Internal\Runtime::canWatch()` reads InstalledVersions and refuses numeric versions at or
+  below those; dev branches pass. A probe would have to run the broken path to find out.
+  `Runtime::$watching` overrides it for tests. Tui::run() owns the run closure and so needs no
+  watcher at all; it is the documented fallback. The watcher rethrows after disposing, so
+  fiber\run() reports the original exception, not a wrapped one.
+- **Tui is only the runner** (SPEC 9.1's runner part); the rest of SPEC 9 is still 0.0.3.
+  The quit key is a property of the root (quitOn()), handled after every binding and onKey
+  had their turn, so a component binding Ctrl-Q wins.
+- **Default measure() measures the shown tree dry.** A component without measure() is measured
+  by Tree::measure() of the element it rendered last, with `place: false`: nothing is mounted
+  or placed, unmounted components measure as empty items. The first version placed components
+  from a stale tree and disposed a Markdown child of a hidden tab.
+- **Overlay placement in passes.** renderFrame() renders the dirty components, then places the
+  overlays in opening order; an overlay whose rect changed is arranged at once (so an overlay
+  opened from it anchors to the new position in the same pass) and, when that made something
+  dirty, the frame renders again (at most 16 passes). The side an overlay opened on is kept
+  while [anchor, root] are unchanged; a resize chooses again.
+- **'first' bindings** are the 4th element of a normalized binding. On the way down, a
+  component that is not where the key ends runs its first bindings before onKey(); after the
+  focused component, the parents' walk skips first bindings of parents the key already passed.
+  One flag rather than a second bindings() method, so Help and bind() need nothing new.
+- **keep()** records keys in `$kept`; renderNow() does not dispose kept children it did not
+  see. stop() unsets the key in the parent. Tabs uses it for component tabs and stops the
+  children of tabs setTabs() dropped.
+- **Form::hold()** is set by Dialog::choose() around accept(); a held submit() validates
+  nothing new and returns whether the last one was valid. values() keeps the last submitted
+  values for after unmount.
+- **freeze()** inline pushes the row's cells (as rowData) into the printed queue, exactly
+  what a scrolled-off row does; full screen it holds the row's text with SGR for detach, as
+  println() does.
+
+## Left for later versions (0.0.2-beta4)
+
+- Tag-based requirement: once fiber-interop/api > 0.3.1 and fiber-interop/phasync > 0.4.1 are
+  tagged, require them (`^0.3.2` / `^0.4.2`, whatever they are), drop the dev require-dev and
+  the gate's version table can stay as is.
+- ReadmeTest's first program (a real shell in a pty) failed twice in about ten full runs
+  during beta4, both times inside its run closure (once the shell's echo took the whole 5 s);
+  it passed on every rerun, and 8 isolated runs under 4 busy CPU cores did not reproduce it.
+  Cause not found; suspect the shell's startup under the suite's other ptys.
+- SPEC 9 apart from the runner (utility classes, markup, themes, the dashboard test): 0.0.3.
+- Table and ScrollView still scroll with their own code.
+
 ## Status (0.0.2-beta3; TODO-0.0.2-beta3.md)
 
 All items of TODO-0.0.2-beta3.md done, in CHANGELOG.md; tests green with and without
@@ -644,6 +715,10 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
   The api README allows awaiting go() handles and says `current()` is such a handle; either
   the adapter should honour that for the run() task and for awaits from a child task, or the
   api should say `current()` is for `===` only. Nothing of the library depends on it now.
+  **Status (beta4):** fixed on fiber-interop/api main (4dc3d41, conformance example 23) and
+  fiber-interop/phasync main (8445790), not tagged yet. The library's watcher
+  (Internal\Runtime::watch()) is used only on versions newer than 0.3.1 / 0.4.1 or dev
+  branches; on the tagged ones start() documents the limit and Tui::run() is the way.
 
 - **Finding (beta3, resolved in api 0.3.1 by `fiber\current()`, used since beta5):** fiber-interop/api had no way to ask "which task am I" (a
   current-task handle comparable with what go() returned). A component disposing itself from

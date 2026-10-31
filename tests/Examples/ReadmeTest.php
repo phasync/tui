@@ -9,6 +9,7 @@ use phasync\Tui\Component\Log;
 use phasync\Tui\Component\Terminal;
 use phasync\Tui\Component\TextInput;
 use phasync\Tui\FakeTerminal;
+use phasync\Tui\Tui;
 
 use function fiber\run;
 use function fiber\sleep;
@@ -83,16 +84,16 @@ function readmeProfile(FakeTerminal $t): void
     expect($t->isAttached())->toBeFalse();
 }
 
-/** The README's php block that holds $needle, with its `fiber\run(...)` line taken out. */
+/** The README's php block that holds $needle, with its `fiber\run(...)` or `Tui::run(...)` line taken out. */
 function readmeBlock(string $needle): string
 {
     $readme = (string) file_get_contents(__DIR__ . '/../../README.md');
     preg_match('/```php\n((?:(?!```).)*' . preg_quote($needle, '/') . '.*?)```/s', $readme, $m);
     expect($m)->not->toBeEmpty();
-    return 'use phasync\Tui\{Component, Element, TerminalDevice, Tty};
-        use phasync\Tui\Component\{Markdown, ProgressBar};
+    return 'use phasync\Tui\{Component, Element, TerminalDevice, Tty, Tui};
+        use phasync\Tui\Component\{Markdown, ProgressBar, Tabs, Terminal, Tree};
         use phasync\Tui\Element\{Box, Row, Text};
-        ' . preg_replace('/^(\$tty = |fiber\\\\run\().*$/m', '', $m[1]);
+        ' . preg_replace('/^(\$tty = |fiber\\\\run\(|Tui::run\().*$/m', '', $m[1]);
 }
 
 it('runs the README\'s Markdown pane: the answer arrives in chunks and renders whole', function () {
@@ -123,5 +124,51 @@ it('runs the README\'s inline example: lines printed above a progress bar that s
         expect(\array_slice($lines, 0, 5))->toBe(['$ php copy.php', 'copied a.txt', 'copied b.txt', 'copied c.txt', 'copied d.txt'])
             ->and($lines[5])->toStartWith('copying')->toEndWith('100%')
             ->and($t->surface->cursor()->y)->toBe(6);
+    });
+});
+
+it('runs the README\'s tabs: the shell keeps running in a hidden tab, Ctrl-Q quits from inside it', function () {
+    eval(readmeBlock('final class Workspace'));
+    run(function () {
+        $t = Tui::headless($app = new Workspace(), 60, 10);
+        $t->run(function (FakeTerminal $t) use ($app) {
+            $t->settle();
+            expect($t->text())->toContain('Shell')->toContain('Notes');
+            $t->press('enter');                         // into the shell
+            $t->type("echo from-tab\n");
+            expect($t->waitFor('from-tab', 3))->toBeTrue();
+            $t->press('ctrl+tab');                      // from inside the shell
+            $t->settle();
+            expect($t->text())->toContain('The shell keeps running.')->not->toContain('from-tab');
+            $t->press('ctrl+tab');
+            $t->settle();
+            expect($t->text())->toContain('from-tab');  // the same shell, its screen kept
+            $t->press('ctrl+q');                        // the shell has the focus: the first binding quits
+            expect($t->isAttached())->toBeFalse()->and($app->isMounted())->toBeFalse();
+        });
+    });
+});
+
+it('runs the README\'s tree of 100,000 nodes: it opens fast, moves to the end, closes a section', function () {
+    eval(readmeBlock('final class Outline'));
+    run(function () {
+        $start = microtime(true);
+        $t = Tui::headless($app = new Outline(), 50, 12);
+        $t->run(function (FakeTerminal $t) use ($start) {
+            $t->settle();
+            expect($t->text())->toContain('outline')->toContain('section 1')->toContain('item 1.1');
+            $t->press('end');
+            $t->settle();
+            expect($t->text())->toContain('item 1000.99');
+            $t->press('enter');
+            $t->settle();
+            expect($t->text())->toContain('section 1000/item 1000.99');     // the key, in the title
+            $t->press('home', 'left');
+            $t->settle();
+            expect($t->text())->not->toContain('item 1.1')->toContain('section 2')
+                ->and(microtime(true) - $start)->toBeLessThan(10.0);
+            $t->press('ctrl+q');
+        });
+        expect($app->isMounted())->toBeFalse();
     });
 });

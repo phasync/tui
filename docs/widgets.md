@@ -333,6 +333,26 @@ public function add(): void
 }
 ```
 
+**Where to read the values.** The fields end with the dialog, so read the values in one of
+three places: in the form's `onSubmit` (above: it runs before the dialog closes), in the
+dialog's `accept()` with `$form->values()`, or after the answer came with `$form->values()`,
+which once the form has ended gives the values of its last submit:
+
+```php
+$form = new Form($fields, validate: $check);
+if (fiber\await($this->dialog(new Dialog('Add', $form, ['Add' => 'add', 'Cancel' => null]))) === 'add') {
+    $this->add($form->values());      // ['name' => 'Ada', 'email' => ...], as submitted
+}
+```
+
+`accept()` is asked after the form was submitted and valid: a `submit()` there does nothing
+(and returns true), so an `accept()` that calls it does not submit twice or loop.
+
+**A dropdown in a dialog** opens on the side that leaves the dialog's buttons in view when its
+list fits on both, and stays anchored to its field when the terminal is resized: the dialog is
+placed again first, then the list next to where the field is now (or it closes when the field
+can no longer be shown).
+
 For checks of your own, subclass the dialog and override `accept(mixed $answer): bool`: it is
 asked before a button's answer closes the dialog (after a form inside was valid), and returning
 false keeps it open (show the errors in its content). It is not asked for the cancel answer.
@@ -399,7 +419,7 @@ new Form(
 |---|---|
 | `new Form(Element $content, ?Closure $onSubmit = null, ?Closure $validate = null)` | `$content` (a prop) holds the fields; `$validate(array $values, Form $form): array` returns the errors by field id; `$onSubmit(array $values, Form $form)` is called for a submit without errors. |
 | `submit(): bool` | Validate and submit (true when valid). With errors: each field in error is in the state `:invalid` (the default theme: the error colour), the messages show under the content (part `Form::error`), the first field in error gets the focus. Without: `$onSubmit`, then the event `submit` (with the form). |
-| `values(): array`, `fields(): array`, `errors(): array` | The values and the fields by id, the errors of the last submit. |
+| `values(): array`, `fields(): array`, `errors(): array` | The values and the fields by id, the errors of the last submit. Once the form has ended (its dialog closed), `values()` gives the values of its last submit. |
 | `nextField`, `previousField` | Tab and Shift-Tab: from field to field in the order of the tree (buttons included), around; inside a component that moves the focus with Tab too (a `Dialog`), on from the last field to what follows (the dialog's buttons). |
 | `enter()` | Enter and Alt-Enter: `submit()`, the key taken also when the values are not valid. |
 
@@ -457,7 +477,8 @@ $tabs->setTabs([...$open, 'new' => ['label' => 'New', 'content' => new Editor()]
 | `?Closure $onClose` | `fn(string $key, Tabs $tabs)`: a tab is asked to close (the `×`, a middle click, Delete). It decides: call `close($key)` or `setTabs()`. Without it the tab is removed and its component disposed. The event `close` is emitted either way. |
 
 **Hidden tabs keep their state.** A content that is a component is started when the tabs are
-and lives until its tab goes: hidden, it is not laid out but it is not stopped either. A
+and lives until its tab goes (it is a kept child, see [kept-alive children](components.md#kept-alive-children)):
+hidden, it is not laid out but it is not stopped either; `setTabs()` without it stops it. A
 `Terminal` in a hidden tab goes on running and receiving output (it starts when its tab is
 first shown, because a terminal starts when it is sized); an `Editor` keeps its text, a `Log`
 goes on collecting. A content that is a plain element is built into the tree while its tab is
@@ -478,9 +499,10 @@ focus into the shown content (a content with nothing to focus keeps it on the ba
 closes the current tab when it is closable. In the content: Escape moves the focus back to the
 bar, but only when the content did not take it (an `Editor` with a selection clears it first),
 and never for a `Terminal`, which keeps Escape and all other keys. Before the content sees them,
-and from the bar or the content alike: Ctrl-Tab and Ctrl-Shift-Tab (around), Alt-1 to Alt-9 (the
-focus follows into the new tab's content when it was in the content). Rebind the bar's keys with
-`bind()`.
+and from the bar or the content alike: Ctrl-Tab and Ctrl-Shift-Tab (around; bindings marked
+`first`, actions `nextTab` and `previousTab`), Alt-1 to Alt-9 (the focus follows into the new
+tab's content when it was in the content). Escape is a plain binding: it comes after the
+content. Rebind the keys with `bind()`; `Help` lists them.
 
 **Mouse.** A click on a tab selects it and gives the bar the focus; a click on its `×` or a
 middle click closes it; the wheel over the bar steps to the previous or next tab; `‹` and `›`
@@ -494,20 +516,23 @@ when the current tab leaves it.
 **Style**: `Tabs`; parts `Tabs::bar` (the row; give it a background), `Tabs::tab` with the states
 `current`, `hover` and `focused` (the current tab while the bar has the focus, so
 `Tabs::tab:current:focused`), `Tabs::hint`, `Tabs::close` and `Tabs::more` (`‹` `›`). Parts
-compose in that order, so a tab inherits the bar's background. The default theme: muted tabs,
-the current one bold and underlined in the accent colour, inverted while the bar has the focus.
+compose in that order, in the tab's states, so a tab inherits the bar's background and a hint
+or a `×` the tab's colours. The default theme: muted tabs, the current one bold and underlined
+in the accent colour, inverted while the bar has the focus, the one under the mouse in the
+accent colour (a `Tabs::tab:hover` rule is what makes the bar follow the mouse).
 
 ## ProgressBar and Spinner
 
 ```php
-new ProgressBar($done / $total, label: "$done/$total files")    // ███████░░░░ 7/12 files
+new ProgressBar($done / $total, label: "$done/$total files")    // ███████░░░░ 7/12 files 58%
+new ProgressBar($v, label: 'upload {percent} of 2 GB')           // ███░░░░░░░░ upload 30% of 2 GB
 new ProgressBar(null, label: 'connecting')                       // indeterminate: moves by itself
 new Spinner('saving')                                            // ⠹ saving, spins by itself
 ```
 
 | | |
 |---|---|
-| `new ProgressBar(?float $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label after it, or the percentage without one. Null: indeterminate, a block moving to and fro (animated by the bar itself). `$value` and `$label` are props; `setValue(?float $value, ?string $label = null)`. Style: `ProgressBar`, part `ProgressBar::bar`. |
+| `new ProgressBar(?float $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label and the percentage after it, the percentage alone without a label. A label holding `{percent}` (`58%`) or `{value}` (`0.58`) is shown with them filled in, and no percentage after. The label takes at most half the width (cut with "…"); nothing is drawn past the bar's width. Null: indeterminate, a block moving to and fro (animated by the bar itself). `$value` and `$label` are props; `setValue(?float $value, ?string $label = null)`. Style: `ProgressBar`, part `ProgressBar::bar`. |
 | `new Spinner(string $label = '', array $frames = Spinner::DOTS, float $interval = 0.08, ...attributes)` | A sign cycling through `$frames` (`Spinner::DOTS`, `Spinner::LINE`, or yours) every `$interval` seconds while it is shown, then the label. No coroutine of yours: show it while something runs, take it out of the tree after. `frame(): int`. Style: `Spinner`, part `Spinner::sign`. |
 
 ## Markdown
