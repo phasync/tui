@@ -514,7 +514,8 @@ the terminal is restored. An exception in the root component, in a coroutine of 
 code that started it does the same and is then thrown to you, by `start()` or by
 `fiber\run()`, with the terminal already given back. `Tui::run($root)`, `Tui::inline($root)`
 and `Tui::headless($root, $cols, $rows)` are the runner: they start the root, quit it on Ctrl-Q
-when nothing binds that key, and return when it ended. A `Pty` you start yourself is yours to end.
+when nothing binds that key (or when `Tui::quit()` is called, or a key bound to `'quit'` is
+pressed), and return when it ended. A `Pty` you start yourself is yours to end.
 
 **Test it headless.** `FakeTerminal` is a terminal device in memory; what it shows must equal
 the root's cells, and input is encoded as a real terminal would: `type()` for text, `press()`

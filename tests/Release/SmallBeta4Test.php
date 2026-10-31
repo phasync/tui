@@ -81,15 +81,16 @@ it('starts a Select at the value given, one or several, and scrolled to it', fun
     });
 });
 
-it('lets Tab walk the focus when an Editor\'s completion has no candidates', function () {
-    fiber\run(function () {
-        $t = Tui::headless(fn() => new Column([
-            new Editor('', maxLines: 1, complete: fn(string $word) => $word === 'ap' ? ['apple', 'apricot'] : []),
-            new Button('OK'),
-        ]), 40, 8);
+it('lets Tab walk the focus when an Editor\'s completion has no candidates', function (string $shape) {
+    fiber\run(function () use ($shape) {
+        $editor = new Editor('', maxLines: $shape === 'multi-line' ? 0 : 1, complete: fn(string $word) => $word === 'ap' ? ['apple', 'apricot'] : []);
+        $t = Tui::headless(fn() => match ($shape) {
+            'in a Box' => new \phasync\Tui\Element\Row([new \phasync\Tui\Element\Box($editor), new Button('OK')]),
+            'in a Form' => new \phasync\Tui\Component\Form(new Column([$editor, new Button('OK')])),
+            default => new Column([$editor, new Button('OK')]),
+        }, 40, 8);
         try {
             $t->settle();
-            $first = $t->component();
             $editor = fn() => focusedKindSmall($t);
             expect($editor())->toBe('Editor');
             $t->type('zz');
@@ -108,7 +109,7 @@ it('lets Tab walk the focus when an Editor\'s completion has no candidates', fun
             $t->detach();
         }
     });
-});
+})->with(['single-line', 'multi-line', 'in a Box', 'in a Form']);
 
 /** The class name (short) of the component the keys reach. */
 function focusedKindSmall(FakeTerminal $t): string
@@ -295,4 +296,21 @@ it('ends the program when a coroutine of test code started with Tui::go() fails 
         $caught = $e->getMessage();
     }
     expect($caught)->toBe('a coroutine of the test failed');
+});
+
+it('does not throw the Tui::go() failure of an ended headless program out of the next one', function () {
+    try {
+        fiber\run(function () {
+            Tui::headless(fn() => new Text('first'), 20, 3);
+            Tui::go(fn() => throw new RuntimeException('the first program failed'));
+            fiber\sleep(0.05);
+        });
+    } catch (RuntimeException) {
+    }
+    fiber\run(function () {
+        $t = Tui::headless(fn() => new Text('second'), 20, 3);
+        $t->settle();
+        expect($t->text())->toContain('second');
+        $t->detach();
+    });
 });

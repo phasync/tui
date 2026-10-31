@@ -3,6 +3,75 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.3-beta4; TODO-0.0.3-beta4.md)
+
+- [x] 1. Tab trapped after a shown and left shell tab, in the exact shape (setTabs() every
+      render, a fresh Tree in a fresh Row): Tabs panes (51b1fa2); tests/Release/FocusBeta4Test.php
+      (child, keep, prop), the beta3 variant (tests/Component/FocusHiddenTest.php) kept
+- [x] 2. onKey: around focusable components is not a Tab stop (Component::focusOrder());
+      FocusBeta4Test (three rows, two rounds both ways, onFocus counts, `p` in row 2)
+- [x] 3. Small: Tui::quit() and the 'quit' action; Select value:; dialog focus back to the
+      deepest window still shown; Alt-number anywhere in Tabs (first bindings, overlays of
+      content count as in it); the uncaught handler (Tty::uncaught, TUI_TRACE); println()
+      markup and Text::raw(); State arrays in place; settle() line at the top of the testing
+      section; failing test code under Tui::headless(); tests/Release/SmallBeta4Test.php,
+      FailureTest (concise message, TUI_TRACE)
+- [x] CHANGELOG, docs (widgets.md Tabs rule and panes, components.md onKey stops and State
+      arrays, terminal.md println/uncaught/testing), README
+
+Not reproduced in this tree, tests kept in the reported shape and variants: the dialog that
+gave the focus to the first focusable thing (four openers: keys:, a Button, an onKey card, a
+coroutine; also class components with fields in a Box, a Select, Tabs), the Editor completion
+that swallowed Tab (single-line, multi-line, in a Box, in a Form, in a Dialog), and the hang
+of failing test code under Tui::headless() (run closure, dialog open, a pty that ignores
+SIGHUP, inline). The one shape that does hang is test code in a plain `fiber\go()` that fails
+while the program is on its terminal: the fiber\ gap of beta3 (below); docs/terminal.md says
+to use Tui::go() for test coroutines.
+
+## Design decisions (0.0.3-beta4)
+
+- **Tabs show each tab through a pane** (`Internal\Live` kept under `tab:<key>`, `show` set to
+  the content when it is current and changed). The pane's own Tree places the content's
+  components by position/key like any render, so a fresh instance per render hands its props
+  over (8.1) instead of becoming a new child keyed by object id (the item 1 defect: the focused
+  Tree was stopped each render; object ids being reused made it look intermittent). Components
+  of other owners (started already) are still held by the Tabs (`held:<object id>`), so the
+  owner's render does not dispose them while hidden; they are stopped when their tab goes, as
+  documented before. A hidden pane is neither laid out nor rendered.
+- **Shown means attached to the root**: `Component::shownFrom()` walks up from a component whose
+  surface's root is the surface of a component with a parent (a hidden pane's windows still
+  have viewports, in a detached tree). focus() and hasFocus() use it; a component inside a
+  hidden pane is not shown, as a component without a viewport was.
+- **placedSelf holds the components** (not only ids), so a tree that shows another owner's
+  component first-renders it when it is first shown there (the owner's render did not lay it out).
+- **Tabs::inContent()** is the pane on the focus path, or a started component of the content
+  with the focus (one focused before the pane showed it). focusContent(): the first stop of
+  focusOrder() in a laid-out pane, else the first component of the content as given that
+  takes keys (it starts when the pane first renders), else the pane.
+- **onKey: elements as stops**: in focusOrder() an element with onKey is a stop only when its
+  subtree has no stop. keyElements() already ran the onKey of elements on the focus path, so
+  nothing else changed; the onFocus diff already describes entering from outside.
+- **Alt-1..9 of Tabs are `first` bindings** (closures in bindings()), not onKey(): a `first`
+  binding also runs when the key bubbles up from an overlay the content opened (a dropdown's
+  list is hosted on the root, outside the Tabs' surface, so onKey() on the way down never saw
+  it). hasFocus() is also true while an overlay opened by a component shown inside this one
+  has the focus (so inContent() is right there).
+- **Overlay focus path**: `Overlay::$focusPath` (the whole path when it opened); closing
+  focuses the deepest of them still attached to the root, else the opener.
+- **The uncaught handler** is installed by the first `Tty::open()` when the program has none
+  (`set_exception_handler` returns the previous one; it is put back when there was one). It
+  restores open terminals, prints class/message/file:line per previous exception, the trace
+  with `TUI_TRACE`, and exits 255. Headless (FakeTerminal) programs keep PHP's.
+- **State arrays in place**: `__get` returns by reference; a read outside a render of an
+  array keeps a copy (`$lent`, copy-on-write so free until written) and schedules one check at
+  the next tick (`fiber\go` + `sleep(0)`), also run by the component flusher before a frame
+  (`State::flush()`); the check compares with `!==` (pointer-equal arrays are compared in O(1)).
+  Reads inside a render lend nothing. `++` and assignments still go through `__set`.
+- **'quit' as an action**: runBinding maps the method name `quit` to `Tui::quit()` when the
+  component has no such method: one place, so keys:, bindings() and bind() all have it.
+- **println()** converts markup with the root component's stylesheet (the theme in force), a
+  `Text` by its runs (spans computed by the sheet), `Text::raw()` as written.
+
 ## Status (0.0.3-beta3; TODO-0.0.3-beta3.md, SPEC 9.1 as amended)
 
 - [x] 1. Input without a class (65c36a7): `keys:` on Tui::run()/inline()/headless() (bind(first:

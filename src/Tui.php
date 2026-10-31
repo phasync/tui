@@ -68,8 +68,13 @@ final class Tui
     /** The key that quits a program run by `Tui` when nothing binds it. */
     public const QUIT = 'ctrl+q';
 
-    /** The exception of a coroutine started with go(), for the runner to throw. */
-    private static ?\Throwable $failure = null;
+    /**
+     * The exception of a coroutine started with go(), for the runner to throw, with the root
+     * it ended (null: none was running yet, the next runner throws it as it starts).
+     *
+     * @var array{\Throwable, ?\WeakReference<Component>}|null
+     */
+    private static ?array $failure = null;
 
     /**
      * Start a coroutine of the program, as `fiber\go()` does, except that an exception in it
@@ -99,8 +104,9 @@ final class Tui
             try {
                 $task();
             } catch (\Throwable $e) {
-                self::$failure ??= $e;
-                Component::runningRoot()?->dispose();
+                $root = Component::runningRoot();
+                self::$failure ??= [$e, $root === null ? null : \WeakReference::create($root)];
+                $root?->dispose();
                 throw $e;
             }
         });
@@ -196,7 +202,7 @@ final class Tui
                     $app->dispose();
                 }
                 echo rtrim($inline ? $terminal->frozen() : $screen), "\n";
-                self::rethrow();
+                self::rethrow($app);
                 return $app;
             }
             $app = self::start($root, $device, $theme, $keys);
@@ -205,18 +211,32 @@ final class Tui
             } finally {
                 $app->dispose();
             }
-            self::rethrow();
+            self::rethrow($app);
             return $app;
         });
     }
 
-    /** A coroutine of go() failed: its exception comes out of the runner. */
-    private static function rethrow(): void
+    /**
+     * A coroutine of go() failed: its exception comes out of the runner of the program it
+     * ended ($app), or out of the next runner when it ended none. One that ended another
+     * program (a headless one, whose exception reached `fiber\run()` through its coroutine) is
+     * not thrown by a program after it.
+     */
+    private static function rethrow(?Component $app = null): void
     {
-        if (self::$failure !== null) {
-            [$e, self::$failure] = [self::$failure, null];
-            throw $e;
+        if (self::$failure === null) {
+            return;
         }
+        [$e, $root] = self::$failure;
+        $ended = $root?->get();
+        if ($root !== null && $ended !== $app) {
+            if ($ended === null || !$ended->isMounted()) {
+                self::$failure = null;      // (another program's, ended: not this one's)
+            }
+            return;
+        }
+        self::$failure = null;
+        throw $e;
     }
 
     /**

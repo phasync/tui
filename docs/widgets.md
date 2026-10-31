@@ -156,6 +156,7 @@ new Select(
 | `?Closure $onActivate` | `fn($key, Select $s)`: Enter, or a click on the current item. |
 | `?Closure $onChange` | `fn(array $keys, Select $s)`: the marked items changed. |
 | `bool $dropdown = false` | A one-line field showing the current item, that opens its list in an overlay. A prop. |
+| `int\|string\|array\|null $value = null` | What is picked at the start: the key of the current item (`value: 'm'`), or with `multiple` the keys of the marked items (`value: ['a', 'c']`); keys that are not items are left out. Like `Checkbox`'s `checked:`, the first instance's only: a render that makes the `Select` anew does not take the user's choice back (`setCurrent()`, `setSelection()` do). |
 
 **Which callback when**: `onSelect` fires whenever the current (highlighted) item changes, by
 the arrow keys, a click, the filter or `setCurrent()`; `onActivate` when the user picks the

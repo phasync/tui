@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.0.3-beta4 (2026-11-01)
+
+Two focus defects fixed at their cause, and the last rough edges of the one-file program.
+Everything from 0.0.3-beta3 works as before, except where an entry says what changed.
+
+**Focus**
+
+- Tab is no longer trapped on the table after a shell tab was shown and left, in an owner
+  whose `render()` calls `setTabs()` every time with a fresh `new Tree(...)` inside a fresh
+  `Row` (and a `Terminal` made with `child()`, `keep()` or kept as a prop): Tab walks table →
+  tree → tab bar → table again, Shift-Tab back. The cause: `Tabs` kept the components of a tab
+  by object, so the fresh `Tree` of every render became a new running tree, and the one with
+  the focus was stopped. Changed: **each tab's content is shown by a pane of its own that lays
+  it out like any render**, so the components in a tab are matched by their place (or `key:`):
+  a `new Tree()` made by every render is one tree all along, which takes the new props and
+  keeps its expansion, selection and focus. Components of a tab never shown yet start when the
+  tab is first shown (before, those in an element tree started with the tabs).
+- Tab no longer skips the first `Button` of every row once the `Row` has `onKey:`. An element
+  with `onKey:` around components that take keys is **not a stop of the Tab walk** any more:
+  Tab visits its buttons exactly as without `onKey:`, its keys apply while one of them has the
+  focus (`p` pauses the row whose button is focused), and its `onFocus:` runs when the focus
+  enters the row from outside, not for every button in it. An element with `onKey:` and nothing
+  focusable inside (a card of text) is a stop, as before.
+- Alt-1 to Alt-9 switch tabs wherever the focus is inside a `Tabs`: also from the list of a
+  dropdown `Select` or the completions of an `Editor` in the content (before, the open list
+  swallowed them). The rule is in docs/widgets.md.
+- After a dialog closes, the focus is back where it was when it opened, also when a render
+  made the field anew meanwhile (the nearest window of that place that is still shown);
+  `hasFocus()` of a component is true while a list a component inside it opened has the focus.
+- `Component::focusOrder($surface)`: the stops of the Tab walk below a surface, in Tab order,
+  for container widgets that move the focus themselves.
+
+**One file, no class**
+
+- `Tui::quit()` ends the running program from any handler or coroutine, as Ctrl-Q does; a key
+  bound to `'quit'` does the same (`Tui::run($screen, keys: ['q' => ['quit', 'quit']])`, also
+  in `bindings()` of a component that has no `quit()` method of its own).
+- `State`: an array property changed in place is a change: `$s->progress[$i] = 0.5`,
+  `$s->items[] = $item`, `unset($s->rows[$id])` render the screen as an assignment does. Before,
+  PHP said "Indirect modification" and nothing rendered.
+- `println()` takes markup like every other string (`'<fg=green>✔</> built'`), a `Text` with
+  spans, and `Text::raw($line)` for a line printed exactly as written. Changed: a string with
+  markup tags in it (`<b>`) is no longer printed with the tags; pass `Text::raw()` for that.
+- `Select` takes the item it starts at: `new Select($items, value: 'm')`, or the marked items
+  with `multiple: true` (`value: ['a', 'c']`), like `Checkbox`'s `checked:`.
+- An exception nobody catches in a program that used the terminal (the run closure, a
+  coroutine of `Tui::go()`, a handler) is printed after the terminal is restored as class,
+  message and file:line on stderr, with the stack trace only with `TUI_TRACE=1`; exit status
+  255. Before, PHP's raw "Fatal error: Uncaught" with the whole trace came over the restored
+  screen. A program with its own `set_exception_handler()` keeps it.
+- `Editor` with `complete:`: Tab moves the focus on when the closure returns no candidates
+  (checked, with a test; it already did in this tree).
+
+**Testing**
+
+- docs/terminal.md says it first: call `settle()` after input and before reading the screen
+  (`text()` right after `press()` shows what the handler changed, not what a coroutine it
+  started changes later).
+- Test code that fails after `Tui::headless()` ends `fiber\run()` with its exception at once,
+  also with a dialog open, a `Terminal` running a program that ignores SIGHUP, or in inline
+  mode (tests for each). Test code in coroutines: start them with `Tui::go()`; a failing plain
+  `fiber\go()` is kept by `fiber\run()` until the program ends (a gap of fiber-interop/api,
+  documented).
+- A `Tui::go()` coroutine that failed and ended a headless program no longer makes the next
+  `Tui::headless()` (or `Tui::run()`) of the process throw that old exception as it starts: the
+  failure belongs to the program it ended.
+
 ## 0.0.3-beta3 (2026-11-01)
 
 A program without a class takes keys, the mouse and dialogs; components a program keeps stay

@@ -225,9 +225,11 @@ and returns the terminal, for tests (`inline: true` for inline mode). Under `Tui
 quits** when no component on the key's way binds it (a `Help` element lists it as "quit");
 `$root` may be an element tree or a closure (see "Without a class").
 
-- **Quitting.** Dispose the root component (`$this->dispose()` in its key handler), close the root
-  surface (`$this->surface->root()->close()` from anywhere), or detach the device; each leads to
-  the others. The whole tree is disposed: every `Terminal` hangs its program up, every
+- **Quitting.** Dispose the root component (`$this->dispose()` in its key handler), call
+  `Tui::quit()` from any handler or coroutine (also as a key action: `'q' => ['quit', 'quit']`
+  in `keys:` or `bindings()`, on a component without a `quit()` method of its own), close the
+  root surface (`$this->surface->root()->close()` from anywhere), or detach the device; each
+  leads to the others. The whole tree is disposed: every `Terminal` hangs its program up, every
   component's coroutines are told to stop, and the terminal is given back. Then nothing is left
   running and `fiber\run()` returns. (A `Pty` you started yourself with `Pty::start()` is not
   part of the tree; end it yourself.)
