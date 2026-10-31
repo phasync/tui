@@ -61,6 +61,10 @@ final class Stylesheet
     /** @var array<string, mixed> */
     private array $vars;
     private static ?Stylesheet $default = null;
+    /** How many answers of compute() are kept before the memo starts again. */
+    private const MEMO = 20000;
+    /** @var array<string, array{ComputedStyle, ?ComputedStyle}> compute()'s answers by question, with the parent they inherit from */
+    private array $memo = [];
 
     /**
      * @param array<string, array<string, mixed>> $rules properties by selector, in order
@@ -167,6 +171,7 @@ final class Stylesheet
     public function with(array $rules = [], array $vars = []): self
     {
         $copy = clone $this;
+        $copy->memo = [];
         $copy->vars = [...$this->vars, ...$vars];
         $copy->add($rules);
         return $copy;
@@ -202,6 +207,31 @@ final class Stylesheet
         if ($element->attribute('disabled') && !\in_array('disabled', $states, true)) {
             $states[] = 'disabled';
         }
+        // the same question gives the same answer: computed once per selector match, not per
+        // element per frame (the entry holds the parent, so its object id stays its own)
+        $inline = $element->attribute('style');
+        $key = $element::class . '#' . $element->attribute('id') . '.' . implode('.', $element->attribute('class'))
+            . ':' . implode(':', $states) . '::' . (\is_array($part) ? implode('>', $part) : $part)
+            . ':' . implode(':', $partStates) . '|' . ($inline === [] ? '' : serialize($inline))
+            . '|' . ($parent === null ? '' : spl_object_id($parent));
+        if (isset($this->memo[$key])) {
+            return $this->memo[$key][0];
+        }
+        if (\count($this->memo) >= self::MEMO) {
+            $this->memo = [];
+        }
+        $style = $this->computeNow($element, $states, $parent, $part, $partStates);
+        $this->memo[$key] = [$style, $parent];
+        return $style;
+    }
+
+    /**
+     * @param string|list<string>|null $part
+     * @param list<string> $states
+     * @param list<string> $partStates
+     */
+    private function computeNow(Element $element, array $states, ?ComputedStyle $parent, string|array|null $part, array $partStates): ComputedStyle
+    {
         if (\is_array($part)) {
             $style = $this->compute($element, $states, $parent);
             foreach ($part as $name) {

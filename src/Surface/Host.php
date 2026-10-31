@@ -23,6 +23,8 @@ final class Host
 
     /** @var list<Viewport> bottom first */
     public array $viewports = [];
+    /** @var array<int, Viewport> the same viewports by the object id of their surface */
+    private array $bySource = [];
     public ?Viewport $focus = null;
     /** A hosted surface changed (or a viewport did) since the last compose. */
     public bool $dirty = false;
@@ -67,6 +69,7 @@ final class Host
                 $child->joinTree();
             }
             $this->viewports[] = $view;
+            $this->bySource[spl_object_id($child)] = $view;
             $child->shownThrough($view, true);
             $this->offs[spl_object_id($view)] = [
                 $child->on('change', fn() => $this->markDirty()),
@@ -79,6 +82,7 @@ final class Host
                 $child->on('bell', fn() => $this->surface->write("\x07")),
             ];
             // the focus settles when the change to the tree is complete (Surface::changeTree())
+            Surface::focusMayMove($this->surface);
             $this->markDirty();
             Surface::geometryChanged();
         } else {
@@ -108,12 +112,7 @@ final class Host
 
     public function find(Surface $child): ?Viewport
     {
-        foreach ($this->viewports as $v) {
-            if ($v->source === $child) {
-                return $v;
-            }
-        }
-        return null;
+        return $this->bySource[spl_object_id($child)] ?? null;
     }
 
     public function unhost(Surface $child): void
@@ -126,7 +125,7 @@ final class Host
         foreach ($this->offs[$id] as $off) {
             $off();
         }
-        unset($this->offs[$id]);
+        unset($this->offs[$id], $this->bySource[spl_object_id($child)]);
         $this->viewports = array_values(array_filter($this->viewports, fn(Viewport $v) => $v !== $view));
         $child->shownThrough($view, false);
         if ($this->capture === $view) {
@@ -136,6 +135,7 @@ final class Host
         if ($this->focus === $view) {
             $this->focus = null;    // settled again when the change to the tree is complete
         }
+        Surface::focusMayMove($this->surface);
         $this->markDirty();
         Surface::geometryChanged();
     }
@@ -147,6 +147,7 @@ final class Host
             return;
         }
         $this->viewports = [...array_filter($this->viewports, fn(Viewport $v) => $v !== $view), $view];
+        Surface::focusMayMove($this->surface);
         $view->invalidate();
         $this->markDirty();
     }

@@ -22,7 +22,7 @@
 # them to the cells. Nothing is applied while a sequence is still being matched, so a sequence
 # that is retried with the next chunk never acts twice.
 
-Stream = Item* $
+Stream = (!$ Item)* $          # (an item is only looked for where input is left)
 
 Item = Text
      | Control
@@ -52,8 +52,11 @@ Embedded = /[\x00-\x17\x19\x1c-\x1f\x7f]/
 #
 # The characters are collected in order (with any embedded controls); the emulator checks this
 # structure and ignores a sequence that does not follow it (a parameter character after an
-# intermediate, a private marker after a parameter, a non-ASCII character).
-Csi = /\x1b/ pre:Embedded* "[" body:CsiChar* end:CsiEnd   <? $state['vt']->csi($pre, $body, $end); return true; ?>
+# intermediate, a private marker after a parameter, a non-ASCII character). The first alternative
+# is the well-formed sequence with nothing embedded, which is what programs send: the same
+# sequence the general rule takes, matched as one terminal and handed over as it stands.
+Csi = /\x1b\[[<=>?]?[0-9:;]*[\x20-\x2f]*[\x40-\x7e]/   <? $state['vt']->csiSequence($_0); return true; ?>
+    | /\x1b/ pre:Embedded* "[" body:CsiChar* end:CsiEnd   <? $state['vt']->csi($pre, $body, $end); return true; ?>
     | /\x{9b}/ body:CsiChar* end:CsiEnd                   <? $state['vt']->csi([], $body, $end); return true; ?>
 
 CsiChar = /[\x20-\x3f]+/

@@ -25,6 +25,8 @@ final class LayoutItem
     /** The most cells its content size may take (`max-width`, `max-height`), null for no limit. */
     public ?int $maxWidth = null;
     public ?int $maxHeight = null;
+    /** @var array<string, array{int,int}|null> natural() by room, for an item with no component below */
+    private array $naturals = [];
 
     public function __construct(
         public readonly Surface $surface,
@@ -39,6 +41,22 @@ final class LayoutItem
      * `max-width`/`max-height` (an item that takes any room takes up to them).
      */
     public function natural(int $cols, int $rows): ?array
+    {
+        if (!$this->focusable) {
+            // (nothing below changes by itself: the answer for a room stays the answer)
+            $key = $cols . ',' . $rows;
+            if (\array_key_exists($key, $this->naturals)) {
+                return $this->naturals[$key];
+            }
+            if (\count($this->naturals) > 16) {
+                $this->naturals = [];
+            }
+            return $this->naturals[$key] = $this->measureNow($cols, $rows);
+        }
+        return $this->measureNow($cols, $rows);
+    }
+
+    private function measureNow(int $cols, int $rows): ?array
     {
         $n = $this->measure === null ? null : ($this->measure)(min($cols, $this->maxWidth ?? $cols), min($rows, $this->maxHeight ?? $rows));
         if ($this->maxWidth === null && $this->maxHeight === null) {

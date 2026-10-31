@@ -21,6 +21,8 @@ final class ElementLayout implements Layout
 
     /** @var \WeakMap<Surface, string>|null the fill last written on each host */
     private static ?\WeakMap $filled = null;
+    /** @var \WeakMap<Surface, array{int, int, list<array{int,int,int,int}>}>|null where this layout put its items on each host, at which host size */
+    private ?\WeakMap $arranged = null;
 
     /**
      * @param list<LayoutItem>       $items
@@ -41,11 +43,53 @@ final class ElementLayout implements Layout
         $cols = $host->cols();
         $rows = $host->rows();
         $this->fill($host);
+        $rects = $this->rects($cols, $rows);
+        $this->arranged ??= new \WeakMap();
+        if (($this->arranged[$host] ?? null) === [$cols, $rows, $rects] && $this->stillHosted($host)) {
+            // as arranged last time: the windows stay; only what holds components looks again,
+            // since a component below may want another size now
+            foreach ($this->items as $item) {
+                $host->host($item->surface);
+                if ($item->layout !== null && $item->focusable) {
+                    $item->surface->setLayout($item->layout);
+                }
+            }
+            return;
+        }
+        $this->arranged[$host] = [$cols, $rows, $rects];
+        foreach ($this->items as $i => $item) {
+            self::place($host, $item, ...$rects[$i]);
+        }
+        if ($this->kind === self::LAYERS) {
+            // the hosting order is the z-order: keep it the layers' order
+            $order = array_map(fn(LayoutItem $item) => $item->surface, $this->items);
+            $current = [];
+            foreach ($host->viewports() as $v) {
+                if (\in_array($v->source, $order, true)) {
+                    $current[] = $v->source;
+                }
+            }
+            if ($current !== $order) {
+                foreach ($order as $surface) {
+                    $host->raise($surface);
+                }
+            }
+        }
+    }
+
+    /**
+     * Where each item goes on a host of $cols x $rows, as [x, y, width, height].
+     *
+     * @return list<array{int,int,int,int}>
+     */
+    private function rects(int $cols, int $rows): array
+    {
+        $rects = [];
         switch ($this->kind) {
             case self::SINGLE:
                 [$t, $r, $b, $l] = $this->padding;
                 foreach ($this->items as $item) {
-                    self::place($host, $item, $l, $t, $cols - $l - $r, $rows - $t - $b);
+                    $rects[] = [$l, $t, max(0, $cols - $l - $r), max(0, $rows - $t - $b)];
                 }
                 break;
             case self::COLUMN:
@@ -66,15 +110,13 @@ final class ElementLayout implements Layout
                     $sizes[] = Size::parse($spec);
                 }
                 $at = 0;
-                foreach (Size::distribute($sizes, $room) as $i => $size) {
-                    $across
-                        ? self::place($host, $this->items[$i], $at, 0, $size, $rows)
-                        : self::place($host, $this->items[$i], 0, $at, $cols, $size);
+                foreach (Size::distribute($sizes, $room) as $size) {
+                    $size = max(0, $size);
+                    $rects[] = $across ? [$at, 0, $size, $rows] : [0, $at, $cols, $size];
                     $at += $size + $this->gap;
                 }
                 break;
             case self::LAYERS:
-                $order = [];
                 foreach ($this->items as $item) {
                     $natural = $item->width === 'auto' || $item->height === 'auto' ? $item->natural($cols, $rows) : null;
                     $w = self::measure($item->width, $cols, $natural[0] ?? $cols);
@@ -84,23 +126,22 @@ final class ElementLayout implements Layout
                         'right' => [$cols - $w, 0],
                         default => [0, 0],
                     };
-                    self::place($host, $item, $x, $y, $w, $h);
-                    $order[] = $item->surface;
-                }
-                // the hosting order is the z-order: keep it the layers' order
-                $current = [];
-                foreach ($host->viewports() as $v) {
-                    if (\in_array($v->source, $order, true)) {
-                        $current[] = $v->source;
-                    }
-                }
-                if ($current !== $order) {
-                    foreach ($order as $surface) {
-                        $host->raise($surface);
-                    }
+                    $rects[] = [$x, $y, max(0, $w), max(0, $h)];
                 }
                 break;
         }
+        return $rects;
+    }
+
+    /** True if every item's surface is still a window of $host (nothing took one away since). */
+    private function stillHosted(Surface $host): bool
+    {
+        foreach ($this->items as $item) {
+            if ($host->viewport($item->surface) === null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Fill the host with the background when it changed (so the windows are not repainted for nothing). */

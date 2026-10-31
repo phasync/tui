@@ -204,11 +204,17 @@ final class Viewport
             if (!isset(self::BORDERS[$border])) {
                 throw new \InvalidArgumentException("Unknown border '$border'; one of " . implode(', ', array_keys(self::BORDERS)));
             }
-            $this->borderKind = $border;
         }
+        $kind = \is_string($border) ? $border : $this->borderKind;
+        $style ??= $this->borderStyle;
+        $focusStyle ??= $this->focusStyle;
+        if ($kind === $this->borderKind && ($border !== false) === $this->border && $style === $this->borderStyle && $focusStyle === $this->focusStyle) {
+            return $this;   // (a layout sets it on every arrange: nothing to repaint)
+        }
+        $this->borderKind = $kind;
         $this->border = $border !== false;
-        $this->borderStyle = $style ?? $this->borderStyle;
-        $this->focusStyle = $focusStyle ?? $this->focusStyle;
+        $this->borderStyle = $style;
+        $this->focusStyle = $focusStyle;
         $this->fitSource();
         $this->owner->changed($this);
         return $this;

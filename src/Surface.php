@@ -60,6 +60,10 @@ final class Surface implements \Stringable
     private static int $focusClock = 0;
     /** Changes to the tree in progress; the focus settles when the outermost one ends. */
     private static int $treeChanges = 0;
+    /** @var array<int, Surface> surfaces where something the focus depends on changed: their trees settle */
+    private static array $unsettled = [];
+    /** Counts the changes of focus requests and focus paths, for those who keep an answer about the focus. */
+    private static int $focusVersion = 0;
     /** @var \WeakMap<Surface, true>|null surfaces with `area` listeners */
     private static ?\WeakMap $areaWatchers = null;
     /** A window moved, was resized, scrolled, hosted or unhosted since the areas were checked. */
@@ -682,7 +686,7 @@ final class Surface implements \Stringable
     public function focus(): void
     {
         $this->focusStamp = ++self::$focusClock;
-        $this->changeTree(static fn() => null);
+        self::focusMayMove($this);
     }
 
     /**
@@ -694,7 +698,7 @@ final class Surface implements \Stringable
     public function takeFocus(): void
     {
         $this->focusStamp = $this->keepStamp = ++self::$focusClock;
-        $this->changeTree(static fn() => null);
+        self::focusMayMove($this);
     }
 
     /**
@@ -731,8 +735,48 @@ final class Surface implements \Stringable
             return $change();
         } finally {
             if (--self::$treeChanges === 0) {
-                $this->root()->settleFocus();
+                self::settle();
                 self::checkAreas();
+            }
+        }
+    }
+
+    /**
+     * @internal Something the focus of $surface's tree depends on changed (a focus request, a
+     * window hosted, unhosted or raised, a surface's focusability): the tree settles when the
+     * change to it is complete. Moving and resizing windows, which happens on every layout,
+     * changes nothing for the focus, so a re-render that keeps its windows settles nothing.
+     */
+    public static function focusMayMove(Surface $surface): void
+    {
+        self::$focusVersion++;
+        self::$unsettled[spl_object_id($surface)] = $surface;
+        if (self::$treeChanges === 0) {
+            self::settle();
+        }
+    }
+
+    /**
+     * @internal A number that changes whenever a focus request is made or a focus path may have
+     * changed: an answer about the focus computed at the same number is still right.
+     */
+    public static function focusVersion(): int
+    {
+        return self::$focusVersion;
+    }
+
+    /** Settle the focus of every tree something changed in (each root once). */
+    private static function settle(): void
+    {
+        while (self::$unsettled !== []) {
+            $roots = [];
+            foreach (self::$unsettled as $surface) {
+                $root = $surface->root();
+                $roots[spl_object_id($root)] = $root;
+            }
+            self::$unsettled = [];
+            foreach ($roots as $root) {
+                $root->settleFocus();
             }
         }
     }
@@ -780,6 +824,7 @@ final class Surface implements \Stringable
     /** Settle the focus of the tree below this root, and announce how the focus path changed. */
     private function settleFocus(): void
     {
+        self::$focusVersion++;
         $this->rankFocus();
         $path = [$this];
         for ($s = $this; ($next = $s->focused()) !== null; $s = $next) {
@@ -871,7 +916,7 @@ final class Surface implements \Stringable
     {
         if ($focusable !== $this->focusable) {
             $this->focusable = $focusable;
-            $this->changeTree(static fn() => null);
+            self::focusMayMove($this);
         }
     }
 

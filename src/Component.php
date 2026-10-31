@@ -165,6 +165,10 @@ abstract class Component extends Element
     /** @var array<string, true> keys of the children made with keep(): no render disposes them */
     private array $kept = [];
     private bool $mounted = false;
+    /** Counts changes of what hasFocus() reads besides the surfaces: children, mounting, overlays. */
+    private static int $treeVersion = 0;
+    /** @var array{int, int, bool}|null hasFocus()'s last answer, with the versions it was found at */
+    private ?array $focusCache = null;
     private bool $rendered = false;
     private bool $renderPending = false;
     private ?Deferred $stopped = null;
@@ -222,6 +226,8 @@ abstract class Component extends Element
     private bool $asked = false;
     /** @var array<int, Component> components to render in the coming frame */
     private static array $dirty = [];
+    /** When a coroutine was started to render the coming frame (0: none is on its way). */
+    private static float $frameAsked = 0.0;
     /** @var \WeakMap<Component, true>|null components whose last render showed a `Help` element */
     private static ?\WeakMap $helpShown = null;
     /** @var \WeakMap<Component, bool>|null components with `:hover` rules, and whether the mouse was over them */
@@ -388,6 +394,7 @@ abstract class Component extends Element
         self::$onSurface ??= new \WeakMap();
         self::$onSurface[$surface] = $this;
         $this->mounted = true;
+        self::$treeVersion++;
         $this->stopped = new Deferred();
         $this->ended = new Deferred();
         $this->wake = new Signal();
@@ -512,6 +519,7 @@ abstract class Component extends Element
             return;
         }
         $this->mounted = false;
+        self::$treeVersion++;
         foreach ($this->offs as $off) {
             $off();
         }
@@ -527,6 +535,7 @@ abstract class Component extends Element
             $key = array_search($this, $this->parent->children, true);
             if ($key !== false) {
                 unset($this->parent->children[$key], $this->parent->kept[$key]);
+                self::$treeVersion++;
             }
             $this->parent->ending[] = $this;
         }
@@ -534,6 +543,7 @@ abstract class Component extends Element
             $child->stop($timeout);
         }
         $this->children = [];     // (those of another owner stay theirs)
+        self::$treeVersion++;
         $this->kept = [];
         $this->stopped->resolve();
         $this->wake->notify();
@@ -720,10 +730,17 @@ abstract class Component extends Element
         }
         $this->renderPending = true;
         self::$dirty[spl_object_id($this)] = $this;
-        \fiber\go(static function (): void {
-            \fiber\sleep(0);
-            self::renderFrame();
-        });
+        $now = microtime(true);
+        if ($now - self::$frameAsked > 0.5) {
+            // one coroutine renders everything asked for in this moment (one asked for long ago
+            // is gone with a runtime that ended, or the loop is blocked: another does no harm)
+            self::$frameAsked = $now;
+            \fiber\go(static function (): void {
+                \fiber\sleep(0);
+                self::$frameAsked = 0.0;
+                self::renderFrame();
+            });
+        }
     }
 
     /**
@@ -883,6 +900,18 @@ abstract class Component extends Element
         if (!$this->mounted) {
             return false;
         }
+        // (asked for every element of every render: kept while neither the focus nor the tree changed)
+        $focus = Surface::focusVersion();
+        if ($this->focusCache !== null && $this->focusCache[0] === $focus && $this->focusCache[1] === self::$treeVersion) {
+            return $this->focusCache[2];
+        }
+        $has = $this->findFocus();
+        $this->focusCache = [$focus, self::$treeVersion, $has];
+        return $has;
+    }
+
+    private function findFocus(): bool
+    {
         foreach ($this->overlays as $overlay) {
             if ($overlay->content->hasFocus()) {
                 return true;    // (a dropdown's field while its list has the keys)
@@ -991,6 +1020,7 @@ abstract class Component extends Element
                 return $this->children[$key];
             }
             unset($this->children[$key]);     // one of another owner's, disposed by it
+            self::$treeVersion++;
         }
         if ($create === null) {
             return null;
@@ -1005,10 +1035,12 @@ abstract class Component extends Element
             }
             // started already (by its owner): shown here, and its owner's still
             $this->children[$key] = $child;
+            self::$treeVersion++;
             return $child;
         }
         $child->parent = $this;
         $this->children[$key] = $child;
+        self::$treeVersion++;
         $child->start();
         return $child;
     }
@@ -1132,6 +1164,7 @@ abstract class Component extends Element
                         $child->stop();     // a render does not wait for its coroutines
                     } else {
                         unset($this->children[$key]);     // another owner's: no longer shown here
+                        self::$treeVersion++;
                     }
                 }
             }
@@ -1177,7 +1210,9 @@ abstract class Component extends Element
             return null;
         }
         $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
-        return $this->tree->measure($this->shown, $cols, $rows, $this->stylesheet(), $this->style(), place: false);
+        // (by the items its last render laid out; a tree it did not lay out last is measured dry)
+        $built = $this->tree->measureBuilt($this->shown, $cols, $rows);
+        return $built !== false ? $built : $this->tree->measure($this->shown, $cols, $rows, $this->stylesheet(), $this->style(), place: false);
     }
 
     /**
@@ -1713,6 +1748,7 @@ abstract class Component extends Element
             fn(Overlay $o) => $this->closeOverlay($key, $o));
         $content->overlaid = $overlay;
         $this->overlays[$key] = $overlay;
+        self::$treeVersion++;
         $root->floating[] = $overlay;
         self::$floatingRoots[spl_object_id($root)] = $root;
         $this->child($key, fn() => $content);
@@ -1803,6 +1839,7 @@ abstract class Component extends Element
     private function closeOverlay(string $key, Overlay $overlay): void
     {
         unset($this->overlays[$key]);
+        self::$treeVersion++;
         $root = $this->rootComponent();
         $root->floating = array_values(array_filter($root->floating, fn(Overlay $o) => $o !== $overlay));
         if ($root->floating === []) {

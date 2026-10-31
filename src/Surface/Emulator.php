@@ -437,6 +437,23 @@ final class Emulator
     }
 
     /**
+     * A well-formed CSI sequence with nothing embedded, as it stands (`ESC [ 1 ; 2 H`): the same
+     * as `csi()` with its pieces, without collecting them.
+     */
+    public function csiSequence(string $seq): void
+    {
+        $end = \strlen($seq) - 1;
+        $i = 2;
+        $prefix = '';
+        if (strspn($seq, '<=>?', 2, 1) === 1) {
+            $prefix = $seq[2];
+            $i = 3;
+        }
+        $n = strspn($seq, '0123456789:;', $i, $end - $i);
+        $this->dispatchCsi($prefix, substr($seq, $i, $n), substr($seq, $i + $n, $end - $i - $n), $seq[$end]);
+    }
+
+    /**
      * Main parameter values; an omitted parameter is null. Sub-parameters after ':' are dropped
      * here (SGR reads the raw string).
      *
