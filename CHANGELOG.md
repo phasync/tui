@@ -1,5 +1,115 @@
 # Changelog
 
+## 0.0.3-beta1 (2026-10-31)
+
+A program can be one file without a class, styled with Tailwind's utility classes, with markup
+in its text. Everything from 0.0.2-beta5 works as before, except where an entry says what
+changed.
+
+**One file, no class**
+
+- `Tui::run()`, `Tui::inline()` and `Tui::headless()` take an element tree, a component, or a
+  closure returning either. A closure is a component: it is rendered when the screen is shown
+  and again whenever a `State` it read changes, so this is a whole program:
+
+  ```php
+  $s = new State(['done' => 0]);
+  fiber\run(function () use ($s) {
+      fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+      Tui::inline(fn() => new Column([new Text("Working… {$s->done}%"), new ProgressBar($s->done / 100)]));
+  });
+  ```
+
+  Ctrl-Q quits it, as every program run by `Tui`. A closure that reads no state is called once
+  and the component it returns is the root, as before (`Tui::run(fn() => new App())`).
+  `examples/working.php` is this program; the README starts with it.
+- Element content may be a closure: `new Text(fn() => "{$s->done}%")`, a `Box` title
+  `fn() => "log ({$s->lines})"`, a `ProgressBar` value `fn() => $s->done / 100`. When a `State`
+  the closure read changes, only that element is drawn again; the component around it does not
+  render.
+- A component renders again when any `State` its `render()` read changes, not only its own
+  `$state`: a state shared between components no longer has to be each one's `$state`.
+- `new State(['done' => 0])` makes a state with those properties.
+- `Tui::headless(..., inline: true)` tests a program in inline mode.
+
+**Utility classes**
+
+- `class:` takes Tailwind's utility classes next to the program's own: padding (`p-1`, `px-2`,
+  `pt-1`), margins (`m-1`, `mx-2`), `gap-1`, borders (`border`, `border-double`,
+  `border-sky-500`, `border-none`), title placement (`title-center`), colours (`text-red-500`,
+  `bg-slate-800`, `text-[#ff5500]`, `text-bright-blue`), `bold` `dim` `italic` `underline`
+  `strike` `inverse`, text alignment, `truncate`/`nowrap`/`wrap`, sizes (`w-20`, `w-1/2`,
+  `w-full`, `max-w-40`, `h-3`), `grow`/`grow-2`/`shrink-0`, `items-center`, `justify-between`,
+  `hidden`/`block`, `flex-row`/`flex-col`. A class that is not a utility selects stylesheet
+  rules as before and is otherwise ignored.
+- Variants: `focus:`, `hover:`, `disabled:`, `selected:`, and the width variants `sm:` (under
+  60 columns), `md:` (60 to 99) and `lg:` (100 or more), combinable (`lg:focus:bold`). A layout
+  with `class: 'flex-col lg:flex-row'` stacks on a narrow terminal and stands side by side on a
+  wide one, and switches when the terminal is resized across the width.
+- Every utility is a stylesheet property, so a theme can set the same things. New properties:
+  `margin` (and `margin-top` ...), `padding-top` ... `padding-left`, `gap`, `title-align`,
+  `wrap`, `flex-grow`, `flex-shrink`, `display`, `flex-direction`, `align-items`,
+  `justify-content`; `padding` now works on every element, not only on a `Box`.
+- The order is: stylesheet rules, then the utility classes as written (a later one wins), then
+  the inline `style:`. `Stylesheet::explain($element, $states)` prints what each rule and class
+  set and which variants are in force, to find out why something looks as it does.
+- Colours: `Color::parse()` reads all the colour spellings (Tailwind names and shades, the 16
+  terminal names, palette indexes, `#hex`). The terminal device draws every cell in the nearest
+  colour the terminal has: a Tailwind colour on a 256-colour terminal is the nearest of the 256,
+  on a 16-colour terminal the nearest of the 16, where before it was sent as truecolour
+  regardless. `Tty` reads the depth from `COLORTERM` and `TERM`; `$device->colors()` and
+  `setColors()`; `new FakeTerminal(80, 24, colors: 16)` tests what a 16-colour terminal shows.
+- docs/styling.md lists every class, variant, property and markup tag.
+
+**Markup in text**
+
+- Text takes symfony/console's markup: `<b>`, `<i>`, `<u>`, `<s>`, `<dim>`, `<fg=red>`,
+  `<bg=blue>`, `<options=bold,underscore>`, `<href=https://...>`, the styles `<info>`,
+  `<comment>`, `<question>`, `<error>`, and `<span class="text-sky-400 bold">` (the stylesheet's
+  `Span.class` rules apply too); closed by `</>` or `</b>`. It works in `Text`, `Span`, `Box`
+  titles, `Button` and `Checkbox` labels, `Table` headers and cells, `Help`, `Log` lines,
+  `Select` items, `ProgressBar` labels and the text of `Markdown`.
+- Widths and wrapping count the visible text only; a tag that is not closed or not known shows
+  as written, and `\<` writes a literal `<`. A text with markup is parsed once and the result
+  kept, so a screen that re-renders the same text pays nothing again.
+- Changed: a text containing `<b>`-like tags used to show them literally; it now styles them.
+  `Text::raw('<not markup>')` shows text exactly as given, `Markup::escape()` escapes what a
+  user typed, `Markup::plain()` gives the visible text, and a widget of yours styles a label
+  with `$this->markup($label, 'part')`.
+- `Viewport::setTitle()` takes the title's alignment, and a title may carry escape sequences.
+
+**Faster**
+
+- A `Table` with `'auto'` columns measured all its rows on every cursor move: with 10,000 rows a
+  move was slow enough to feel. It now measures the cells when the rows change (once), and a
+  move through 10,000 rows costs what one through 100 does. The sorted and filtered order is
+  kept the same way. (A widget built on `Table` that filtered by overriding `shown()` now
+  overrides `filterRows()` and `filterKey()`.)
+- A `ProgressBar` whose value changes by less than a cell and a percent draws nothing: it
+  compares what it would draw with what it drew. A program that reports progress per byte no
+  longer redraws per byte.
+
+**Focus and keys**
+
+- A screen whose program focuses nothing gives the focus to its first component that takes
+  keys (top to bottom, left to right), so a form or a list answers keys at once. Before, keys
+  went to the root until something was clicked or focused.
+- Tab and Shift-Tab move the focus through the components that take keys, around, when no
+  component on the key's way binds them. A `Terminal` keeps its Tab (the shell's completion),
+  as does any component that handles the key.
+
+**Fixed and documented**
+
+- `detach()` with a `Terminal` running in a child, in a hidden tab or a shown one, or a
+  program that ignores SIGHUP, returns at once and ends the programs (a regression test covers
+  every case).
+- An inline program taller than the terminal: the region is the terminal's height less one
+  row, and what does not fit is clipped and not painted (docs/terminal.md says how to show the
+  last rows instead).
+- docs/widgets.md says in one line which `Select` callback fires when: `onSelect` whenever the
+  current item moves, `onActivate` when the user picks it (Enter, a click, a dropdown's
+  choice), `onChange` when the marked items change.
+
 ## 0.0.2-beta5 (2026-10-31)
 
 Frames cost a fraction of what they did, the focus follows into every kind of tab, and a

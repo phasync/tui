@@ -30,6 +30,43 @@ fiber\run(function () {
 });                                                 // returns once it has quit
 ```
 
+## One file, no class
+
+A screen that only shows state needs no class: an element tree and a runner.
+
+```php
+use phasync\Tui\{State, Tui};
+use phasync\Tui\Element\{Column, Text};
+use phasync\Tui\Component\ProgressBar;
+
+fiber\run(function () {
+    $s = new State(['done' => 0]);
+    fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+    Tui::inline(fn() => new Column([
+        new Text("Working… {$s->done}%"),
+        new ProgressBar($s->done / 100),
+    ]));
+});
+```
+
+**A closure is a component.** `Tui::run()`, `Tui::inline()` and `Tui::headless()` take an
+element, a component, or a closure that returns either. The closure is rendered (called) when
+the screen is shown and again whenever a `State` it read changes (see "State" below): here,
+every write of `$s->done`. It has no keys of its own, and quits on Ctrl-Q like every program
+run by `Tui`. A closure that reads no state is called once, and the component it returns is the
+root itself (`Tui::run(fn() => new App())`).
+
+**Element content may be a closure**, so one value can change in a screen that is otherwise
+built once: `new Text(fn() => "{$s->done}%")`, a `Box` title `fn() => "log ({$s->lines})"`, a
+`ProgressBar` value `fn() => $s->done / 100`. Such an element is a small component of its own:
+when a `State` its closure read changes, only it is drawn again, and the component that placed
+it does not render.
+
+`fiber\go()` must be called inside `fiber\run()` (fiber-interop/api throws `NotInRunException`
+otherwise), which is why the program above is wrapped in one; the runners work inside a
+`fiber\run()` of yours. Classes stay for anything with behaviour of its own (keys, coroutines
+that belong to it, children kept by key); a closure component is the same thing without a name.
+
 ## Lifecycle
 
 1. `start(Surface|TerminalDevice|null $on = null)` mounts a root component: on a terminal
@@ -104,9 +141,9 @@ fiber\run(function () {
 root, waits until it has quit, gives the terminal back and returns the root component (to read
 what it collected). `Tui::inline($root, keep: true)` does the same in inline mode, and
 `Tui::headless($root, $cols, $rows)` starts it on a `FakeTerminal` inside your own `fiber\run()`
-and returns the terminal, for tests. Under `Tui`, **Ctrl-Q quits** when no component on the key's
-way binds it (a `Help` element lists it as "quit"); `$root` may also be a closure that makes the
-component.
+and returns the terminal, for tests (`inline: true` for inline mode). Under `Tui`, **Ctrl-Q
+quits** when no component on the key's way binds it (a `Help` element lists it as "quit");
+`$root` may be an element tree or a closure (see "One file, no class").
 
 - **Quitting.** Dispose the root component (`$this->dispose()` in its key handler), close the root
   surface (`$this->surface->root()->close()` from anywhere), or detach the device; each leads to
@@ -187,9 +224,9 @@ protected function render(): Element
 | `Column(array $children, int $gap = 0)` | Children on top of each other (as `Split::vertical()`); each as high as its `height`. |
 | `Row(array $children, int $gap = 0)` | Children side by side (as `Split::horizontal()`); each as wide as its `width`. |
 | `Layers(array $children)` | Children over each other, the first at the bottom (as `Stack`); each `width` x `height`, placed by its `align` style (`left` top-left, `center`, `right` top-right). |
-| `Box(Element $child, string $title = '')` | A border with a title around one element; border line, colour and `padding` from the stylesheet. |
-| `Text(string\|array $content, bool $wrap = true)` | Text, wrapped between words (or cut with "…" when `wrap` is false), aligned by the `align` style; content is a string (SGR sequences allowed) or a list of strings and `Span`s. |
-| `Span(string $text, $class, $style)` | A run of text in another style, inside a `Text`. |
+| `Box(Element $child, string\|Closure $title = '')` | A border with a title around one element; border line, colour, `padding` and `title-align` from the stylesheet or classes (`border-double title-center p-1`); the title takes markup, and may be a closure (drawn again by itself). |
+| `Text(string\|array\|Closure $content, bool $wrap = true)` | Text, wrapped between words (or cut with "…" when `wrap` or the `wrap` style is false: `truncate`), aligned by the `align` style; content is a string (markup and SGR sequences allowed), a list of strings and `Span`s, or a closure returning either (drawn again by itself when the state it read changes). `Text::raw($s)` shows `$s` without markup. |
+| `Span(string $text, $class, $style)` | A run of text in another style, inside a `Text`; takes markup. |
 | `Help(?Component $for = null)` | The keys in force for the focused component (or `$for`) and its parents, as "key action" pairs. |
 | any `Component` | Its surface, where it is placed: from `child()`, or `new` (see "Props"). |
 
@@ -233,10 +270,23 @@ place in the tree is a new text, which costs only its repaint.
 
 **Focus.** Text and help do not take the focus (`Surface::setFocusable(false)`), nor do
 containers with no component in them: a `Column` of a label and a field gives the keys to the
-field. `$this->focusNext()` and `$this->focusPrevious()` go from field to field inside the
-component, around (with `wrap: false`, stopping at the last and returning false, so the key
-goes on to a parent that continues from there); bind them: `'tab' => 'focusNext',
-'shift+tab' => 'focusPrevious'`.
+field. When the program focused nothing and the keys would go to a component that does not
+take them (a `ProgressBar` above the fields), the root gives the focus to its first component
+that does. **Tab and Shift-Tab** walk the components that take keys, in the order they show,
+around, when nothing binds them (a `Terminal`'s program keeps its Tab). `$this->focusNext()`
+and `$this->focusPrevious()` go from field to field inside one component, around (with `wrap:
+false`, stopping at the last and returning false, so the key goes on to a parent that continues
+from there); bind them for a group of its own: `'tab' => 'focusNext', 'shift+tab' =>
+'focusPrevious'`.
+
+**Layout from the style.** Besides sizes, an element's style (classes or rules, see
+[styling.md](styling.md)) gives it `margin` (blank cells around it), `flex-grow` (`grow`: a share
+of the room left along its parent, at least what it needs), `flex-shrink: 0` (`shrink-0`: never
+less than it needs) and `display: none` (`hidden`: left out, as `null` would be); a `Column` or
+`Row` takes `padding`, `gap` (over its `gap:` argument), `flex-direction` (`flex-row`,
+`flex-col`: a `Row` laid out as a column and the other way round, for `flex-col lg:flex-row`),
+`align-items` (`items-center`: children as large as their content across, centred) and
+`justify-content` (`justify-between`: room left spread between the children).
 
 **Mixing.** A component may draw into its surface and return a tree in the same render: what it
 draws shows where no element covers it. Components that draw themselves (a graph with `Ansi`)
@@ -368,6 +418,12 @@ did not change does not make the parent lay out again). So: state in the row, th
 coroutine in the row, and a parent that only lists its rows. See "Performance" in
 [surface.md](surface.md#performance) for what a frame costs.
 
+**Reading subscribes.** A component whose `render()` reads a property of any `State`, not
+only its own `$this->state`, renders again when that property is written. That is how a closure
+component works, and how a component shows a state another one owns. A plain state with values
+is `new State(['done' => 0])`; a subclass with typed properties needs no constructor (one that
+has its own calls `parent::__construct()`, so that reads subscribe before a component holds it).
+
 `$state->set(count: 0, label: 'x')` assigns several properties at once. A write of the value a
 property has already renders nothing; a write of a wrong type is a `TypeError` as for any typed
 property. **Shared state**: give several components the same `State` object as their `$state`
@@ -388,21 +444,31 @@ $app->setStylesheet(Stylesheet::default()->with([
 ], vars: ['accent' => 'magenta']));
 ```
 
+Or with **utility classes** and no stylesheet at all: `class: 'border-round border-sky-500 p-1
+grow text-slate-300'`, `focus:bg-sky-800`, `flex-col lg:flex-row`. The full vocabulary, the
+properties, markup in text (`<b>`, `<fg=red>`) and how colours reach terminals of 16 and 256
+colours are in [styling.md](styling.md).
+
 Selectors: a type (the element's or component's class name; parents' names match too) or `*`,
 `#id`, `.class`, states `:focused` (on the focus path), `:disabled`, `:hover` (components, under
-the mouse), and widget parts `::part` with their own states. Properties: `color`,
-`background`, `bold`, `dim`, `italic`, `underline`, `inverse`, `strike`, `border` (kind
-`single`/`round`/`double`/`heavy`/`ascii` and/or colour, or `none`), `padding`, `align`,
-`width`, `height`, `max-width`, `max-height` (cells: the most an `'auto'` size, and an
-overlay's measured size, may take). Colours and attributes inherit down the tree. The cascade: rules by
-specificity (ids, then classes/states/parts, then types; later rules win ties), then inline
-`style:`. The default theme uses the 16 terminal colours and the variables `accent`, `muted`,
-`panel`, `error`, `success`, `warning`. See `Stylesheet` for the details.
+the mouse), `:selected` and a component's own, the screen's width class `:sm`/`:md`/`:lg`, and
+widget parts `::part` with their own states. Properties: `color`, `background`, `bold`, `dim`,
+`italic`, `underline`, `inverse`, `strike`, `border` (kind `single`/`round`/`double`/`heavy`/
+`ascii` and/or colour, or `none`), `title-align`, `padding` (and its sides), `margin` (and its
+sides), `align`, `wrap`, `width`, `height`, `max-width`, `max-height` (cells: the most an
+`'auto'` size, and an overlay's measured size, may take), `flex-grow`, `flex-shrink`,
+`display`, and for containers `gap`, `flex-direction`, `align-items`, `justify-content`.
+Colours and attributes inherit down the tree. The cascade: rules by specificity (ids, then
+classes/states/parts, then types; later rules win ties), then the utility classes in the order
+written, then inline `style:`. The default theme uses the 16 terminal colours and the variables
+`accent`, `muted`, `panel`, `error`, `success`, `warning`. `Stylesheet::explain()` tells what
+resolved for an element. See `Stylesheet` for the details.
 
 A component that draws itself asks for its look with `$this->style()` (a `ComputedStyle`:
 `text` is the `Style` for `Ansi::style()`, plus `border`, `padding`, `align`, `width`,
-`height`, `maxWidth`, `maxHeight`) and `$this->style('part', 'state')` for its parts; it renders again when its
-states change. `properties()` gives a computed style as inline properties, for a `Text` or
+`height`, `maxWidth`, `maxHeight` and the layout properties) and `$this->style('part', 'state')`
+for its parts; it renders again when its states change. A label that takes markup is drawn
+with `$this->markup($label, 'part', ...$states)`: its tags as escape sequences in that style. `properties()` gives a computed style as inline properties, for a `Text` or
 `Span` in a part's style.
 
 **Parts that apply together compose.** A run of text can be in several parts at once (a link
@@ -629,7 +695,19 @@ The rule is the same before and after the component is shown, so nothing has to 
 The latest request wins wherever it is: focusing another component, shown or not, takes the
 keys there. Of several children none of which was focused, a host gives the keys to its first
 window; a component not rendered yet gives them to its first child (as a `Box` does to its
-content). When the focused component is no longer shown, the component focused before it gets
+content).
+
+**The first focus and Tab, by default.** A program that focuses nothing still starts with a
+field that has the keys: when the first window would give them to a component that does not
+take keys (a `ProgressBar`, a `Spinner`, a label drawn by a component), the root gives the
+focus to its first component that does (`canFocus()`: one with bindings or an `onKey()` of its
+own, a `Terminal`), in the order they show, top to bottom and left to right. Once the program
+or the user focused something, the root leaves the focus alone. **Tab and Shift-Tab**, when
+nothing on the key's way binds them and the key ends at a component with keys of its own, go to
+the next (previous) such component in the same order, around; while a modal dialog is open,
+only among the components in it. A `Terminal` has no keys of its own (they go to its program),
+so a shell keeps its Tab; a component that binds `tab` (a `Form`, `Tabs`, an `Editor` with
+completion) keeps its meaning. When the focused component is no longer shown, the component focused before it gets
 the focus back.
 
 The focus belongs to the surface, not to the layout objects around it: a `render()` that builds
@@ -724,10 +802,11 @@ any other method.
 | `measure(int $cols, int $rows): ?array` | The size it needs as `[cols, rows]`, or null to take what it is given; for `'auto'` sizes. By default the size of the element tree its last render returned (null for one that draws itself); override it in a component that draws itself and knows its size. The answers are remembered until the component is marked for a render (a state write, a handler, `requestRender()`) or renders, so compute it from what goes with a render: state, props, style. |
 | `device(): ?TerminalDevice` | The terminal device its tree is shown on (`Tty`, `FakeTerminal`, also one `Tui::run()`, `Tui::inline()` or `Tui::headless()` made), or null when the tree is not attached: `$this->device()?->println('done')`, `freeze()`. |
 | `style(string\|array\|null $part = null, string ...$states): ComputedStyle` | Its look from the stylesheet in its current states, or that of a part, or of several parts composed (innermost last; see "Stylesheets"). |
+| `markup(string $text, string\|array\|null $part = null, string ...$states): string` (protected) | `$text` with its markup (`<b>`, `<fg=red>`, see [styling.md](styling.md#markup-in-text)) turned into escape sequences in the style of the component or of its part: how a widget draws a label that takes markup. |
 | `stylesheet(): Stylesheet` / `setStylesheet(Stylesheet $s)` | The stylesheet in force (its own, else its parent's, else the default); set one for the subtree. |
 | `bind(array $bindings, ?string $for = null): static` | Change the keys of this component, or of every component of class `$for` below it (see "Key bindings"). `bindingsInForce()` lists the keys in force. |
 | `types(): array` | The type names it matches in a stylesheet (its class's short name and its parents'). |
-| `focusNext(bool $wrap = true): bool`, `focusPrevious(bool $wrap = true): bool` | Move the focus to the next (previous) field inside it, around; with `$wrap` false, false at the last (first) one so the key goes on. Bind them to Tab and Shift-Tab. |
+| `focusNext(bool $wrap = true): bool`, `focusPrevious(bool $wrap = true): bool` | Move the focus to the next (previous) field inside it, around; with `$wrap` false, false at the last (first) one so the key goes on. Bind them to Tab and Shift-Tab for a group of fields of its own (unbound, Tab walks every component that takes keys; see "Focus"). |
 | `focus()` | Give it the focus (on a component not started yet: when it starts), and through it to the descendant it focused (see "Focus" above): every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). It takes effect at once, for the very next key, also for a component not shown yet (a dialog created in a key handler, shown by the render that follows). The focus stays with it through every re-render, also one that moves it into a different nested layout; when it is no longer shown, the component focused before it gets the focus back. |
 | `hasFocus(): bool` | True if keys go to it or through it to a descendant, also while it is not shown yet: it follows the path the keys take. False once disposed. |
 | `on(string $event, Closure $listener): Closure` | Listen to an event of the component (the built-ins document theirs: `Log` and `ListView` emit `scroll`); returns a function that removes the listener. See "Showing another component's state". |

@@ -142,6 +142,24 @@ it('runs inline-progress: a live region under the shell\'s output, finished jobs
     });
 });
 
+it('runs working: the one-file program, inline and full screen, until Ctrl-Q', function () {
+    example('working.php', [], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('Working… 100%', 15))->toBeTrue()
+            ->and($app->surface->isAltScreen())->toBeFalse()
+            ->and($t->text())->toContain(str_repeat('█', 95) . ' 100%')->toContain('ctrl+q quit')
+            ->and($t->text())->not->toContain('<dim>');
+        $t->press('ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0);
+        $t->refresh();
+        expect($t->text())->toContain('Working… 100%');        // the last frame stays
+    });
+    example('working.php', ['--full'], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('Working… 2', 10))->toBeTrue()->and($app->surface->isAltScreen())->toBeTrue();
+        $t->press('ctrl+q');
+        expect($app->pty()->wait(1))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();   // the counter stopped with it
+    });
+});
+
 it('runs markdown: a document streams in, the view follows it, End and Ctrl-Q work', function () {
     example('markdown.php', [], function (FakeTerminal $t, Terminal $app) {
         expect($t->waitFor('Streaming Markdown', 10))->toBeTrue();

@@ -3,6 +3,79 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.3-beta1; TODO-0.0.3-beta1.md, SPEC 9.1-9.3)
+
+All items of TODO-0.0.3-beta1.md done, in CHANGELOG.md. Tests green with and without
+ext-phasync. SPEC 9.4 (good by default, beyond the default focus and Tab walk done here), 9.5
+(what a programmer no longer meets) and 9.6 (the sixty-line dashboard acceptance test) are left
+for the next version.
+
+The 9.1 example cannot run as SPEC writes it: `fiber\go()` at the top level of a script throws
+`NotInRunException` (fiber-interop/api allows `go()` only inside `run()`). Everywhere the
+example appears (README, Tui docblock, docs/components.md, examples/working.php, the tests) it
+is wrapped in `fiber\run(function () use ($s) { ... })`; the runners nest inside it. See
+"fiber\ notes".
+
+Item 5's detach() hang ("detach() with a Terminal child returns") could not be reproduced:
+a Terminal in a child, in a hidden tab, in a shown tab, and a program that ignores SIGHUP all
+return at once and leave no process (tests/Component/Small031Test.php covers each shape).
+
+## Design decisions (0.0.3-beta1)
+
+- **A closure root is a component (`Internal\Live`).** `Tui::start()` calls the closure once,
+  as `Live`'s render would (`Component::readAs($live, $closure)`, so the State reads subscribe
+  the Live). If it returned a component and read no State (`State::reads()` unchanged), that
+  component is the root (the old `fn() => new App()` factory); otherwise the Live is the root,
+  primed with the first result (`Live::prime()`) so the closure is not called twice for the
+  first frame. An element given directly is wrapped in a Live too.
+- **State reads subscribe the component rendering.** `Component::$reader` is set only around
+  `render()` (not hooks, not handlers): a read there subscribes the reader to that State (weakly,
+  as `$state` did). So any State read in render works, and the closure root needs nothing more.
+  Reads outside render subscribe nothing (a handler reading state must not make its component
+  render on every write).
+- **Element closures** (`Text` content, `Box` title, `ProgressBar` value): Tree places a `Live`
+  for a Text/Box whose content is a closure (`Text::resolved()`/`Box::resolved()` give the
+  static element), so only that Live re-renders when its State changes; the placing component
+  does not. ProgressBar is already a component: it evaluates its closure value in its own
+  render.
+- **Utility classes resolve to stylesheet properties** (`Stylesheet::utilityProperties()`,
+  cached per class string). The cascade is rules by specificity, then the classes in written
+  order, then inline style. Variants are states (`focus` → `focused`, `sm`/`md`/`lg`).
+- **Width variants are exclusive ranges** (sm < 60, md 60-99, lg >= 100), not Tailwind's
+  min-width cascade: each is a state of the screen (`Stylesheet::widthClass()` of the root's
+  width) that Component::states()/Tree::states() add, so `flex-col lg:flex-row` works by
+  ordinary state matching and a resize across a breakpoint re-renders through the existing
+  state machinery. Tailwind's "md and up" is written `md:x lg:x`.
+- **Padding and margin sides** are stored in the merge as `['side' => i, 'of' => value]` so a
+  `$var` or an array value resolves after the cascade; `p-1 pt-2` gives top 2.
+- **Colour depth in one place**: cells keep the chosen colour; `TerminalDevice::sgr()` maps it
+  with `Color::nearest()` (redmean distance, cached) when the device has fewer colours. The
+  Tailwind palette is data (src/Style/tailwind.php), loaded on first use.
+- **Markup** (`Markup::toAnsi`) converts tags to SGR once per (text, base style) and caches it
+  (4096 entries); unknown or unbalanced tags stay literal, so text that only looks like markup
+  survives. `<span class>` computes through the stylesheet as a `Span` element, so a theme's
+  `Span.x` rules and utilities apply. Text::raw() opts out. Log keeps raw lines (lines()) and
+  converts per shown line; a line still open is rewritten whole when it contains '<' so a tag
+  may span appends. Markdown converts markup before entity decoding; markdown's `\<` becomes
+  `&lt;` so it stays literal. A Box title with markup is rendered into a scratch Surface and its
+  cells spliced into the border row (`Viewport::titleCells()`).
+- **Table measures on row change**: `shown()` (order after sort and filter) and `widest()`
+  (auto widths) are cached by the identity of `rows` plus the sort and filter keys; a move only
+  maps key ↔ position. Subclasses filter through `filterRows()`/`filterKey()` (the name
+  `filter()` was taken by Select's public API). A program that mutates rows in place must assign
+  `rows` anew (or requestRender after setting) as with any prop.
+- **Default focus**: after the root's first render and after each frame, when the default key
+  end (`keyEnd(root)`) does not take keys itself, the first focusable component (by viewport y,
+  x; skipping zero-size, disabled, non-component surfaces) is focused; a program's own
+  focus() on something that takes keys is never overridden. **Tab walk** only when nothing on the key's way handles Tab and the
+  focused component does not take its own keys (`ownKeys()`, the default of `canFocus()`), so a
+  shell or an editor keeps Tab. `Terminal::canFocus()` is true.
+- **ProgressBar** compares the string it would draw (`drawing()`) with the one it drew and
+  writes nothing when equal; `setValue()` requests a render only when the drawing differs.
+- **Inline taller than the terminal**: no new mechanism; the region is rows-1 high, the layout
+  decides what is left out, and zero-size windows are not painted (ElementLayout skips paint for
+  w or h 0). Documented in docs/terminal.md.
+
 ## Status (0.0.2-beta5; TODO-0.0.2-beta5.md)
 
 All items of TODO-0.0.2-beta5.md done, in CHANGELOG.md, except one target of item 1 (the
@@ -829,6 +902,13 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
   so the closure is wrapped in a nested `fiber\run()` (children finish inside the capture).
 
 ## fiber\ notes
+
+- **Finding (0.0.3-beta1): `fiber\go()` outside `run()` throws `NotInRunException`.** SPEC 9.1's
+  whole program starts its coroutine at the script's top level, then calls `Tui::inline()`
+  (which runs its own `fiber\run()`). The api forbids that, so the example is written inside a
+  `fiber\run()` of the program's. The smallest addition that would let the example run as
+  written: a `go()` in {main} attached to the next `run()` (or {main} as an implicit run frame
+  that the first `run()` drives). Nothing in the library works around it.
 
 - **Finding (beta2): awaiting a handle from `fiber\current()` misbehaves under
   fiber-interop/phasync 0.4.1.** Item 9 of TODO-beta2 (a failing headless test must not hang)

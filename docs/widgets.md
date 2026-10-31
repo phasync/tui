@@ -102,11 +102,18 @@ new Table(
 | Constructor argument (all props) | |
 |---|---|
 | `array $columns` | By title: a width, or `['width' => ..., 'align' => 'left'\|'right'\|'center', 'sortable' => true]`. Widths: cells, `'25%'`, `'1fr'`, or `'auto'` (the default: its widest cell and title). |
-| `array $rows` | By key (your ids), each a list of cells in column order; cells may carry SGR sequences. |
+| `array $rows` | By key (your ids), each a list of cells in column order; cells take markup (`'<fg=red>failed</>'`, see [styling.md](styling.md#markup-in-text)) and may carry SGR sequences. |
 | `bool $header = true` | Show the titles. |
 
-A cell wider than its column is cut with "…". When the columns do not fit, the table scrolls
-sideways by column. The current row stays the same row (by key) through new rows and sorting.
+A cell wider than its column is cut with "…" (by its visible text). When the columns do not
+fit, the table scrolls sideways by column. The current row stays the same row (by key) through
+new rows and sorting. **Cost**: the widths of `'auto'` columns and the order of the rows are
+worked out when the rows change (a new `rows` array, `setItems()`), the sorting changes or a
+`Select`'s filter does, not when the cursor or the view moves: moving through 10,000 rows costs
+what moving through 100 does (the rows in view are drawn). A subclass that shows only some rows
+overrides `filterRows(array $keys): array` and returns what they depend on from
+`filterKey(): string`. After `$table->rows = $fresh` from outside a render, call
+`requestRender()` (or give the rows by placing a `new Table(...)` in the tree).
 
 | Method | What it does |
 |---|---|
@@ -140,7 +147,7 @@ new Select(
 
 | Constructor argument | |
 |---|---|
-| `array $items` | By key: a label (one column, no header) or a list of cells (with `columns`). |
+| `array $items` | By key: a label (one column, no header) or a list of cells (with `columns`); labels and cells take markup. |
 | `array $columns = []` | As for `Table`; with columns there is a header, sortable by a click. |
 | `bool $multiple = false` | Several items can be marked (Space). A prop. |
 | `bool $filterable = true` | Typing filters. A prop. |
@@ -148,6 +155,11 @@ new Select(
 | `?Closure $onActivate` | `fn($key, Select $s)`: Enter, or a click on the current item. |
 | `?Closure $onChange` | `fn(array $keys, Select $s)`: the marked items changed. |
 | `bool $dropdown = false` | A one-line field showing the current item, that opens its list in an overlay. A prop. |
+
+**Which callback when**: `onSelect` fires whenever the current (highlighted) item changes, by
+the arrow keys, a click, the filter or `setCurrent()`; `onActivate` when the user picks the
+current item (Enter, a click on it, a dropdown's choice); `onChange` when the marked items
+change (Space, Alt-A, `setSelection()`; only with `multiple`).
 
 | Method | What it does |
 |---|---|
@@ -431,6 +443,8 @@ In a `Dialog`, see "A form in a dialog" above.
 |---|---|
 | `new Button(string $label, ?Closure $onPress = null, ...attributes)` | Drawn `[ label ]`, one row as wide as that. `$onPress($button)` when pressed: Enter, Space, or a click released on it; also the event `press`. In a `Form`, a button without `$onPress` submits it. `press(): bool` from code (false when disabled). |
 
+Button and Checkbox labels take markup (`<b>Save</b>`, see [styling.md](styling.md#markup-in-text)); the width is that of the visible text.
+
 **Style**: `Button`, states `:focused` (inverted in the default theme), `:pressed` (while the
 mouse button is held on it), `:disabled`.
 
@@ -557,7 +571,7 @@ new Spinner('saving')                                            // ⠹ saving, 
 
 | | |
 |---|---|
-| `new ProgressBar(?float $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label and the percentage after it, the percentage alone without a label. A label holding `{percent}` (`58%`) or `{value}` (`0.58`) is shown with them filled in, and no percentage after. The label takes at most half the width (cut with "…"); nothing is drawn past the bar's width. Null: indeterminate, a block moving to and fro (animated by the bar itself, ten steps a second, while it is indeterminate; a bar with a value has no coroutine and renders only when its value changes). `$value` and `$label` are props; `setValue(?float $value, ?string $label = null)`. Style: `ProgressBar`, part `ProgressBar::bar`. |
+| `new ProgressBar(float\|Closure\|null $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label (markup allowed) and the percentage after it, the percentage alone without a label. A label holding `{percent}` (`58%`) or `{value}` (`0.58`) is shown with them filled in, and no percentage after. The label takes at most half the width (cut with "…"); nothing is drawn past the bar's width. Null: indeterminate, a block moving to and fro (animated by the bar itself, ten steps a second, while it is indeterminate; a bar with a value has no coroutine and renders only when its value changes). A closure value (`fn() => $state->done / 100`) is read when the bar renders, and the bar renders by itself when a `State` the closure read changes (its parent does not). `$value` and `$label` are props; `setValue(float\|Closure\|null $value, ?string $label = null)` renders only when the bar then looks different (a change below a cell, the same percentage: nothing is drawn), so it may be called from a fast loop. Style: `ProgressBar`, part `ProgressBar::bar`. |
 | `new Spinner(string $label = '', array $frames = Spinner::DOTS, float $interval = 0.08, ...attributes)` | A sign cycling through `$frames` (`Spinner::DOTS`, `Spinner::LINE`, or yours) every `$interval` seconds while it is shown, then the label. No coroutine of yours: show it while something runs, take it out of the tree after. `frame(): int`. Style: `Spinner`, part `Spinner::sign`. |
 
 ## Markdown

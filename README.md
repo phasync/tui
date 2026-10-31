@@ -5,6 +5,30 @@ window is a terminal, so a shell, `vim`, `htop` or Claude Code runs in a pane of
 exactly as in a terminal, next to widgets that are themselves programs writing to a terminal.
 
 ```php
+use phasync\Tui\{State, Tui};
+use phasync\Tui\Component\ProgressBar;
+use phasync\Tui\Element\{Column, Text};
+
+$s = new State(['done' => 0]);
+fiber\run(function () use ($s) {
+    fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+    Tui::inline(fn() => new Column([
+        new Text("Working… {$s->done}%"),
+        new ProgressBar($s->done / 100),
+    ]));
+});
+```
+
+That is a whole program: a line and a progress bar as a live region under the shell's output,
+counting to 100%. The closure is the screen; it is rendered again whenever a `State` it read
+changes, here from a coroutine. Ctrl-Q quits; `Tui::run()` shows the same screen full screen,
+`Tui::headless()` on an in-memory terminal for tests (`examples/working.php` runs both ways).
+`fiber\go()` must be called inside `fiber\run()`, which is why the program is wrapped in one.
+
+Classes are for what has behaviour of its own. A chat-like log with an input line next to your
+shell:
+
+```php
 use phasync\Tui\{Component, Key, Layout, Split, Tty};
 use phasync\Tui\Component\{Log, Terminal, TextInput};
 
@@ -40,10 +64,9 @@ final class App extends Component
 fiber\run(fn() => (new App())->start(new Tty()));
 ```
 
-A chat-like log with an input line next to your shell, in any terminal size: the log keeps its
-text and wraps it again whenever the terminal is resized, the shell is told its new size.
-Alt-Left/Alt-Right move between them; Ctrl-Q quits, which hangs the shell up and gives the
-terminal back, and `fiber\run()` returns.
+In any terminal size: the log keeps its text and wraps it again whenever the terminal is
+resized, the shell is told its new size. Alt-Left/Alt-Right move between them; Ctrl-Q quits,
+which hangs the shell up and gives the terminal back, and `fiber\run()` returns.
 
 PHP 8.3+, MIT. Runs on any [fiber-interop](https://packagist.org/packages/fiber-interop/api)
 runtime: phasync, Revolt/AMPHP, ReactPHP.
@@ -88,8 +111,12 @@ One primitive, one structure:
    `Box`, `Text`, `Help`) that the library lays out into surfaces and paints through `write()`;
    state that renders by itself, a stylesheet, key bindings as data, and overlays: anything can
    float over everything (`overlay()`), placed next to its anchor inside the screen. Built-ins
-   `Terminal`, `Log`, `TextInput`, `ListView`, `StatusBar`, `Box`.
-7. **Widgets** ([docs](docs/widgets.md)): `Editor` (with history and completion), `Select`
+   `Terminal`, `Log`, `TextInput`, `ListView`, `StatusBar`, `Box`. A closure is a component
+   too: `Tui::run(fn() => ...)` renders it again when the state it read changes.
+7. **Styling** ([docs](docs/styling.md)): Tailwind's utility classes in `class:`, a stylesheet
+   with variables and states, symfony/console markup in text (`<b>`, `<fg=red>`); colours
+   drawn in what the terminal has.
+8. **Widgets** ([docs](docs/widgets.md)): `Editor` (with history and completion), `Select`
    (a list, or a dropdown), `Table`, `Dialog` and `Confirm`, `Form` with `Button` and
    `Checkbox`, `ScrollView`, `ProgressBar`, `Spinner`, `Markdown`.
 
@@ -238,6 +265,31 @@ field, or on the Save button, which has no `onPress` of its own). Without a name
 stays, with its message and the field marked `:invalid`; with one, `Confirm` asks, and the
 answer arrives in the coroutine that awaits it. `examples/form.php` is a larger form.
 
+**Styling where it is used.** `class:` takes Tailwind's utility classes (padding, gap, borders,
+colours, grow, widths, `focus:`, `hover:` and the width variants `sm:` `md:` `lg:`), and text
+takes symfony/console's markup tags. Both resolve through the stylesheet, so a theme can set
+everything a class sets; the terminal draws truecolour in the nearest colours it has.
+([docs](docs/styling.md))
+
+```php
+use phasync\Tui\Tui;
+use phasync\Tui\Element\{Box, Column, Row, Text};
+
+Tui::run(fn() => new Column([
+    new Row([
+        new Text('<b>deploy</b> v1.4', class: 'grow'),
+        new Text('<fg=green>●</> online', class: 'text-right'),
+    ], class: 'px-1 bg-slate-800'),
+    new Row([
+        new Box(new Text('3 jobs running'), 'jobs', class: 'grow title-center'),
+        new Box(new Text('<dim>no errors</dim>'), 'errors', class: 'grow border-emerald-500'),
+    ], class: 'gap-1 flex-col lg:flex-row'),
+], class: 'p-1'));
+```
+
+On a terminal 100 columns or wider the two boxes stand side by side, on a narrower one on top
+of each other; resizing across that width lays the screen out again.
+
 **Markdown, as it arrives.** A `Markdown` pane renders CommonMark (headings, lists, code with
 highlighting, tables, links) and takes text in chunks that end anywhere, as a model's answer
 does; with `tail` it follows the end until the user scrolls back.
@@ -381,6 +433,7 @@ included.
 
 ## Examples
 
+- `examples/working.php`: the one-file program at the top, inline; `--full` for full screen.
 - `examples/split-shells.php`: two shells side by side with a status bar, a tiny tmux. Ctrl-B Tab
   or Ctrl-B and an arrow switch, Ctrl-B q quits; it runs inside itself as tmux runs in tmux.
 - `examples/host.php <command...>`: any command in a window, e.g. `php examples/host.php claude`.
