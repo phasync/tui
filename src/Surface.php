@@ -56,6 +56,8 @@ final class Surface implements \Stringable
     private bool $focusable = true;
     /** @var list<Surface> for a root: the focus path its surfaces were last told about */
     private array $announced = [];
+    /** @var list<\Closure> what flush() runs first (see onFlush()) */
+    private static array $flushers = [];
     /** @var \WeakMap<Surface, true>|null the surfaces whose producer asked for mouse reports */
     private static ?\WeakMap $mouseWanted = null;
     /** Numbers focus requests: the latest one wins. */
@@ -1039,6 +1041,30 @@ final class Surface implements \Stringable
         if ($this->host !== null && $this->host->dirty) {
             $this->host->compose();
         }
+    }
+
+    /**
+     * Bring this surface up to date now: producers that draw in frames rather than at once (the
+     * components, whose renders wait for the next frame) draw what they owe, then the hosted
+     * surfaces are composed into it (`compose()`). A terminal device does this before each frame
+     * it draws and before it freezes rows; call it to read what the program shows after its
+     * last change without waiting for the frame.
+     */
+    public function flush(): void
+    {
+        foreach (self::$flushers as $flusher) {
+            $flusher();
+        }
+        $this->compose();
+    }
+
+    /**
+     * @internal $flusher draws what a kind of producer owes (see `flush()`); the component
+     * layer registers its frame here.
+     */
+    public static function onFlush(\Closure $flusher): void
+    {
+        self::$flushers[] = $flusher;
     }
 
     /** True when a hosted surface changed and this surface's cells have not caught up yet. */

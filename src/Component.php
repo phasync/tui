@@ -198,6 +198,10 @@ abstract class Component extends Element
     private array $placed = [];
     /** The next render lays the tree out again, also when it is the same (see relayout()). */
     private bool $relayout = false;
+    /** focus() was called before start(): it takes effect when the component starts. */
+    private bool $focusOnStart = false;
+    /** @var \WeakMap<Component, true>|null other components that show this one or keep it (see child()) */
+    private ?\WeakMap $heldBy = null;
     private ?Stylesheet $stylesheet = null;
     /** The style a parent's element tree gives this component to inherit. */
     private ?ComputedStyle $inherited = null;
@@ -232,6 +236,10 @@ abstract class Component extends Element
     private bool $asked = false;
     /** @var array<int, Component> components to render in the coming frame */
     private static array $dirty = [];
+    /** The flusher is registered with Surface (see start()). */
+    private static bool $flushing = false;
+    /** A frame is being rendered (a flush in it renders nothing more). */
+    private static bool $framing = false;
     /** When a coroutine was started to render the coming frame (0: none is on its way). */
     private static float $frameAsked = 0.0;
     /** @var \WeakMap<Component, true>|null components whose last render showed a `Help` element */
@@ -384,12 +392,21 @@ abstract class Component extends Element
      *
      * @throws \LogicException when already started
      */
-    public function start(Surface|TerminalDevice|null $on = null): static
+    final public function start(Surface|TerminalDevice|null $on = null): static
     {
         if ($this->mounted || $this->stopped !== null) {
             throw new \LogicException(static::class . ' was already started');
         }
         Runtime::check();
+        if (!self::$flushing) {
+            // a terminal device's frame (and freeze(), and Surface::flush()) draws the renders asked for first
+            self::$flushing = true;
+            Surface::onFlush(static function (): void {
+                if (self::$dirty !== [] && !self::$framing) {
+                    self::renderFrame();
+                }
+            });
+        }
         if ($on instanceof TerminalDevice) {
             $surface = new Surface();
             $on->attach($surface);
@@ -430,6 +447,10 @@ abstract class Component extends Element
             $s->on('close', fn() => $this->stop()),
         ];
         $this->guard($this->mount(...));
+        if ($this->focusOnStart && $this->mounted) {
+            $this->focusOnStart = false;
+            $this->focus();
+        }
         if ($this->parent === null) {
             $this->firstRender();
             if (!$on instanceof TerminalDevice) {
@@ -444,6 +465,18 @@ abstract class Component extends Element
         }
         // a child is sized and rendered by its parent's render that shows it
         return $this;
+    }
+
+    /**
+     * The terminal device the component's tree is shown on (`Tty`, `FakeTerminal`), or null
+     * when it is not attached to one: for a component that prints above an inline region or
+     * freezes a row of it (`$this->device()?->println("copied $file")`,
+     * `$this->device()?->freeze($this->surface)`), also when `Tui::run()` or `Tui::inline()`
+     * made the device.
+     */
+    final public function device(): ?TerminalDevice
+    {
+        return $this->mounted ? TerminalDevice::of($this->surface->root()) : null;
     }
 
     /** Sized, the first render, then the coroutine; once. */
@@ -480,7 +513,7 @@ abstract class Component extends Element
      * (`fiber\current()` is null, as outside `fiber\run()`). `fiber\run()` returns only after the
      * end either way.
      */
-    public function dispose(float $timeout = 1.0): void
+    final public function dispose(float $timeout = 1.0): void
     {
         if (!$this->mounted) {
             return;
@@ -596,7 +629,7 @@ abstract class Component extends Element
     }
 
     /** True between `start()` and `dispose()`. */
-    public function isMounted(): bool
+    final public function isMounted(): bool
     {
         return $this->mounted;
     }
@@ -606,7 +639,7 @@ abstract class Component extends Element
      * $component->stopped()])` around a wait that should end with the component. In loops,
      * prefer `sleep()`.
      */
-    public function stopped(): object
+    final public function stopped(): object
     {
         if ($this->stopped === null) {
             throw new \LogicException(static::class . ' has not been started');
@@ -623,7 +656,7 @@ abstract class Component extends Element
      *
      * @return array<string, Component>
      */
-    public function children(): array
+    final public function children(): array
     {
         $out = [];
         foreach ($this->children as $key => $child) {
@@ -635,13 +668,13 @@ abstract class Component extends Element
     }
 
     /** The component this one is a child of, or null for a root. */
-    public function parent(): ?Component
+    final public function parent(): ?Component
     {
         return $this->parent;
     }
 
     /** The exception that ended this component, if one did. */
-    public function error(): ?\Throwable
+    final public function error(): ?\Throwable
     {
         return $this->error;
     }
@@ -657,7 +690,7 @@ abstract class Component extends Element
      *
      * @param \Closure(mixed ...$data): mixed $listener
      */
-    public function on(string $event, \Closure $listener): \Closure
+    final public function on(string $event, \Closure $listener): \Closure
     {
         $id = spl_object_id($listener);
         $this->listeners[$event][$id] = $listener;
@@ -670,7 +703,7 @@ abstract class Component extends Element
      * Call the listeners of $event with $data (see `on()`): how a component tells others that
      * something they may show changed. Document the events a component emits.
      */
-    protected function emit(string $event, mixed ...$data): void
+    final protected function emit(string $event, mixed ...$data): void
     {
         foreach ($this->listeners[$event] ?? [] as $listener) {
             $listener(...$data);
@@ -684,7 +717,7 @@ abstract class Component extends Element
      * `$this`) renders again afterwards, as after one of its own handlers. Returns what the
      * callback returned.
      */
-    protected function call(?\Closure $callback, mixed ...$args): mixed
+    final protected function call(?\Closure $callback, mixed ...$args): mixed
     {
         if ($callback === null) {
             return null;
@@ -706,7 +739,7 @@ abstract class Component extends Element
     }
 
     /** True if something listens to $event: skip work that only a listener would need. */
-    protected function hasListeners(string $event): bool
+    final protected function hasListeners(string $event): bool
     {
         return ($this->listeners[$event] ?? []) !== [];
     }
@@ -718,7 +751,7 @@ abstract class Component extends Element
      * `render()` shows changed some other way (a property of yours, data outside the
      * component). Calls in the same moment are one render; does nothing once disposed.
      */
-    public function requestRender(): void
+    final public function requestRender(): void
     {
         $this->asked = true;
         $this->markDirty();
@@ -754,6 +787,16 @@ abstract class Component extends Element
      * whose props a parent's render changed renders once), each at most once per frame.
      */
     private static function renderFrame(): void
+    {
+        self::$framing = true;
+        try {
+            self::renderPasses();
+        } finally {
+            self::$framing = false;
+        }
+    }
+
+    private static function renderPasses(): void
     {
         $done = [];
         $later = [];
@@ -829,9 +872,17 @@ abstract class Component extends Element
      * the library makes by itself (after a key, a state write, a coroutine step): the user can
      * move the focus away, and the render after that key does not take it back. Prefer
      * `mount()` for the first focus.
+     *
+     * Called on a component that is not started yet (one made with `new` and placed in a tree
+     * that has not been rendered), it takes effect when the component starts, as the latest
+     * request then.
      */
-    public function focus(): void
+    final public function focus(): void
     {
+        if ($this->stopped === null) {
+            $this->focusOnStart = true;     // (not started yet: when it starts, see above)
+            return;
+        }
         if (($r = self::$inRender) !== null) {
             // asked for by a render: once, not again by every render that follows
             $id = spl_object_id($this);
@@ -862,13 +913,13 @@ abstract class Component extends Element
      * that moves on from this group). How a container binds Tab: `'tab' => 'focusNext'`.
      * Returns false when there is no other field to go to.
      */
-    public function focusNext(bool $wrap = true): bool
+    final public function focusNext(bool $wrap = true): bool
     {
         return $this->surface->focusNext(false, $wrap);
     }
 
     /** As `focusNext()`, backwards (Shift-Tab): `'shift+tab' => 'focusPrevious'`. */
-    public function focusPrevious(bool $wrap = true): bool
+    final public function focusPrevious(bool $wrap = true): bool
     {
         return $this->surface->focusNext(true, $wrap);
     }
@@ -901,7 +952,7 @@ abstract class Component extends Element
      * from the root, also while it is not shown yet (see `focus()`). It reads the very path keys
      * take, so it is true exactly when the next key would reach the component.
      */
-    public function hasFocus(): bool
+    final public function hasFocus(): bool
     {
         if (!$this->mounted) {
             return false;
@@ -1016,7 +1067,7 @@ abstract class Component extends Element
      * @param (\Closure(): T)|null $create
      * @return ($create is null ? Component|null : T)
      */
-    protected function child(string $key, ?\Closure $create = null): ?Component
+    final protected function child(string $key, ?\Closure $create = null): ?Component
     {
         if ($this->used !== null) {
             $this->used[$key] = true;
@@ -1041,6 +1092,8 @@ abstract class Component extends Element
             }
             // started already (by its owner): shown here, and its owner's still
             $this->children[$key] = $child;
+            $child->heldBy ??= new \WeakMap();
+            $child->heldBy[$this] = true;
             self::$treeVersion++;
             return $child;
         }
@@ -1066,7 +1119,7 @@ abstract class Component extends Element
      * @param \Closure(): T $create
      * @return T
      */
-    protected function keep(string $key, \Closure $create): Component
+    final protected function keep(string $key, \Closure $create): Component
     {
         $child = $this->child($key, $create);
         if ($child->parent === $this) {
@@ -1081,7 +1134,7 @@ abstract class Component extends Element
      * `sleep()` returns false or `isMounted()` is false. When it ends after it waited (a fetch,
      * an awaited dialog), the component renders.
      */
-    protected function go(\Closure $task): void
+    final protected function go(\Closure $task): void
     {
         $id = ++$this->taskCount;
         $this->tasks[$id] = null;
@@ -1112,7 +1165,7 @@ abstract class Component extends Element
      * The loop of a component's coroutine: `while ($this->sleep(0.5)) { ... }`. What the
      * coroutine changed before it sleeps shows in the next frame (a render follows).
      */
-    protected function sleep(float $seconds): bool
+    final protected function sleep(float $seconds): bool
     {
         if ($this->mounted) {
             $this->markDirty();     // what the coroutine did until now shows in the next frame
@@ -1177,7 +1230,7 @@ abstract class Component extends Element
         }
         if ($returned !== null) {
             foreach ($this->children as $key => $child) {
-                if (!isset($used[$key]) && !isset($this->kept[$key]) && !$child->isShownIn($this->surface)) {
+                if (!isset($used[$key]) && !isset($this->kept[$key]) && !$child->isShownIn($this->surface) && !$child->isHeld()) {
                     if ($child->parent === $this) {
                         $child->stop();     // a render does not wait for its coroutines
                     } else {
@@ -1417,7 +1470,7 @@ abstract class Component extends Element
      * The stylesheet in force for this component: the one set on it with `setStylesheet()`,
      * else its parent's, up to the root; `Stylesheet::default()` when none was set.
      */
-    public function stylesheet(): Stylesheet
+    final public function stylesheet(): Stylesheet
     {
         return $this->stylesheet ?? $this->parent?->stylesheet() ?? Stylesheet::default();
     }
@@ -1427,7 +1480,7 @@ abstract class Component extends Element
      * the whole program; build it on the default theme with `Stylesheet::default()->with()`).
      * Everything renders again with it.
      */
-    public function setStylesheet(Stylesheet $stylesheet): void
+    final public function setStylesheet(Stylesheet $stylesheet): void
     {
         $this->stylesheet = $stylesheet;
         $this->renderSubtree();
@@ -1461,7 +1514,7 @@ abstract class Component extends Element
      *
      * @param string|list<string>|null $part
      */
-    public function style(string|array|null $part = null, string ...$states): ComputedStyle
+    final public function style(string|array|null $part = null, string ...$states): ComputedStyle
     {
         $sheet = $this->stylesheet();
         $own = $this->states();
@@ -1506,7 +1559,7 @@ abstract class Component extends Element
      *
      * @return array{int,int}|null
      */
-    public function measureFor(int $cols, int $rows): ?array
+    final public function measureFor(int $cols, int $rows): ?array
     {
         $size = $this->measure($cols, $rows);
         $this->measured = [[$cols, $rows], $size];
@@ -1514,7 +1567,7 @@ abstract class Component extends Element
     }
 
     /** @internal The style the parent's element tree around this component gives it to inherit. */
-    public function inheritStyle(ComputedStyle $parent): void
+    final public function inheritStyle(ComputedStyle $parent): void
     {
         if ($parent != $this->inherited) {
             $this->inherited = $parent;
@@ -1577,7 +1630,7 @@ abstract class Component extends Element
      * in the element tree around it; it renders again when a state changes. The built-in
      * states (`focused`, `disabled`, `hover`) are the library's.
      */
-    public function setStyleState(string $state, bool $on = true): void
+    final public function setStyleState(string $state, bool $on = true): void
     {
         if ($on === isset($this->styleStates[$state])) {
             return;
@@ -1592,7 +1645,7 @@ abstract class Component extends Element
     }
 
     /** True if the component is in $state (one of its own, see `setStyleState()`, or a built-in one). */
-    public function hasStyleState(string $state): bool
+    final public function hasStyleState(string $state): bool
     {
         return \in_array($state, $this->states(), true);
     }
@@ -1676,10 +1729,13 @@ abstract class Component extends Element
             return false;
         }
         $method = $binding[0];
-        if (!method_exists($this, $method) || !(new \ReflectionMethod($this, $method))->isPublic()) {
+        $public = method_exists($this, $method) ? new \ReflectionMethod($this, $method) : null;
+        if ($public === null || !$public->isPublic()) {
             throw new \LogicException(static::class . ": the key '$key' is bound to '$method', which is not a public method");
         }
-        if ($this->guard(fn() => $this->$method()) === false) {
+        // (the method of the component's class: called from here, a name that Component uses
+        // privately, such as key(), would be Component's own)
+        if ($this->guard(fn() => $public->invoke($this)) === false) {
             return false;
         }
         $this->markDirty();
@@ -1695,7 +1751,7 @@ abstract class Component extends Element
      *
      * @param array<string, string|array{string, string}|null> $bindings
      */
-    public function bind(array $bindings, ?string $for = null): static
+    final public function bind(array $bindings, ?string $for = null): static
     {
         $normal = self::normalize($bindings);
         if ($for === null) {
@@ -1715,7 +1771,7 @@ abstract class Component extends Element
      *
      * @return array<string, array{string, ?string, bool, bool}>
      */
-    public function bindingsInForce(): array
+    final public function bindingsInForce(): array
     {
         $map = self::normalize($this->bindings());
         $chain = [];
@@ -1835,7 +1891,7 @@ abstract class Component extends Element
      * @param 'below'|'above'|'center'|Rect $place
      * @throws \LogicException when this component is not mounted or the element was started already
      */
-    protected function overlay(Element $element, ?Rect $anchor = null, string|Rect $place = 'below', bool $modal = false): Overlay
+    final protected function overlay(Element $element, ?Rect $anchor = null, string|Rect $place = 'below', bool $modal = false): Overlay
     {
         if (!$this->mounted) {
             throw new \LogicException(static::class . ': overlay() needs a mounted component');
@@ -1904,7 +1960,7 @@ abstract class Component extends Element
      *
      * (Both coroutines then get the one answer: act on it once, as `dispose()` does.)
      */
-    protected function dialog(Dialog $dialog, ?string $key = null): object
+    final protected function dialog(Dialog $dialog, ?string $key = null): object
     {
         $open = $key === null ? null : ($this->dialogs[$key] ?? null);
         if ($open !== null && $open->isMounted() && $open->inOverlay()?->isOpen()) {
@@ -1919,7 +1975,7 @@ abstract class Component extends Element
     }
 
     /** The overlay this component is the content of, or null when it is not shown in one. */
-    public function inOverlay(): ?Overlay
+    final public function inOverlay(): ?Overlay
     {
         return $this->overlaid;
     }
@@ -2145,6 +2201,21 @@ abstract class Component extends Element
     }
 
     /** True if this component's surface shows on $surface, directly or through windows in between. */
+    /**
+     * True if another component holds this one among its children (a container it was given
+     * to, a `Tabs` keeping it for a hidden tab): its owner's render does not dispose it then.
+     */
+    private function isHeld(): bool
+    {
+        foreach ($this->heldBy ?? [] as $holder => $_) {
+            if ($holder->mounted && \in_array($this, $holder->children, true)) {
+                return true;
+            }
+            unset($this->heldBy[$holder]);
+        }
+        return false;
+    }
+
     private function isShownIn(Surface $surface): bool
     {
         for ($s = $this->surface->parent(); $s !== null; $s = $s->parent()) {

@@ -3,6 +3,22 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.2-beta5; TODO-0.0.2-beta5.md) — in progress
+
+- [ ] 1. Render cost: done so far (commits 624ba14, a9a05e6): Stylesheet memo, Tree item and
+      layout reuse, ElementLayout keeps placed windows, measure by the built items, focus
+      settled only when it may move, hasFocus cache, one frame coroutine, Host viewports by
+      surface and only stale windows composed, grammar: one-terminal CSI, no item probes at
+      the end; showsAgain() (same tree = no layout), pen written only when needed, shared
+      clock for Signal timeouts, mouse-wanting surfaces registry, one-cell runs stored at once.
+      Numbers (this machine, FakeTerminal 120x60): flat 50x Row[Text,Text] 6.5 ms -> 1.4 ms per
+      frame; monitor of 50 row components at 10 Hz: 91% -> 55% of a core when every row changes
+      every tick, 43% -> 17% when one row in 20 changes; key latency 55 ms -> < 5 ms.
+      Left: tests (timing, work count), docs/surface.md "Performance".
+- [ ] 2. Tabs focus into element content
+- [ ] 3. Dialog taller than the terminal
+- [ ] 4. small items
+
 ## Status (0.0.2-beta4; TODO-0.0.2-beta4.md)
 
 All items of TODO-0.0.2-beta4.md done, in CHANGELOG.md; tests green with and without

@@ -87,6 +87,8 @@ abstract class TerminalDevice
     private const HYPERLINK_TERMINALS = '/^(kitty|WezTerm|foot|ghostty|iTerm2|contour|phasync-tui)\b/i';
 
     private ?Surface $root = null;
+    /** @var \WeakMap<Surface, TerminalDevice>|null the device each attached root is shown on */
+    private static ?\WeakMap $devices = null;
     private InputDecoder $decoder;
     private ?Signal $wake = null;
     private ?Signal $detached = null;
@@ -214,6 +216,8 @@ abstract class TerminalDevice
         $this->printed = [];
         $this->open($this->inline ? self::INLINE_RESTORE : self::RESTORE);
         $this->root = $root;
+        self::$devices ??= new \WeakMap();
+        self::$devices[$root] = $this;
         [$cols, $rows] = $this->size();
         $root->resize($cols, $this->inline ? max(1, $rows - 1) : $rows);
         $this->scrolledOff = $root->linesScrolled();
@@ -272,6 +276,7 @@ abstract class TerminalDevice
             $this->send($this->link() . "\e[0m" . ($this->keep ? $this->move(0, $this->region) : $this->move(0, 0) . "\e[J"));
         }
         $this->root = null;
+        unset(self::$devices[$root]);
         $this->wake?->notify();
         $this->close();
         foreach ($this->held as $line) {
@@ -318,8 +323,8 @@ abstract class TerminalDevice
      * `$tty->freeze($row->surface)`). They are written above the region at the next frame, as
      * `println()` lines are; the program then stops showing them (removes the row from its
      * render), and the region shrinks under them. It takes the rows as the root shows them at
-     * the call: renders come in the next frame, so from a component's coroutine set the final
-     * state, `$this->sleep(0)` (the render runs meanwhile), then freeze. Full screen, the rows
+     * the call, after the renders the program asked for until then (`Surface::flush()`), so a
+     * component's coroutine sets the final state and freezes at once. Full screen, the rows
      * are kept and written after `detach()`, as `println()` lines are. Not attached: nothing.
      */
     public function freeze(int|Surface $what): void
@@ -328,6 +333,7 @@ abstract class TerminalDevice
         if ($root === null) {
             return;
         }
+        $root->flush();     // (what the program set last is what freezes)
         if ($what instanceof Surface) {
             $area = $what->area();
             $top = $area->y - $root->area()->y;
@@ -396,6 +402,15 @@ abstract class TerminalDevice
         return $this->root !== null;
     }
 
+    /**
+     * The device $root is attached to, or null: how code that has a surface finds its terminal
+     * (a component: `Component::device()`), to `println()` or `freeze()`.
+     */
+    public static function of(Surface $root): ?TerminalDevice
+    {
+        return self::$devices[$root] ?? null;
+    }
+
     /** The surface shown, or null when not attached. */
     public function root(): ?Surface
     {
@@ -428,7 +443,7 @@ abstract class TerminalDevice
         }
         $this->drawing = true;
         try {
-            $root->compose();
+            $root->flush();
             // the version first: changes made while the rows are read are drawn next frame
             $version = $root->version();
             $out = $this->inline ? $this->drawInline($root) : $this->drawFull($root);

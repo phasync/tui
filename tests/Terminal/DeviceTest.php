@@ -324,11 +324,13 @@ it('settles: the screen shows what the input made the program draw', function ()
             }
         };
         $app->start($t);
-        $t->run(function (FakeTerminal $t) {
+        $t->run(function (FakeTerminal $t) use ($app) {
             $t->type('abc');
-            expect($t->text())->toStartWith("got\n");      // the render comes in the next frame
+            expect($app->surface->text())->toStartWith("got\n");     // the render comes in the next frame,
+            expect($t->text())->toStartWith('got abc');                // or when the device draws (flush())
+            $t->type('d');
             $t->settle();
-            expect($t->text())->toStartWith('got abc');
+            expect($t->text())->toStartWith('got abcd');
         });
     });
 });

@@ -45,7 +45,7 @@ abstract class Element
      * @param string|list<string>|null $class
      * @param array<string, mixed>|null $style
      */
-    public function with(
+    final public function with(
         ?string $key = null,
         ?string $id = null,
         string|array|null $class = null,
