@@ -245,3 +245,10 @@ it('draws a child\'s new size and the parent\'s layout for it in one frame', fun
             ->and($t->text())->toBe("line 1\nline 2\nunder\n\n");
     });
 });
+
+it('runs the monitor measurement of docs/surface.md (tools/monitor-bench.php)', function () {
+    foreach (['some', 'bare'] as $mode) {
+        $out = shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(dirname(__DIR__, 2) . '/tools/monitor-bench.php') . " $mode 0.2 2>&1");
+        expect($out)->toMatch("/^$mode: \\d+\\.\\d% of a core over 0\\.2 s/");
+    }
+});

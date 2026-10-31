@@ -6,10 +6,20 @@ README.md and docs/.
 ## Status (0.0.2-beta5; TODO-0.0.2-beta5.md)
 
 All items of TODO-0.0.2-beta5.md done, in CHANGELOG.md, except one target of item 1 (the
-50-row monitor at "a few percent of a core": 14-15% now, with a runtime floor of 6.5%; see
+50-row monitor at "a few percent of a core": 12-15% now, with a runtime floor of 6.5%; see
 the findings below). Tests green with and without ext-phasync (fiber-interop/api 0.3.x-dev and
 fiber-interop/phasync 0.4.x-dev: still no tags newer than 0.3.1 / 0.4.1, so the dev pins
-stay). Not tagged.
+stay). Tagged 0.0.2-beta5 with that target runtime-bounded (an earlier tag at ba85f5b was
+moved to the final commit).
+
+Re-measured at the end (tools/monitor-bench.php, 6 s each, idle machine):
+bare 6.4% (2.5% with zend.enable_gc=0), some 12.6% (8.3% without GC), all 53.7%. So of
+"some", ~4% is phasync's idle collection, ~2.5% the runtime's wakes, ~6% the library
+(governor-inflated; ~2-3% back to back). Profile of "some" (excimer, GC off): the step
+renders that return an equal tree (showsAgain/sameValue ~9%), Signal::wait and fiber\await,
+the changed rows' writes and parsing (~20%). Even a library costing nothing would leave the
+runtime's 6.4%: the target needs the runtime's idle collection to change (a finding for
+phasync, not something to work around from here).
 
 Left for item 1, all structural (each a change of the layer, not a patch):
 - Text elements painted into their container's surface instead of a surface of their own

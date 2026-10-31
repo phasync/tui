@@ -12,12 +12,12 @@ dialog taller than the terminal scrolls instead of squeezing its fields. Everyth
   of 50 `Row([Text, Text])` that changes a counter in one `Text` at 10 Hz took about 44 ms of
   CPU a frame (44% of a core); it takes about 1.3 ms (about 1.3%). A 50-row monitor with a
   component per row (a `ProgressBar`, two `Text`s and two `Button`s) whose rows tick at 10 Hz
-  went from a whole core to about 14-15% with one row in twenty changing (about 6.5% of that is
+  went from a whole core to about 12-15% with one row in twenty changing (about 6.5% of that is
   the runtime waking 50 coroutines ten times a second and its idle garbage collection, which a
   program pays with no rendering at all), and from far more than a core to about 55% with every
-  row changing on every tick. Its key-to-screen latency went from 47 ms (spikes to 97 ms) to
-  0.2 ms (at most about 2 ms). What changed: styles are computed once per question; the
-  windows, layouts and measures of what did not change are kept from frame to frame; a render
+  row changing on every tick (`tools/monitor-bench.php` measures it). Its key-to-screen
+  latency went from 47 ms (spikes to 97 ms) to 0.2 ms (at most about 2 ms). What changed:
+  styles are computed once per question; the windows, layouts and measures of what did not change are kept from frame to frame; a render
   that returns the same tree keeps its layout and paint; a component's measure stands until it
   renders, so a parent does not measure its unchanged rows again; a child that re-renders at
   the same size does not make its parent lay out again; text runs are written and parsed as
