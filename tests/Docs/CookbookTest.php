@@ -51,9 +51,9 @@ function cookbook(int $n, int $cols, int $rows, Closure $check): void
     }
 }
 
-it('has ten screens, each under forty lines', function () {
+it('has eleven screens, each under forty lines', function () {
     $recipes = cookbookRecipes();
-    expect(array_keys($recipes))->toBe(range(1, 10));
+    expect(array_keys($recipes))->toBe(range(1, 11));
     foreach ($recipes as $n => [$title, $code]) {
         expect(substr_count($code, "\n"))->toBeLessThan(40, "recipe $n ($title)");
         expect(preg_match('/^\s*(final\s+)?class\s/m', $code))->toBe(0, "recipe $n has no class");
@@ -182,5 +182,23 @@ it('runs 10, the Markdown viewer with a table of contents', function (int $cols,
         $t->press('down', 'down');
         $t->settle();
         expect(screenRows($t))->not->toBe($before);
+    });
+})->with($sizes);
+
+it('runs 11, rows that keep their widgets: the focus stays with the job as the rows move', function (int $cols, int $rows) {
+    cookbook(11, $cols, $rows, function (FakeTerminal $t) {
+        $t->settle();
+        expect($t->text())->toContain('build')->toContain('docs')->toContain('Pause');
+        // the focus on the first button (build's, the first row then), pause it: the other jobs pass it by
+        $t->press('enter');
+        $t->settle();
+        expect($t->waitFor(fn() => ($r = screenRows($t)) && !str_starts_with($r[0], 'build'), 5))->toBeTrue();
+        $row = array_values(array_filter(screenRows($t), fn($l) => str_starts_with($l, 'build')))[0];
+        expect($row)->toContain('Resume');
+        $t->press('enter');         // (the focus went with build's button: it resumes)
+        $t->settle();
+        $row = array_values(array_filter(screenRows($t), fn($l) => str_starts_with($l, 'build')))[0];
+        expect($row)->toContain('Pause')
+            ->and($t->waitFor(fn() => str_contains($t->text(), '4 done'), 15))->toBeTrue();
     });
 })->with($sizes);

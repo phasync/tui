@@ -780,32 +780,27 @@ abstract class TerminalDevice
         }
         // the cells that look different (Style::blank(): a space shows its background, not its
         // foreground; one on the default background is an empty cell)
-        $same = static function (int $i) use ($chars, $styles, $oldChars, $oldStyles, $plain): bool {
-            $ch = $chars[$i] ?? ' ';
-            if ($ch !== ($oldChars[$i] ?? ' ')) {
-                return false;
-            }
-            $a = $styles[$i] ?? $plain;
-            $b = $oldStyles[$i] ?? $plain;
-            return $a === $b || ($ch === ' ' && $a->blank() === $b->blank());
-        };
-        $out = '';
-        $x = 0;
-        while ($x < $cols) {
-            if ($same($x)) {
-                $x++;
-                continue;
-            }
-            // a changed span; unchanged gaps of up to 3 cells are rewritten rather than jumped over
-            $start = $x > 0 && ($chars[$x] ?? ' ') === '' ? $x - 1 : $x;
-            $end = $x;
-            for ($i = $x + 1, $gap = 0; $i < $cols && $gap <= 3; $i++) {
-                if ($same($i)) {
-                    $gap++;
-                } else {
-                    $gap = 0;
-                    $end = $i;
+        $changed = [];
+        for ($i = 0; $i < $cols; $i++) {
+            $ch = $chars[$i];
+            if ($ch === ($oldChars[$i] ?? ' ')) {
+                $a = $styles[$i];
+                $b = $oldStyles[$i] ?? $plain;
+                if ($a === $b || ($ch === ' ' && $a->blank() === $b->blank())) {
+                    continue;
                 }
+            }
+            $changed[] = $i;
+        }
+        $out = '';
+        $count = \count($changed);
+        for ($k = 0; $k < $count;) {
+            // a changed span; unchanged gaps of up to 3 cells are rewritten rather than jumped over
+            $x = $changed[$k];
+            $start = $x > 0 && $chars[$x] === '' ? $x - 1 : $x;
+            $end = $x;
+            while (++$k < $count && $changed[$k] - $end <= 4) {
+                $end = $changed[$k];
             }
             if (($chars[$end + 1] ?? null) === '') {
                 $end++;     // include the second half of a wide character
@@ -843,6 +838,9 @@ abstract class TerminalDevice
             // after the last column the cursor waits to wrap: its column is not known (full
             // screen: nor its row; inline, the row is, and moving up or down cancels the wrap)
             $this->at = $x >= $cols ? [-1, $this->inline ? $y : -1] : [$x, $y];
+            while ($k < $count && $changed[$k] <= $end) {
+                $k++;       // (the second half of a wide character, written with the first)
+            }
         }
         return $out;
     }

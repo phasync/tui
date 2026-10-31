@@ -323,7 +323,9 @@ $this->go(function () {
 | `mixed $cancel = null` | The answer for Escape, and when the dialog ends unanswered (its opener disposed, the program quit). |
 
 `Confirm(string $question, string $yes = 'Yes', string $no = 'No', string $title = '')`
-answers true or false (Escape: false).
+answers true or false (Escape: false). The first letter of each label answers at once: `y`
+and `n` with the default labels (`yes()` and `no()`; with labels that start with the same
+letter, only Enter, Escape and the buttons).
 
 **Keys.** The focus starts on the content's first field, or on the first button when there is
 none. Tab and Shift-Tab go through the content's fields first and the buttons after, around;

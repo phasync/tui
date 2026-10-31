@@ -137,8 +137,12 @@ and returns its awaitable. Without a running program, `Dialog::open()` throws a
 from a handler): they belong to the program. An exception in one ends the program at once, the
 terminal is restored and the exception comes out of `Tui::run()` (see "How a program ends").
 And they stop with it: `Tui::sleep($seconds)` sleeps as `fiber\sleep()` does, but throws `Quit`
-once the program has ended (Ctrl-Q, `Tui::quit()`), which ends the coroutine (catch it to clean
-up first), so `fiber\run()` returns when the screen is gone:
+once the program has ended (Ctrl-Q, `Tui::quit()`, a `Tui::go()` coroutine calling
+`Tui::quit()`), which ends the coroutine quietly under every runner, `Tui::headless()`
+included (catch it to clean up first), so `fiber\run()` returns when the screen is gone.
+Outside a `Tui::go()` coroutine (the code that started a headless program, a handler, a
+`fiber\go()` coroutine) `Tui::sleep()` returns early when the program ends instead, since
+nothing there would take the exception:
 
 ```php
 Tui::go(function () use ($s) {

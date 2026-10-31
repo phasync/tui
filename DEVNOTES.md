@@ -14,9 +14,15 @@ README.md and docs/.
 - [x] 1c. one diff at the end by visible identity (Style::blank()), Surface::dump(looks)
 - [ ] 1d. cost: tests for compose 160x50 ten levels deep, bench modes, the 50-bar frame
 - [ ] 1e. docs/surface.md Performance, docs/hosting.md, CHANGELOG
-- [ ] 2. Quit from a Tui::go() job under headless
-- [ ] 3. small: Confirm y/n, version warning once, cookbook recipe, fiber-interop versions
-      (0.3.2/0.4.2 not on Packagist on 2026-10-31: only 0.3.1/0.4.1 and dev; item skipped)
+- [x] 2. Quit from a Tui::go() job under headless: the fatal came from the Tui::sleep(0.5) of
+      the fiber\run() closure itself (not a job), which threw Quit by the beta5 rule
+      "elsewhere: Quit". Now Tui::sleep() throws Quit only in a Tui::go() coroutine (where
+      Tui::go() takes it) and returns early elsewhere; tests/Release/QuitBeta8Test.php
+      (headless, headless inline, Tui::inline() in a pty)
+- [x] 3. small: Confirm binds the first letters of its labels (y/n); the version warning was
+      one line once per process already (RuntimeBeta5Test); cookbook recipe 11; fiber-interop
+      0.3.2/0.4.2 are not on Packagist (2026-10-31: 0.3.1/0.4.1 and dev only): pins, warning
+      and Quit stay
 
 ## Status (0.0.3-beta7; TODO-0.0.3-beta7.md)
 

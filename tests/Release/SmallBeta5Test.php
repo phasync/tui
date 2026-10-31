@@ -73,11 +73,8 @@ it('cuts the Tui::sleep() of a plain coroutine short when the program ends, and 
         $t = Tui::headless(new Text('x'), 10, 1);
         $ended = null;
         fiber\go(function () use (&$ended) {
-            try {
-                Tui::sleep(10);
-            } catch (Quit) {
-                $ended = microtime(true);
-            }
+            Tui::sleep(10);                  // (returns early: no Quit outside a Tui::go() coroutine, since 0.0.3-beta8)
+            $ended = microtime(true);
         });
         fiber\sleep(0.05);
         $t->detach();

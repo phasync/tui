@@ -146,27 +146,33 @@ final class Tui
     }
 
     /**
-     * Sleep $seconds, as `fiber\sleep()` does, but end at once with a `Quit` exception when
-     * the program ends: the wait of a coroutine started with `Tui::go()`, which then stops
-     * with its program (see there). A `Tui::go()` coroutine whose program has ended gets `Quit`
-     * from every call. Elsewhere (a handler, a coroutine of `fiber\go()`) it ends early with
-     * `Quit` when the program running at the call ends during the sleep, and sleeps plainly
-     * when none runs.
+     * Sleep $seconds, as `fiber\sleep()` does, but end at once when the program ends. In a
+     * coroutine started with `Tui::go()` it ends with a `Quit` exception, which `Tui::go()`
+     * takes as the coroutine's end, so the coroutine stops with its program (see there); one
+     * whose program has ended gets `Quit` from every call. Elsewhere (the code that started a
+     * `Tui::headless()` program, a handler, a coroutine of `fiber\go()`), where nothing would
+     * take the exception, it returns early when the program running at the call ends during
+     * the sleep, and sleeps plainly when none runs.
      *
-     * @throws Quit when the program has ended
+     * @throws Quit in a `Tui::go()` coroutine, when its program has ended
      */
     public static function sleep(float $seconds): void
     {
         $me = \fiber\current();
         $job = $me === null ? null : (self::$jobs[$me] ?? null);
         if ($job === null) {
+            // (not a Tui::go() coroutine: nothing takes a Quit here, so the sleep ends early)
             $root = Component::runningRoot();
             if ($root === null) {
                 \fiber\sleep($seconds);
                 return;
             }
-            $job = new Internal\Job();
-            self::claim($job, $root);
+            $wait = new Internal\Job();
+            self::claim($wait, $root);
+            if (!$wait->ended) {
+                $wait->wake->wait($seconds);
+            }
+            return;
         }
         if (!$job->ended) {
             $job->wake->wait($seconds);

@@ -5,8 +5,9 @@ namespace phasync\Tui;
 /**
  * Thrown by `Tui::sleep()` in a coroutine of a program (`Tui::go()`) when the program has ended
  * (Ctrl-Q, `Tui::quit()`, the root disposed): the coroutine's cue to stop. Let it end the
- * coroutine (`Tui::go()` takes it as the coroutine's normal end), or catch it to clean up
- * first:
+ * coroutine (`Tui::go()` takes it as the coroutine's normal end, under every runner), or
+ * catch it to clean up first. Outside a `Tui::go()` coroutine `Tui::sleep()` returns early
+ * instead, since nothing there would take the exception.
  *
  *     Tui::go(function () use ($s) {
  *         try {

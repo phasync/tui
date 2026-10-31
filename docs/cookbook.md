@@ -307,3 +307,48 @@ Tui::run(fn() => new Column([
 ```
 
 Under 80 columns the contents go above the text (`flex-col md:flex-row`).
+
+## 11. Rows that keep their widgets
+
+A list whose rows move (sorted by progress) and come and go, each row with a bar and a button
+that keep their state: the focus stays on the button it is on while the rows reorder.
+
+```php
+use phasync\Tui\Component\{Button, ProgressBar};
+use phasync\Tui\Element\{Column, Help, Row, Text};
+use phasync\Tui\{State, Tui};
+
+$s = new State(['done' => ['build' => 0.0, 'test' => 0.0, 'lint' => 0.0, 'docs' => 0.0], 'paused' => []]);
+$bars = $buttons = [];
+\fiber\run(function () use ($s, &$bars, &$buttons) {
+    foreach (array_keys($s->done) as $i => $job) {
+        Tui::go(function () use ($s, $job, $i) {
+            while ($s->done[$job] < 1.0) {
+                Tui::sleep(0.01 * ($i + 1));
+                $s->done[$job] = empty($s->paused[$job]) ? min(1.0, $s->done[$job] + 0.01) : $s->done[$job];
+            }
+        });
+    }
+    Tui::run(function () use ($s, &$bars, &$buttons) {
+        $done = $s->done;
+        arsort($done);                      // the furthest first: the rows move as they go
+        $rows = [];
+        foreach ($done as $job => $_) {
+            // made once and kept: the same instances in every render, wherever the row is
+            $bars[$job] ??= new ProgressBar(fn() => $s->done[$job]);
+            $buttons[$job] ??= new Button(fn() => empty($s->paused[$job]) ? 'Pause' : 'Resume',
+                fn() => $s->paused[$job] = empty($s->paused[$job]));
+            $rows[] = new Row([new Text($job, width: 6), $bars[$job], $buttons[$job]], gap: 1, key: $job);
+        }
+        return new Column([...$rows, new Text(fn() => count(array_filter($s->done, fn($d) => $d >= 1.0)) . ' done', class: 'grow text-muted'), new Help()]);
+    });
+});
+```
+
+The `??=` keeps each widget for the life of the program: a `ProgressBar` keeps its animation
+and a `Button` its focus whichever row it is shown in, and the bar, which reads the state in a
+closure, is drawn again by itself without the list being rendered. `key:` names the row, so
+the windows behind it go with it when the order changes. Made anew in every render instead
+(`new Button(...)` in the loop), the instances would take over the ones before them by
+position, and a focus or an animation would stay at the place in the list rather than with
+the job.
