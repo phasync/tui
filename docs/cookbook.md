@@ -1,6 +1,6 @@
 # Cookbook
 
-Ten screens, each a whole program of under forty lines, most of them without a class. Copy
+Ten screens, each a whole program of under forty lines, none of them with a class. Copy
 one into a file after `require 'vendor/autoload.php';` and run it; Ctrl-Q quits. Each is run
 by `tests/Docs/CookbookTest.php` under a `FakeTerminal` at 60x20 and at 160x50, so what you
 read here works.
@@ -83,47 +83,33 @@ $show = function () use ($s, $log) {
 
 ## 3. A form with validation in a dialog
 
-This screen is about a dialog, so it is a class: `dialog()` belongs to the component that opens
-it, and its answer is awaited in a coroutine of that component.
+A key of the program (`keys:`) opens the dialog; its handler awaits the answer
+(`Dialog::open()`), and the other keys keep working meanwhile.
 
 ```php
 use phasync\Tui\Component\{Dialog, Editor, Form};
 use phasync\Tui\Element\{Column, Help, Text};
-use phasync\Tui\{Component, Element, Tui};
+use phasync\Tui\{State, Tui};
 
-final class Contacts extends Component
-{
-    protected function mount(): void
-    {
-        $this->state->contacts = [];
+$s = new State(['contacts' => []]);
+$add = function () use ($s) {
+    $form = new Form(new Column([
+        new Text('Name'), (new Editor(maxLines: 1))->with(id: 'name'),
+        new Text('Email'), (new Editor(maxLines: 1))->with(id: 'email'),
+    ]), validate: fn(array $v) => array_filter([
+        'name' => trim($v['name']) === '' ? 'A name, please.' : null,
+        'email' => str_contains($v['email'], '@') ? null : 'An email address has an @.',
+    ]));
+    if (\fiber\await(Dialog::open(new Dialog('New contact', $form, ['Add' => true, 'Cancel' => false])))) {
+        $s->contacts = [...$s->contacts, $form->values()];
     }
-
-    protected function bindings(): array { return ['ctrl+n' => ['add', 'new contact']]; }
-
-    public function add(): void
-    {
-        $this->go(function () {
-            $form = new Form(new Column([
-                new Text('Name'), (new Editor(maxLines: 1))->with(id: 'name'),
-                new Text('Email'), (new Editor(maxLines: 1))->with(id: 'email'),
-            ]), validate: fn(array $v) => array_filter([
-                'name' => trim($v['name']) === '' ? 'A name, please.' : null,
-                'email' => str_contains($v['email'], '@') ? null : 'An email address has an @.',
-            ]));
-            if (\fiber\await($this->dialog(new Dialog('New contact', $form, ['Add' => true, 'Cancel' => false])))) {
-                $this->state->contacts = [...$this->state->contacts, $form->values()];
-            }
-        });
-    }
-
-    protected function render(): Element
-    {
-        $rows = array_map(fn(array $c) => new Text("<b>{$c['name']}</b> <dim>{$c['email']}</dim>"), $this->state->contacts);
-        return new Column([new Text('Contacts', class: 'bold text-accent'), new Column($rows ?: [new Text('none yet', class: 'text-muted')], class: 'grow'), new Help()]);
-    }
-}
-
-Tui::run(new Contacts());
+};
+Tui::run(fn() => new Column([
+    new Text('Contacts', class: 'bold text-accent'),
+    new Column(array_map(fn(array $c) => new Text("<b>{$c['name']}</b> <dim>{$c['email']}</dim>"), $s->contacts)
+        ?: [new Text('none yet', class: 'text-muted')], class: 'grow'),
+    new Help(),
+]), keys: ['ctrl+n' => [$add, 'new contact']]);
 ```
 
 The dialog checks the form before it closes: Enter or Add with an empty name shows the

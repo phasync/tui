@@ -23,11 +23,11 @@ function cookbookRecipes(): array
 }
 
 /** The runner the recipes call instead of Tui::run()/Tui::inline(): a FakeTerminal given to the check. */
-function cookbookRun(bool $inline, Element|Closure $root): void
+function cookbookRun(bool $inline, Element|Closure $root, array $keys = []): void
 {
     [$cols, $rows, $check] = $GLOBALS['cookbook'];
-    \fiber\run(function () use ($inline, $root, $cols, $rows, $check) {
-        $t = Tui::headless($root, $cols, $rows, inline: $inline);
+    \fiber\run(function () use ($inline, $root, $keys, $cols, $rows, $check) {
+        $t = Tui::headless($root, $cols, $rows, inline: $inline, keys: $keys);
         $t->run(function () use ($t, $check) {
             $check($t);
             $t->press('ctrl+q');
@@ -38,11 +38,7 @@ function cookbookRun(bool $inline, Element|Closure $root): void
 /** Run recipe $n at $cols x $rows with $check($terminal). */
 function cookbook(int $n, int $cols, int $rows, Closure $check): void
 {
-    static $runs = 0;
     $code = cookbookRecipes()[$n][1];
-    $runs++;
-    // (a class of a recipe is declared once per run, under a name of its own)
-    $code = preg_replace('/\b(class|new) (Contacts)\b/', '$1 ${2}' . $runs, $code);
     $code = str_replace(['Tui::run(', 'Tui::inline('], ['cookbookRun(false, ', 'cookbookRun(true, '], $code, $count);
     expect($count)->toBe(1);
     $GLOBALS['cookbook'] = [$cols, $rows, $check];
@@ -60,9 +56,7 @@ it('has ten screens, each under forty lines', function () {
     expect(array_keys($recipes))->toBe(range(1, 10));
     foreach ($recipes as $n => [$title, $code]) {
         expect(substr_count($code, "\n"))->toBeLessThan(40, "recipe $n ($title)");
-        if ($n !== 3) {
-            expect(preg_match('/^\s*(final\s+)?class\s/m', $code))->toBe(0, "recipe $n has no class");
-        }
+        expect(preg_match('/^\s*(final\s+)?class\s/m', $code))->toBe(0, "recipe $n has no class");
     }
 });
 

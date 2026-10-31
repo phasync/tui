@@ -18,7 +18,7 @@ README.md and docs/.
 - [x] 4. Small (6205e53): --headless=/TUI_HEADLESS, overlays outside a bordered window's only
       content (Component::framed()), Tui::go(), Table keeps its place, Dialog at most 80%,
       Tabs docs, cookbook plural; tests/Release/SmallBeta3Test.php, FailureTest modes
-- [ ] docs (components.md "Without a class", cookbook dialog without a class, README), CHANGELOG
+- [x] docs (components.md "Without a class", cookbook dialog without a class, README), CHANGELOG
 
 ## Design decisions (0.0.3-beta3)
 

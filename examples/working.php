@@ -23,7 +23,7 @@ $full = in_array('--full', $argv, true);
 $s = new State(['done' => 0]);
 $quit = false;
 fiber\run(function () use ($s, $full, &$quit) {
-    fiber\go(function () use ($s, &$quit) { for ($i = 1; $i <= 100 && !$quit; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+    Tui::go(function () use ($s, &$quit) { for ($i = 1; $i <= 100 && !$quit; $i++) { fiber\sleep(0.05); $s->done = $i; } });
     $screen = fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),

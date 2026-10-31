@@ -1,5 +1,85 @@
 # Changelog
 
+## 0.0.3-beta3 (2026-11-01)
+
+A program without a class takes keys, the mouse and dialogs; components a program keeps stay
+themselves wherever they move; Tab no longer gets stuck after a hidden shell tab. Everything
+from 0.0.3-beta2 works as before, except where an entry says what changed.
+
+**A closure program receives input**
+
+- `Tui::run($screen, keys: [...])`, also `Tui::inline()` and `Tui::headless()`: keys of the
+  program, in the syntax of `bindings()`, with closures as actions (`'ctrl+n' => [fn() =>
+  add($s), 'new card']`, `'always' => true` for one that works under a dialog). They run before
+  the focused component's keys, and `Help` lists the described ones. Before, a closure program
+  had only Ctrl-Q.
+- Every element takes `onKey:` (a bindings array, or `fn(Key $key, Element $element): bool`)
+  and `onMouse:` (`fn(Mouse $mouse, Element $element)`). An element with `onKey:` takes the
+  focus: Tab and Shift-Tab stop at it, a click focuses it, `focus:` classes show it, `Help`
+  lists its keys. `onMouse:` gets presses, drags and releases in the element's coordinates; the
+  element that took the press gets the drag and the release, and `$mouse->over()` lists the
+  elements under the pointer, so a card dragged onto a column knows the column.
+- `Dialog::open($dialog)` and `Confirm::ask($title, $text)` open a dialog from any coroutine of
+  the program, a key handler included, and return the awaitable of the answer; one at a time
+  per program. They throw a `LogicException` when no program runs.
+- Handlers may wait: a key handler that awaits a dialog (or sleeps, or reads a file) no longer
+  holds the input up; the keys typed into the dialog reach it.
+- An action in `bindings()` and `bind()` may be a closure instead of a method name; it always
+  takes the key. `bind($keys, first: true)` marks them all `first`.
+- `Tui::go($task)`: a coroutine of the program whose exception ends the program at once, with
+  the terminal restored and the message readable. A coroutine started with plain `fiber\go()`
+  still fails only when `fiber\run()` ends (fiber-interop/api gives the library no way to hear
+  of it); a component's `$this->go()` keeps showing the error in the component's rectangle.
+  The README, the cookbook, `examples/dashboard.php` and `examples/working.php` use it.
+- docs/components.md has a "Without a class" section, and cookbook screen 3 (the form in a
+  dialog) is a closure now: no recipe has a class.
+- Changed, for tests: `FakeTerminal::press()`, `type()`, `paste()` and the mouse calls return
+  when the handlers of the input have run (one second at most), or once a handler waits for a
+  dialog it opened. Before, they returned before a handler that waited had finished.
+
+**Kept components keep their identity**
+
+- A component instance a closure program keeps and places on every render (`$bars[$job] ??=
+  new ProgressBar(...)`) stays that instance, with its state, surface and value, wherever the
+  next render places it. Before, dropping the first of two jobs made the second job's bar show
+  the total's value, because instances were matched by position: the bar the program kept was
+  replaced by the one at its old place.
+- Changed: an instance that left the tree is stopped, and placing it again throws a
+  `LogicException` that says to make a new instance (or keep it in the tree with the class
+  `hidden`).
+- `$terminal->component()` gives the root component a device shows, and `children()` lists
+  its children by `key:`, so a test or a program reaches the components of a closure program
+  (`$t->component()->children()['progress']`). `Component::of($surface)` gives a surface's
+  component.
+
+**Focus**
+
+- Tab works again after a hidden tab with a `Terminal` was shown and left: a component the
+  current render does not show (a hidden tab's shell, a `keep()` child, a component given as a
+  prop) is never in the Tab order and does not get the keys, whoever owns it, until it is shown
+  again or focused with `focus()`. Before, pressing Alt-1 right after Alt-2 could leave the
+  keys with the hidden shell, and Tab did nothing.
+
+**Small things**
+
+- Headless without editing: a program run by `Tui::run()` or `Tui::inline()` started with
+  `--headless=COLSxROWS` (or `TUI_HEADLESS=COLSxROWS`) runs on an in-memory terminal for a
+  second (`@SECONDS` for another time), prints the screen as text and exits:
+  `php examples/dashboard.php --headless=100x30`. A wrong size is an error saying what was
+  expected.
+- An Editor's completion list and a Select's dropdown, when the field is the only content of a
+  `Box`, open just outside the box instead of over its bottom border.
+- Deleting the current row of a `Table` keeps the place: the next row becomes current (the last
+  one when the table got shorter) instead of the first row.
+- Changed: a `Dialog` is as wide as its content (a message wraps at 60 columns), at most 80% of
+  the screen; before, a dialog with a field spanned the whole width.
+- A fixed `width:` or `height:` on an element in a `Row` or `Column` is its size also when the
+  parent measures it (`new Box($x, height: 8)` in a `Row` was as high as its content).
+- `Tabs` documents that its tabs are given once: a `new Tabs([...])` made again by a later
+  render updates `position`, `hints` and `closable`, not the tabs; keep the instance and change
+  them with `setTabs()`.
+- Cookbook screen 9 says "1 sample", not "1 samples".
+
 ## 0.0.3-beta2 (2026-10-31)
 
 A program with no styling looks like a modern tool in three themes, the cookbook has ten screens

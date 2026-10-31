@@ -107,7 +107,8 @@ new Table(
 
 A cell wider than its column is cut with "…" (by its visible text). When the columns do not
 fit, the table scrolls sideways by column. The current row stays the same row (by key) through
-new rows and sorting. **Cost**: the widths of `'auto'` columns and the order of the rows are
+new rows and sorting; when the current row itself is deleted, the row that comes to its place
+is current (the last one when the table got shorter), so the cursor does not jump to the top. **Cost**: the widths of `'auto'` columns and the order of the rows are
 worked out when the rows change (a new `rows` array, `setItems()`; rows equal to the ones shown, built anew by every render, are no change), the sorting changes or a
 `Select`'s filter does, not when the cursor or the view moves: moving through 10,000 rows costs
 what moving through 100 does (the rows in view are drawn). A subclass that shows only some rows
@@ -279,7 +280,16 @@ $app->setStylesheet(Stylesheet::default()->with([
 
 A modal dialog with a message (or any element tree: a form) and buttons, opened with
 `Component::dialog()`, which returns an awaitable of the answer
-(see [components](components.md#overlays-and-dialogs)).
+(see [components](components.md#overlays-and-dialogs)). A program without classes opens one
+with `Dialog::open($dialog)` from any of its coroutines, a key handler included, and asks yes
+or no with `Confirm::ask($title, $text)` (see [components](components.md#without-a-class)):
+
+```php
+'delete' => [fn() => fiber\await(Confirm::ask('Delete', 'Delete 3 files?')) && deleteFiles(), 'delete'],
+```
+
+`Dialog::open()` shows the dialog on the program's root, one at a time (another while one is
+open returns the open one's awaitable), and throws a `LogicException` when no program runs.
 
 ```php
 $this->go(function () {
@@ -310,8 +320,9 @@ none. Tab and Shift-Tab go through the content's fields first and the buttons af
 Left/Right move between the buttons. Enter presses the focused button (from a field: the first
 button), Escape cancels; Page Up/Page Down scroll the content. A click on a button presses it.
 
-**Size.** As large as its content needs (a message wraps at 60 columns), never larger than the
-screen: a dialog that does not fit is shrunk, its content scrolls (it is in a `ScrollView`) and
+**Size.** As wide as its content needs (a message wraps at 60 columns), at most 80% of the
+screen's width (a field that fills its room, as an `Editor`, makes it that wide); as high as its
+content needs, never higher than the screen: a dialog that does not fit is shrunk, its content scrolls (it is in a `ScrollView`) and
 its buttons stay in view. `with(width: 50, height: 12)` fixes the size.
 
 **A form in a dialog.** Give the dialog a `Form` as its content (or put one in it): the form

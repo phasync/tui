@@ -26,15 +26,15 @@ it('opens with the dashboard, as examples/dashboard.php has it', function () {
         ->and(strpos($readme, '╭ build'))->toBeLessThan(strpos($readme, '```php'));     // the screenshot first
 });
 
-it('runs the README\'s one-file program on an in-memory terminal', function () {
-    $readme = (string) file_get_contents(__DIR__ . '/../../README.md');
-    preg_match('/```php\n((?:(?!```).)*Working….*?)```/s', $readme, $m);
-    expect($m[1])->toContain('Tui::inline(fn() => new Column([')->toContain('fiber\go(');
+it('runs the one-file program of the README and of docs/components.md on an in-memory terminal', function (string $doc) {
+    $text = (string) file_get_contents(__DIR__ . '/../../' . $doc);
+    preg_match('/```php\n((?:(?!```).)*Working….*?)```/s', $text, $m);
+    expect($m[1])->toContain('Tui::inline(fn() => new Column([')->toContain('Tui::go(');
     // as written, but faster, and headless: the screen is read, then Ctrl-Q
     $code = str_replace(['fiber\sleep(0.05)', 'Tui::inline(', "]));\n});"], ['fiber\sleep(0.002)', '$t = Tui::headless(', "]), 60, 8, inline: true);\n    readmeWorking(\$t);\n});"], $m[1], $count);
     expect($count)->toBe(3);
     eval($code);
-});
+})->with(['README.md', 'docs/components.md']);
 
 it('runs the README\'s styled screen: utility classes and markup, side by side when wide, stacked when narrow', function () {
     $readme = (string) file_get_contents(__DIR__ . '/../../README.md');

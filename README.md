@@ -104,7 +104,7 @@ use phasync\Tui\Element\{Column, Text};
 
 $s = new State(['done' => 0]);
 fiber\run(function () use ($s) {
-    fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+    Tui::go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
     Tui::inline(fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),
@@ -116,7 +116,15 @@ That is a whole program: a line and a progress bar as a live region under the sh
 counting to 100%. The closure is the screen; it is rendered again whenever a `State` it read
 changes, here from a coroutine. Ctrl-Q quits; `Tui::run()` shows the same screen full screen,
 `Tui::headless()` on an in-memory terminal for tests (`examples/working.php` runs both ways).
-`fiber\go()` must be called inside `fiber\run()`, which is why the program is wrapped in one.
+`Tui::go()` is `fiber\go()` that ends the program when the coroutine fails; both must be called
+inside `fiber\run()`, which is why the program is wrapped in one.
+
+Such a program takes input without a class too: `keys:` on the runner binds keys to closures
+(`Tui::run($screen, keys: ['ctrl+n' => [fn() => add($s), 'new card']])`), every element takes
+`onKey:` (which makes it focusable, in the Tab walk) and `onMouse:` (presses, drags and the
+release of a drag, with what it was dropped on), and a handler may await a dialog:
+`fiber\await(Confirm::ask('Delete', 'Delete the card?'))`, `Dialog::open(new Dialog(...))`. See
+[docs/components.md](docs/components.md#without-a-class).
 
 Classes are for what has behaviour of its own. A chat-like log with an input line next to your
 shell:
@@ -529,6 +537,14 @@ what the next frame shows. Never `usleep()` in a coroutine: it stops the whole p
 included.
 
 ## Examples
+
+**Headless, as written.** A program run by `Tui::run()` or `Tui::inline()` (the dashboard,
+`examples/working.php`, the cookbook's screens) runs without a terminal when it is started with
+`--headless=COLSxROWS`, or with the environment variable `TUI_HEADLESS=COLSxROWS`: on an
+in-memory terminal of that size for a second, then it prints the screen as text and exits
+(`php examples/dashboard.php --headless=100x30`; `@SECONDS` after the size runs it longer or
+shorter: `TUI_HEADLESS=100x30@3`). For a look at a screen in CI, over a pipe or in a bug report.
+The examples with a class start on a `Tty` themselves and need a terminal.
 
 - `examples/working.php`: the one-file program at the top, inline; `--full` for full screen.
 - `examples/split-shells.php`: two shells side by side with a status bar, a tiny tmux. Ctrl-B Tab

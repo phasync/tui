@@ -51,6 +51,7 @@ fiber\run(function () use ($tty) {
 | `attach(Surface $root)` | Show `$root` and send it the input, until `detach()`. Throws `LogicException` when already attached. |
 | `detach()` | Give the terminal back: modes off, main screen, cursor shown, settings restored. Its coroutines end, and the root is closed (`Surface::close()`), which disposes a component on it. Safe to call twice. |
 | `isAttached(): bool`, `root(): ?Surface` | |
+| `component(): ?Component` | The root component shown on it (`Tui::run()`'s, `Tui::headless()`'s, or one given to `start()`), null when none is: `$terminal->component()->children()['progress']` reaches a component a closure program placed with `key: 'progress'`. |
 | `wait()` | Wait until `detach()` (returns at once when not attached). |
 | `refresh()` | Draw what changed now instead of at the next frame: the renders that are pending run first. |
 | `TerminalDevice::of(Surface $root): ?TerminalDevice` | The device a root is attached to, or null. A component reaches its own with `$this->device()`. |
@@ -295,7 +296,7 @@ fiber\run(function () {
 | `clipboardText(): string` | The last text copied to the clipboard (OSC 52). |
 | `waitFor(string\|Closure $condition, float $timeout = 5.0): bool` | Wait until the screen contains the text (or the closure, given the terminal, returns true), drawing as it goes. |
 | `resize(int $cols, int $rows)` | As when the user resizes the window. |
-| `press(Key\|string ...$keys)` | Press keys: `Key` objects or notations (`'ctrl+c'`, `'enter'`, `'a'`). |
+| `press(Key\|string ...$keys)` | Press keys: `Key` objects or notations (`'ctrl+c'`, `'enter'`, `'a'`). Like `type()`, `paste()` and the mouse calls, it returns when the handlers of the input have run, also handlers that wait (one second at most), except one that awaits the answer of a dialog it opened: then it returns once the dialog is open, so the test can answer it. An exception that escapes the input handling (a listener of yours on the root surface) comes out of the call. |
 | `type(string $text)` | Text: one key per character; `"\n"` is Enter, `"\t"` Tab. For text only: arrows, function keys and modified keys go through `press()`, escape sequences through `feed()`; other control characters are refused (`InvalidArgumentException`). |
 | `paste(string $text)` | A bracketed paste. |
 | `mouse(Mouse $event)`, `click($x, $y, $button = Mouse::LEFT)`, `drag($x1, $y1, $x2, $y2)`, `scroll($x, $y, $clicks)` | Mouse input at terminal coordinates; negative clicks scroll up. |

@@ -30,7 +30,7 @@ fiber\run(function () {
 });                                                 // returns once it has quit
 ```
 
-## One file, no class
+## Without a class
 
 A screen that only shows state needs no class: an element tree and a runner.
 
@@ -41,7 +41,7 @@ use phasync\Tui\Component\ProgressBar;
 
 fiber\run(function () {
     $s = new State(['done' => 0]);
-    fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+    Tui::go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
     Tui::inline(fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),
@@ -52,9 +52,9 @@ fiber\run(function () {
 **A closure is a component.** `Tui::run()`, `Tui::inline()` and `Tui::headless()` take an
 element, a component, or a closure that returns either. The closure is rendered (called) when
 the screen is shown and again whenever a `State` it read changes (see "State" below): here,
-every write of `$s->done`. It has no keys of its own, and quits on Ctrl-Q like every program
-run by `Tui`. A closure that reads no state is called once, and the component it returns is the
-root itself (`Tui::run(fn() => new App())`).
+every write of `$s->done`. It quits on Ctrl-Q like every program run by `Tui`. A closure that
+reads no state is called once, and the component it returns is the root itself
+(`Tui::run(fn() => new App())`).
 
 **Element content may be a closure**, so one value can change in a screen that is otherwise
 built once: `new Text(fn() => "{$s->done}%")`, a `Box` title `fn() => "log ({$s->lines})"`, a
@@ -62,10 +62,80 @@ built once: `new Text(fn() => "{$s->done}%")`, a `Box` title `fn() => "log ({$s-
 when a `State` its closure read changes, only it is drawn again, and the component that placed
 it does not render.
 
-`fiber\go()` must be called inside `fiber\run()` (fiber-interop/api throws `NotInRunException`
-otherwise), which is why the program above is wrapped in one; the runners work inside a
-`fiber\run()` of yours. Classes stay for anything with behaviour of its own (keys, coroutines
-that belong to it, children kept by key); a closure component is the same thing without a name.
+**Keys of the program.** `keys:` on the runner binds keys on the root, in the syntax of
+`bindings()` (see "Key bindings"), with a closure as the action:
+
+```php
+Tui::run(fn() => board($s), keys: [
+    'up' => fn() => $s->row--,                          // not listed by Help
+    'ctrl+n' => [fn() => addCard($s), 'new card'],      // listed as "ctrl+n new card"
+    'ctrl+s' => [fn() => save($s), 'save', 'always' => true],   // also under a dialog
+]);
+```
+
+They run before the focused component's keys (a text field does not type a key the program
+binds); a closure action always takes the key. `always` keeps one working while a dialog is
+open, as in a class.
+
+**Keys and the mouse of an element.** Every element takes `onKey:` and `onMouse:`
+(`new Text($card, onKey: [...], onMouse: fn(Mouse $m) => ...)`, also `->with(onKey: ...)`):
+
+- `onKey:` is a bindings array as above, or a closure `fn(Key $key, Element $element): bool`
+  (true when it took the key). An element with `onKey:` is **focusable**: in the Tab walk with
+  the components, in the order they show; a press on it focuses it; its `focus:` classes and
+  `:focused` rules apply while it has the focus (`class: 'focus:inverse'`), and `Help` lists its
+  described keys while it does. A key that ends at it goes to its `onKey:` first (after the
+  program's `keys:`, which come before everything); one it does not take goes on to the
+  component that placed it and its parents.
+- `onMouse:` (`fn(Mouse $m, Element $element)`) gets the presses, drags and releases over the element, in its coordinates
+  (`$m->x`, `$m->y`, 0 at its top-left). An element that took the press (anything but `false`
+  returned) gets the drag and the release wherever the pointer goes, with coordinates that may
+  be outside it; `$m->over()` lists the elements under the pointer, innermost first, so the
+  release of a drag tells where it was dropped (the `key:` of a column `Box`). A wheel click is
+  taken only when the closure returns `true`, so it scrolls the window around it otherwise.
+
+**Handlers may wait.** A handler (a `keys:` closure, `onKey:`, `onMouse:`, a widget's
+`onSubmit:`) runs in a coroutine of its own: it may await a dialog, sleep or read a file,
+and the screen goes on meanwhile (the keys typed into the dialog reach it).
+`Dialog::open(Dialog $d)` shows a dialog on the program's root and returns the awaitable of its
+answer, from any coroutine of the program; `Confirm::ask($title, $text)` asks yes or no:
+
+```php
+'delete' => [function () use ($s) {
+    if (fiber\await(Confirm::ask('Delete', "Delete {$s->card}?"))) {
+        deleteCard($s);
+    }
+}, 'delete'],
+```
+
+One dialog at a time per root: opening another while one is open gives the open one the focus
+and returns its awaitable. Without a running program, `Dialog::open()` throws a
+`LogicException`.
+
+**Coroutines.** Start the program's own coroutines with `Tui::go()`: an exception in one ends
+the program at once, the terminal is restored and the exception comes out of `Tui::run()`
+(see "How a program ends"). One started with plain `fiber\go()` is not seen by the library
+(fiber-interop/api has no way to be told of it): its exception waits in `fiber\run()` until
+the screen has ended by itself. The alternative is a class: a component's `$this->go()` is
+contained by its error boundary, so a failure shows in the component's rectangle and the rest
+goes on (see "Errors stay in their rectangle").
+
+**Kept instances.** A component made once and placed by every render (`$bars[$name] ??= new
+ProgressBar(...)`) keeps its identity wherever the next render places it: its state, its
+surface and its value go with it when rows above it leave or the rows are reordered. When a
+render leaves it out, it is stopped; placing it again throws a `LogicException` (make a new
+instance, or keep it shown with the class `hidden`). Give such instances a `key:`: it is what
+keeps an instance shown in only one frame apart from the new instances at its place, and it is
+how they are reached from outside. `$device->component()` is the root component of what a
+terminal device shows (`Tui::headless()` returns the device), and `children()` lists its
+children by key: `$t->component()->children()['progress']`. `Component::of($surface)` gives the
+component of a surface.
+
+`fiber\go()` and `Tui::go()` must be called inside `fiber\run()` (fiber-interop/api throws
+`NotInRunException` otherwise), which is why the program above is wrapped in one; the runners
+work inside a `fiber\run()` of yours. Classes stay for widgets with behaviour of their own that
+are used more than once (a component with its own keys, coroutines and children); a closure
+program is the same thing without a name.
 
 ## Lifecycle
 
@@ -143,7 +213,7 @@ what it collected). `Tui::inline($root, keep: true)` does the same in inline mod
 `Tui::headless($root, $cols, $rows)` starts it on a `FakeTerminal` inside your own `fiber\run()`
 and returns the terminal, for tests (`inline: true` for inline mode). Under `Tui`, **Ctrl-Q
 quits** when no component on the key's way binds it (a `Help` element lists it as "quit");
-`$root` may be an element tree or a closure (see "One file, no class").
+`$root` may be an element tree or a closure (see "Without a class").
 
 - **Quitting.** Dispose the root component (`$this->dispose()` in its key handler), close the root
   surface (`$this->surface->root()->close()` from anywhere), or detach the device; each leads to
@@ -570,6 +640,11 @@ marked:
 return ['ctrl+q' => ['quit', 'quit', 'always' => true], 'ctrl+s' => ['save', 'save']];
 ```
 
+**A closure as the action.** Instead of a method name, an action may be a closure (`'f5' =>
+[fn() => $this->reload(), 'reload']`): it gets the `Key`, always takes the key, and the
+component renders afterwards; it may wait (await a dialog), as any handler. This is how a
+program without a class binds keys (`keys:`, `onKey:`; see "Without a class").
+
 **Changing them.** `$component->bind(['ctrl+s' => null, 'ctrl+w' => 'save'])` changes one
 instance; `$app->bind(['ctrl+enter' => 'submit'], Editor::class)` every `Editor` below `$app`.
 The nearest setting wins. `bindingsInForce()` lists the result. A `Help` element shows the
@@ -721,7 +796,11 @@ nothing on the key's way binds them and the key ends at a component with keys of
 the next (previous) such component in the same order, around; while a modal dialog is open,
 only among the components in it. A `Terminal` has no keys of its own (they go to its program),
 so a shell keeps its Tab; a component that binds `tab` (a `Form`, `Tabs`, an `Editor` with
-completion) keeps its meaning. When the focused component is no longer shown, the component focused before it gets
+completion) keeps its meaning. Elements with `onKey:` are in the same walk (see "Without a
+class"). **Only what the current render shows is in the walk**: a component kept alive but not
+shown (the `Terminal` of a hidden tab, a `keep()` child, a component given as a prop), whoever
+owns it, is skipped, and keys do not go to it, until it is shown again or focused by
+`focus()`. When the focused component is no longer shown, the component focused before it gets
 the focus back.
 
 The focus belongs to the surface, not to the layout objects around it: a `render()` that builds
@@ -819,7 +898,8 @@ any other method.
 | `markup(string $text, string\|array\|null $part = null, string ...$states): string` (protected) | `$text` with its markup (`<b>`, `<fg=red>`, see [styling.md](styling.md#markup-in-text)) turned into escape sequences in the style of the component or of its part: how a widget draws a label that takes markup. |
 | `stylesheet(): Stylesheet` / `setStylesheet(Stylesheet $s)` | The stylesheet in force (its own, else its parent's, else the default); set one for the subtree. |
 | `theme(): string` / `setTheme(?string $name)` | The theme in force (`dark`, `light`, `mono`: its own, else its parent's, else the one `Tui::run(theme:)` or the terminal's background chose); set one for the subtree, null to follow the parent. A stylesheet built with `->with()` is replayed on the theme (see [styling.md](styling.md#themes)). |
-| `bind(array $bindings, ?string $for = null): static` | Change the keys of this component, or of every component of class `$for` below it (see "Key bindings"). `bindingsInForce()` lists the keys in force. |
+| `bind(array $bindings, ?string $for = null, bool $first = false): static` | Change the keys of this component, or of every component of class `$for` below it (see "Key bindings"); with `$first`, every binding given is marked `first`. `bindingsInForce()` lists the keys in force. |
+| `Component::of(Surface $surface): ?Component` (static) | The component whose surface `$surface` is (the root on a device's root surface), or null: how code that has a surface (an event's, `$device->root()`) reaches the component. `TerminalDevice::component()` is the root component of a device. |
 | `types(): array` | The type names it matches in a stylesheet (its class's short name and its parents'). |
 | `focusNext(bool $wrap = true): bool`, `focusPrevious(bool $wrap = true): bool` | Move the focus to the next (previous) field inside it, around; with `$wrap` false, false at the last (first) one so the key goes on. Bind them to Tab and Shift-Tab for a group of fields of its own (unbound, Tab walks every component that takes keys; see "Focus"). |
 | `focus()` | Give it the focus (on a component not started yet: when it starts), and through it to the descendant it focused (see "Focus" above): every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). It takes effect at once, for the very next key, also for a component not shown yet (a dialog created in a key handler, shown by the render that follows). The focus stays with it through every re-render, also one that moves it into a different nested layout; when it is no longer shown, the component focused before it gets the focus back. |
