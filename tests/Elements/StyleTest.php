@@ -102,6 +102,25 @@ it('matches states and parts, and parts inherit from their element', function ()
         ->and($sheet->compute($t, ['focused'], null, 'mark', ['on'])->text->attrs)->toBe(Style::BOLD | Style::UNDERLINE | Style::INVERSE | Style::ITALIC);
 });
 
+it('composes parts that apply together: attributes add up, the innermost colour set wins', function () {
+    $sheet = new Stylesheet([
+        'Text' => ['color' => 'white'],
+        'Text::h2' => ['bold' => true, 'color' => 'cyan'],
+        'Text::strong' => ['bold' => true, 'italic' => true],
+        'Text::quote' => ['color' => 'bright-black', 'background' => 'blue'],
+        'Text::link' => ['underline' => true, 'color' => 'yellow'],
+        'Text::link:visited' => ['color' => 'magenta'],
+        'Text::plain' => ['bold' => false],
+    ]);
+    $t = new Text('x');
+    expect($sheet->compute($t, [], null, ['h2', 'strong'])->text)->toBe(Style::of(Color::CYAN, attrs: Style::BOLD | Style::ITALIC))
+        ->and($sheet->compute($t, [], null, ['quote', 'link'])->text)->toBe(Style::of(Color::YELLOW, Color::BLUE, Style::UNDERLINE))
+        ->and($sheet->compute($t, [], null, ['quote', 'link'], ['visited'])->text->fg)->toBe(Color::MAGENTA)
+        ->and($sheet->compute($t, [], null, ['quote', 'strong'])->text)->toBe(Style::of(Color::BRIGHT_BLACK, Color::BLUE, Style::BOLD | Style::ITALIC))
+        ->and($sheet->compute($t, [], null, ['h2', 'plain'])->text)->toBe(Style::of(Color::CYAN))      // a part may turn one off
+        ->and($sheet->compute($t, [], null, ['h2'])->text)->toBe($sheet->compute($t, [], null, 'h2')->text);
+});
+
 it('inherits colours and attributes down the tree, spans included', function () {
     $app = new Styled(fn() => new Box(new Text(['a', new Span('b', class: 'hot')]), style: ['color' => 'green', 'border' => 'single']));
     $app->setStylesheet(new Stylesheet(['Span.hot' => ['bold' => true]]));

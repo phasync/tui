@@ -114,6 +114,32 @@ describe('Log', function () {
         });
     });
 
+    it('scrolls with the keys when focused, by rows from the oldest, and shows a scrollbar', function () {
+        onScreen(new Log(scrollbar: true), 20, 4, function (FakeTerminal $t, Log $log) {
+            $log->setLines(array_map(fn($i) => "line $i", range(1, 20)));     // 21 rows: the 20 lines and the cursor's
+            $log->focus();
+            $t->settle();
+            expect($log->scrollTop())->toBe(17)->and($log->isFollowing())->toBeTrue()
+                ->and(mb_substr(explode("\n", $t->text())[3], 19))->toBe('┃');      // the thumb at the bottom
+            $t->press('pageup');
+            $t->settle();
+            expect($log->scrollTop())->toBe(14)->and($log->isFollowing())->toBeFalse()->and($t->text())->toStartWith('line 15');
+            $t->press('home');
+            $t->settle();
+            expect($log->scrollTop())->toBe(0)->and($t->text())->toStartWith('line 1 ')
+                ->and(mb_substr(explode("\n", $t->text())[0], 19))->toBe('┃')
+                ->and(mb_substr(explode("\n", $t->text())[3], 19))->toBe('│');
+            $log->scrollTo(5);
+            expect($t->text())->toStartWith('line 6');
+            $t->press('end');
+            $t->settle();
+            expect($log->isFollowing())->toBeTrue();
+            $log->append("line 21\n");
+            $t->settle();
+            expect(explode("\n", $t->text())[2])->toStartWith('line 21');
+        });
+    });
+
     it('keeps a view scrolled back in its place when setLines() re-styles the lines (regression)', function () {
         onScreen(new Log(), 20, 3, function (FakeTerminal $t, Log $log) {
             $plain = array_map(fn($i) => "line $i", range(1, 30));

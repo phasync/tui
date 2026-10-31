@@ -317,6 +317,12 @@ A component that draws itself asks for its look with `$this->style()` (a `Comput
 states change. `properties()` gives a computed style as inline properties, for a `Text` or
 `Span` in a part's style.
 
+**Parts that apply together compose.** A run of text can be in several parts at once (a link
+inside a strong span inside a heading): `$this->style(['heading', 'strong', 'link'])` composes
+them in order, each on the one before, as an element inherits from its parent. Attributes add
+up (bold and underlined), and the colour of the last part that sets one wins; states apply to
+the last part: `$this->style(['row', 'cell'], 'selected')`.
+
 **The pen is the component's style.** Before `render()` runs, the library sets the surface's
 pen (its current SGR) to the component's style. So a render that clears the surface
 (`"\e[2J"`, `Ansi::clearScreen()`) fills it with the themed background, and text written
@@ -527,7 +533,7 @@ the drag; a press nobody takes starts the host's text selection.
 | `requestRender()` | Ask for a render in the next frame (batched). Rarely needed: see "State: rendering by itself". |
 | `with(key:, id:, class:, style:, width:, height:, disabled:): static` | Set element attributes (see "Element trees"); returns the component. `attribute(string $name)` reads one. |
 | `measure(int $cols, int $rows): ?array` | The size it needs as `[cols, rows]`, or null to take what it is given; for `'auto'` sizes. Override it in a component that knows its size. |
-| `style(?string $part = null, string ...$states): ComputedStyle` | Its look from the stylesheet in its current states, or that of a part. |
+| `style(string\|array\|null $part = null, string ...$states): ComputedStyle` | Its look from the stylesheet in its current states, or that of a part, or of several parts composed (innermost last; see "Stylesheets"). |
 | `stylesheet(): Stylesheet` / `setStylesheet(Stylesheet $s)` | The stylesheet in force (its own, else its parent's, else the default); set one for the subtree. |
 | `bind(array $bindings, ?string $for = null): static` | Change the keys of this component, or of every component of class `$for` below it (see "Key bindings"). `bindingsInForce()` lists the keys in force. |
 | `types(): array` | The type names it matches in a stylesheet (its class's short name and its parents'). |
@@ -571,6 +577,66 @@ yours: when the box goes, the child stays, with its content.
 ```php
 $log = $this->child('log', fn() => new Log());
 return Split::vertical()->add($this->child('box', fn() => new Box($log, 'output'))->surface);
+```
+
+## Scrolling in a widget that draws itself: `Scrollable`
+
+A widget whose content is taller than itself (a document, a list it draws, a log) uses the
+trait `Component\Scrollable` for its scrolling, so it scrolls like every other one: `Log` and
+`Markdown` do. The widget says how many rows its content has (`contentRows()`) and draws rows
+from `scrollTop()`; the trait gives the rest:
+
+| | |
+|---|---|
+| `contentRows(): int` (abstract, protected) | How many rows the content has, at the width the widget has now. |
+| `viewRows(): int` (protected) | How many it shows at once: the widget's height by default. |
+| `scrollTop(): int` | The content row at the top of the view (0 the first). |
+| `scrollTo(int $row): bool`, `scrollBy(int $rows): bool` | Move the view (clamped; it renders again); false when it did not move. |
+| `lineUp`, `lineDown`, `pageUp`, `pageDown`, `toTop`, `toBottom` | The actions of the keys (a page is the height less one row); false when they could not move, so the key goes on. |
+| `followTail(bool $on = true)` (protected) | Follow the end while content arrives, until the user scrolls up; back at the end it follows again. |
+| `follow()`, `isFollowing(): bool` | Follow the end again; whether it does. |
+| `scrollBindings(): array` (protected) | Up/Down, Page Up/Page Down, Home/End for `bindings()`: `[...$this->scrollBindings(), 'q' => 'close']`. |
+| `scrollWheel(Mouse $mouse): bool` (protected) | For `onMouse()`: the wheel scrolls three rows a click. |
+| `scrolled()` (protected) | Emits the event `scroll` (with the widget) when the rows in view or the following changed; call it after drawing. |
+| `scrollbar(int $x): string` (protected) | Escape sequences drawing a scrollbar in column `$x`, the view's height: the track in `::scrollbar`, the thumb in `::scrollbar:thumb`; blank when everything shows. |
+| `scrollState()`, `setScrollState(int $top, bool $following)` (protected) | Where the position is kept; override both to keep it elsewhere (`Log` scrolls a viewport). |
+
+```php
+final class Lines extends Component
+{
+    use Scrollable;
+
+    public function __construct(private array $lines = [])
+    {
+        $this->followTail();
+    }
+
+    protected function contentRows(): int
+    {
+        return count($this->lines);
+    }
+
+    protected function bindings(): array
+    {
+        return $this->scrollBindings();
+    }
+
+    protected function onMouse(Mouse $mouse): bool
+    {
+        return $this->scrollWheel($mouse);
+    }
+
+    protected function render(): null
+    {
+        $out = "\e[2J";
+        foreach (array_slice($this->lines, $this->scrollTop(), $this->viewRows()) as $y => $line) {
+            $out .= Ansi::moveTo(0, $y) . Text::truncate($line, $this->surface->cols() - 1);
+        }
+        $this->surface->write($out . $this->scrollbar($this->surface->cols() - 1));
+        $this->scrolled();
+        return null;
+    }
+}
 ```
 
 ## Showing another component's state
@@ -673,8 +739,9 @@ moment later.)
 | `setWordWrap(bool $on)`, `wordWrap(): bool` | Wrap between words or at any character; lays out again. |
 | `scrollToLine(int $line)` | Show line `$line` (an index into `lines()`, 0 the oldest kept) at the top: "go to line N". Clamped; near the end it shows the last lines and follows. |
 | `topLine(): int`, `bottomLine(): int` | The first and last line the view shows (in part), as indexes into `lines()`, also while it follows: "lines 120-160 of 300". |
-| `scrollBy(int $rows)`, `scrollTo(int $row)` | Scroll by rows of the laid-out text (a long line takes several, depending on the width): for paging by the window's height. `scrollTo()` row 0 is the top of the window when following, negative rows are older. |
+| `scrollBy(int $rows)`, `scrollTo(int $row)`, `scrollTop(): int` | Rows of the laid-out text (a long line takes several, depending on the width), 0 the oldest row kept: for paging by the window's height. Scrolling to the end follows again. |
 | `follow()`, `isFollowing()` | Follow the end again; true while it does. |
+| `lineUp`, `lineDown`, `pageUp`, `pageDown`, `toTop`, `toBottom` | The actions of Up, Down, Page Up, Page Down, Home and End, when the log has the focus (see `Scrollable`). |
 
 **Lines, not rows.** An application addresses the text in lines, the numbers of `lines()`:
 which rows a line takes depends on the width and the wrapping, and stays the log's business.
@@ -684,7 +751,9 @@ $log->scrollToLine($n - 1);                                       // go to line 
 $bar->set(sprintf('line %d of %d', $log->topLine() + 1, count($log->lines())));
 ```
 
-The mouse wheel scrolls it and a drag selects and copies. A view scrolled back stays on the same
+The mouse wheel scrolls it, the keys above do when it has the focus, and a drag selects and
+copies. `new Log(scrollbar: true)` shows a scrollbar in its last column (part styles
+`Log::scrollbar`, `Log::scrollbar:thumb`). A view scrolled back stays on the same
 line when the log is laid out again (a resize, a change of wrapping, `setLines()`).
 
 **Event `scroll`** (with the `Log`): the lines in view (`topLine()`, `bottomLine()`) or

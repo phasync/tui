@@ -1166,8 +1166,15 @@ abstract class Component extends Element
      *
      *     $this->style()                       // the component: ->text, ->border, ->padding ...
      *     $this->style('row', 'current')       // the part `Select::row:current`
+     *     $this->style(['quote', 'link'])      // a link inside a quote: both, the inner one winning
+     *
+     * Parts given as a list apply together, outermost first: attributes add up, and the
+     * innermost colour that is set wins (see `Stylesheet::compute()`); the states are the
+     * innermost part's.
+     *
+     * @param string|list<string>|null $part
      */
-    public function style(?string $part = null, string ...$states): ComputedStyle
+    public function style(string|array|null $part = null, string ...$states): ComputedStyle
     {
         $sheet = $this->stylesheet();
         $own = $this->states();

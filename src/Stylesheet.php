@@ -103,6 +103,8 @@ final class Stylesheet
             'Spinner::sign' => ['color' => '$accent'],
             'Form::error' => ['color' => '$error'],
             '*:invalid' => ['color' => '$error'],
+            '*::scrollbar' => ['color' => '$muted'],
+            '*::scrollbar:thumb' => ['color' => '$accent'],
             'Help' => ['color' => '$muted'],
             'Help::key' => ['color' => '$accent', 'bold' => true],
             'Text.error' => ['color' => '$error'],
@@ -144,14 +146,50 @@ final class Stylesheet
      * its $part in $partStates. Widgets use `Component::style()`, which fills in the element's
      * states; this is for code that draws elements of its own.
      *
+     * **Parts that apply together** (a `strong` inside an `h2`, a `link` inside a `quote`): give
+     * $part as a list, outermost first (`['quote', 'link']`). Each part inherits from the one
+     * around it as an element inherits from its parent, so the attributes add up and the
+     * innermost colour that is set wins; $partStates are those of the innermost part.
+     *
+     * @param string|list<string>|null $part
      * @param list<string> $states     the element's states: `focused`, `disabled`, `hover`
      * @param list<string> $partStates the part's states (each widget lists them)
      */
-    public function compute(Element $element, array $states = [], ?ComputedStyle $parent = null, ?string $part = null, array $partStates = []): ComputedStyle
+    public function compute(Element $element, array $states = [], ?ComputedStyle $parent = null, string|array|null $part = null, array $partStates = []): ComputedStyle
     {
         if ($element->attribute('disabled') && !\in_array('disabled', $states, true)) {
             $states[] = 'disabled';
         }
+        if (\is_array($part)) {
+            $style = $this->compute($element, $states, $parent);
+            $last = array_key_last($part);
+            foreach ($part as $i => $name) {
+                [$set, $hover] = $this->matching($element, $states, $name, $i === $last ? $partStates : []);
+                $style = $this->resolve($set, $style, $hover || $style->hoverAware);
+            }
+            return $style;
+        }
+        [$set, $hoverAware] = $this->matching($element, $states, $part, $partStates);
+        if ($part === null) {
+            $set = self::merge($set, self::check($element->attribute('style')));
+        } else {
+            // a part inherits from its element
+            $parent = $this->compute($element, $states, $parent);
+            $hoverAware = $hoverAware || $parent->hoverAware;
+        }
+        return $this->resolve($set, $parent, $hoverAware);
+    }
+
+    /**
+     * The properties the rules give $element (or its $part), merged by specificity, and whether
+     * a `:hover` rule was considered.
+     *
+     * @param list<string> $states
+     * @param list<string> $partStates
+     * @return array{array<string, mixed>, bool}
+     */
+    private function matching(Element $element, array $states, ?string $part, array $partStates): array
+    {
         $types = $element->types();
         $id = $element->attribute('id');
         $classes = $element->attribute('class');
@@ -172,14 +210,7 @@ final class Stylesheet
         foreach ($matched as [, , $props]) {
             $set = self::merge($set, $props);
         }
-        if ($part === null) {
-            $set = self::merge($set, self::check($element->attribute('style')));
-        } else {
-            // a part inherits from its element
-            $parent = $this->compute($element, $states, $parent);
-            $hoverAware = $hoverAware || $parent->hoverAware;
-        }
-        return $this->resolve($set, $parent, $hoverAware);
+        return [$set, $hoverAware];
     }
 
     /** @param array<string, array<string, mixed>> $rules */

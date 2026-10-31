@@ -3,6 +3,24 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.2-beta3, in progress; TODO-0.0.2-beta3.md)
+
+SPEC section 9 (commit 5110407, "phase 3, from 0.0.3") arrived during this version; it is for
+0.0.3 and not in this TODO.
+
+- [x] Surface: OSC 8 hyperlinks in the cells (Style::link/linkId), Ansi::link()/hyperlink(),
+      compositor forwards them (committed 4458015)
+- [x] Device: inline mode, println(), supportsHyperlinks()/terminalName() (committed 84eff9e)
+- [ ] Layout: container 'auto' sizes from children; max-width/max-height
+- [ ] Defects: overlay re-measure (Editor completion pins its height), sized Dialog (mount
+      measures the tree), Form in Dialog (Form::enter(), `submit` event, Dialog::choose()
+      submits forms; a null button answer no longer falls back to the first) -- code done,
+      tests in tests/Widgets/DefectsTest.php, uncommitted
+- [ ] Stylesheet: parts composed (style(['quote', 'link']))
+- [ ] Scrollable trait, used by Log and Markdown
+- [ ] Merge widget/Markdown; dialog one-at-a-time; docs, README, CHANGELOG, example
+      inline-progress.php (written, not yet tested)
+
 ## Status (0.0.2-beta2; TODO-0.0.2-beta2.md, SPEC 8.5)
 
 All items of TODO-0.0.2-beta2.md done, in CHANGELOG.md; tests green with and without

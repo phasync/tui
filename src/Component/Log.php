@@ -4,7 +4,7 @@ namespace phasync\Tui\Component;
 
 use phasync\Tui\Component;
 use phasync\Tui\Mouse;
-use phasync\Tui\Stack;
+use phasync\Tui\Split;
 use phasync\Tui\Surface;
 use phasync\Tui\Text;
 use phasync\Tui\Viewport;
@@ -24,15 +24,18 @@ use phasync\Tui\Viewport;
  * widens. The newest `$scrollback` lines are kept, and the view scrolls back `$scrollback` rows
  * (fewer lines than that when long lines take several rows).
  *
- * The view follows the end; the mouse wheel, `scrollToLine()` or `scrollBy()` look back, and it
- * stays on the same lines while more text arrives until `follow()` (or scrolling back to the
- * end). Dragging the mouse selects and copies text, as in any window. A view scrolled back stays
- * on the same line when the log is laid out again (a resize, `setLines()`).
+ * The view follows the end; the mouse wheel, the keys (Up/Down, Page Up/Page Down, Home/End,
+ * when the Log has the focus), `scrollToLine()` or `scrollBy()` look back, and it stays on the
+ * same lines while more text arrives until `follow()` (or scrolling back to the end). Scrolling
+ * is that of every scrolling widget (`Scrollable`). Dragging the mouse selects and copies text,
+ * as in any window. A view scrolled back stays on the same line when the log is laid out again
+ * (a resize, `setLines()`). `scrollbar: true` shows a scrollbar in the last column.
  *
  * **Lines, not rows.** Lines are numbered as in `lines()` (0 the oldest kept); a long line takes
  * several rows of the window, depending on the width. `scrollToLine()`, `topLine()` and
  * `bottomLine()` count lines, so "go to line N" and "line X of Y" need no knowledge of the
- * layout; `scrollBy()`/`scrollTo()` count rows, for paging by the window's height:
+ * layout; `scrollBy()`/`scrollTo()`/`scrollTop()` count rows (0 is the oldest row kept), for
+ * paging by the window's height:
  *
  *     $log->scrollToLine($n);
  *     $status->set(sprintf('line %d of %d', $log->topLine() + 1, count($log->lines())));
@@ -53,10 +56,14 @@ use phasync\Tui\Viewport;
  */
 final class Log extends Component
 {
+    use Scrollable;
+
     /** Lines laid out at once on a resize; the rest of the scrollback follows a moment later. */
     private const QUICK_ROWS = 200;
 
     private Surface $content;
+    /** The scrollbar's column, with `scrollbar: true`. */
+    private ?Surface $bar = null;
     /** @var list<string> complete lines (each ended by "\n" when given) */
     private array $lines = [];
     /** The last line, not ended yet. */
@@ -73,16 +80,24 @@ final class Log extends Component
      * @param int  $scrollback how many lines are kept (older ones are dropped), and how many rows
      *                         above the visible ones the view can scroll back
      * @param bool $wordWrap   wrap long lines between words instead of at any character
+     * @param bool $scrollbar  show a scrollbar in the last column (part styles `Log::scrollbar`, `Log::scrollbar:thumb`)
      */
-    public function __construct(private readonly int $scrollback = 10000, private bool $wordWrap = false)
+    public function __construct(private readonly int $scrollback = 10000, private bool $wordWrap = false, private readonly bool $scrollbar = false)
     {
+        $this->followTail();
     }
 
     protected function mount(): void
     {
         // the text is laid out in a surface of its own, shown through a viewport that scrolls it
         $this->content = new Surface($this->surface->cols(), $this->surface->rows(), $this->scrollback);
-        $this->surface->setLayout((new Stack())->add($this->content));
+        $split = Split::horizontal()->add($this->content);
+        if ($this->scrollbar) {
+            $this->bar = new Surface(1, $this->surface->rows(), 0);
+            $this->bar->setFocusable(false);
+            $split->add($this->bar, 1);
+        }
+        $this->surface->setLayout($split);
         $this->content->on('resize', function (): void {
             $this->layout(self::QUICK_ROWS, $this->pinnedLine());
             $this->scrolled();
@@ -90,26 +105,59 @@ final class Log extends Component
         $this->layout();
     }
 
+    protected function bindings(): array
+    {
+        return $this->scrollBindings();
+    }
+
     /** The wheel scrolls the text (by three rows), as it would any window. */
     protected function onMouse(Mouse $mouse): bool
     {
-        if ($mouse->action !== Mouse::WHEEL_UP && $mouse->action !== Mouse::WHEEL_DOWN) {
-            return false;
-        }
-        $this->scrollBy($mouse->action === Mouse::WHEEL_UP ? -3 : 3);
-        return true;
+        return $this->scrollWheel($mouse);
     }
 
-    /** Emit `scroll` if the lines in view or the following changed since it was emitted last. */
-    private function scrolled(): void
+    /**
+     * After every change of the view: the scrollbar, and the `scroll` event if the lines in view
+     * or the following changed since it was emitted last.
+     */
+    protected function scrolled(): void
     {
-        if (!$this->hasListeners('scroll') || $this->view() === null) {
+        if ($this->view() === null) {
+            return;
+        }
+        $this->bar?->write($this->scrollbar(0));
+        if (!$this->hasListeners('scroll')) {
             return;
         }
         $place = [$this->topLine(), $this->bottomLine(), $this->isFollowing()];
         if ($place !== $this->place) {
             $this->place = $place;
             $this->emit('scroll', $this);
+        }
+    }
+
+    protected function contentRows(): int
+    {
+        return $this->content->scrollbackSize() + $this->content->rows();
+    }
+
+    protected function viewRows(): int
+    {
+        return max(1, $this->view()?->innerHeight() ?? $this->content->rows());
+    }
+
+    /** The view is a viewport onto the content surface: its row 0 is the top row when following. */
+    protected function scrollState(): array
+    {
+        $view = $this->view();
+        return $view === null ? [0, true] : [$view->top() + $this->content->scrollbackSize(), $view->isFollowing()];
+    }
+
+    protected function setScrollState(int $top, bool $following): void
+    {
+        $view = $this->view();
+        if ($view !== null) {
+            $following ? $view->follow() : $view->scrollTo($top - $this->content->scrollbackSize());
         }
     }
 
@@ -282,41 +330,6 @@ final class Log extends Component
     {
         $view = $this->view();
         return $this->lineAt($view->top() + max(1, $view->innerHeight()) - 1);
-    }
-
-    /**
-     * Scroll by $rows of the laid-out text (a long line takes several rows): negative looks back,
-     * positive forward. For scrolling by the window's height (Page Up/Down); to go to a line use
-     * `scrollToLine()`.
-     */
-    public function scrollBy(int $rows): void
-    {
-        $this->view()->scrollBy($rows);
-        $this->scrolled();
-    }
-
-    /**
-     * Show from row $row of the laid-out text at the top: 0 is the top row of the window when it
-     * follows the end, negative rows are older. Rows depend on the width and the wrapping; to
-     * address text use `scrollToLine()`, `topLine()` and `bottomLine()`, which count lines.
-     */
-    public function scrollTo(int $row): void
-    {
-        $this->view()->scrollTo($row);
-        $this->scrolled();
-    }
-
-    /** Follow the end again. */
-    public function follow(): void
-    {
-        $this->view()->follow();
-        $this->scrolled();
-    }
-
-    /** True while the view follows the end. */
-    public function isFollowing(): bool
-    {
-        return $this->view()->isFollowing();
     }
 
     /** $line laid out for the content's width, rows joined with "\r\n" (word wrap mode). */
