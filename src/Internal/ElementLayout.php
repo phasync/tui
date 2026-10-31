@@ -48,8 +48,8 @@ final class ElementLayout implements Layout
         $rows = $host->rows();
         $this->fill($host);
         $rects = $this->rects($cols, $rows);
-        // an item placed here before, the same and in the same place, stays as it is: only what
-        // holds components looks again, since a component below may want another size now
+        // an item placed here before, the same and in the same place, stays as it is: only one
+        // with a component below that may want another size now (stale) is arranged again
         self::$placed ??= new \WeakMap();
         $before = self::$placed[$host] ?? [];
         $now = [];
@@ -63,7 +63,8 @@ final class ElementLayout implements Layout
             if ($view !== null && $view->x() === $x && $view->y() === $y && $view->width() === $w && $view->height() === $h
                 && $view->hasBorder() === ($item->border !== false) && $view->title() === $item->title && $view->titleAlign() === $item->titleAlign) {
                 $host->host($item->surface);
-                if ($item->layout !== null && $item->focusable) {
+                if ($item->layout !== null && ($item->stale || $item->surface->layout() !== $item->layout)) {
+                    $item->stale = false;
                     $item->surface->setLayout($item->layout);
                 }
             } else {
@@ -255,6 +256,7 @@ final class ElementLayout implements Layout
         $view->setTitle($item->title, $item->titleAlign);
         $view->setShadow($item->shadow);
         $view->move($x, $y)->resize($w, $h)->setFit(true);
+        $item->stale = false;
         if ($item->layout !== null) {
             $item->surface->setLayout($item->layout);
         }

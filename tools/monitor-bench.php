@@ -2,12 +2,16 @@
 /**
  * The 50-row monitor of docs/surface.md, "Performance": what share of a core it takes.
  *
- *     php tools/monitor-bench.php [some|all|bare] [seconds]
+ *     php tools/monitor-bench.php [some|all|bare|keys] [seconds]
  *
  * On a FakeTerminal of 120x60, a component of 50 row components, each row a `Text`, a
  * `ProgressBar`, a `Text` and two `Button`s with a coroutine of its own in a `sleep(0.1)` loop.
  * `some`: one row in twenty changes per tick; `all`: every row changes on every tick; `bare`:
  * the same 50 coroutines in a `fiber\sleep(0.1)` loop and no TUI at all (the runtime's part).
+ * `keys`: the closure program of TODO-0.0.3-beta5 item 3 (no class: 50 `Row([Text, ProgressBar,
+ * Button, Button])` with `onKey:` and `onFocus:`, the bars moved by 50 `Tui::go()` coroutines at
+ * 10 Hz) and the time from a Tab to the frame that shows it, as median and worst of the keys
+ * pressed in the seconds given.
  * Run with `-d zend.enable_gc=0` to see what the runtime's idle garbage collection adds.
  * Mind the CPU governor (see "Measuring" in docs/surface.md).
  */
@@ -20,12 +24,13 @@ use phasync\Tui\Element;
 use phasync\Tui\Element\Column;
 use phasync\Tui\Element\Row;
 use phasync\Tui\Element\Text;
+use phasync\Tui\State;
 use phasync\Tui\Tui;
 
 $mode = $argv[1] ?? 'some';
 $seconds = (float) ($argv[2] ?? 5);
-if (!in_array($mode, ['some', 'all', 'bare'], true)) {
-    fwrite(STDERR, "usage: php tools/monitor-bench.php [some|all|bare] [seconds]\n");
+if (!in_array($mode, ['some', 'all', 'bare', 'keys'], true)) {
+    fwrite(STDERR, "usage: php tools/monitor-bench.php [some|all|bare|keys] [seconds]\n");
     exit(1);
 }
 
@@ -78,6 +83,47 @@ final class Monitor extends Component
 }
 
 MonitorRow::$everyTick = $mode === 'all';
+if ($mode === 'keys') {
+    fiber\run(function () use ($seconds) {
+        $s = new State(['paused' => array_fill(0, 50, false), 'p' => array_fill(0, 50, 0.0), 'current' => null]);
+        for ($i = 0; $i < 50; $i++) {
+            Tui::go(function () use ($s, $i) {
+                while (true) {
+                    Tui::sleep(0.1);
+                    if (!$s->paused[$i]) {
+                        $s->p[$i] = fmod($s->p[$i] + 0.01, 1.0);
+                    }
+                }
+            });
+        }
+        $terminal = Tui::headless(function () use ($s) {
+            $rows = [];
+            for ($i = 0; $i < 50; $i++) {
+                $rows[] = new Row([
+                    new Text("job $i", width: 8),
+                    new ProgressBar($s->p[$i]),
+                    new Button($s->paused[$i] ? 'Resume' : 'Pause', fn() => $s->paused[$i] = !$s->paused[$i]),
+                    new Button('Log'),
+                ], gap: 1, onKey: ['p' => fn() => $s->paused[$i] = !$s->paused[$i]], onFocus: fn() => $s->current = $i);
+            }
+            return new Column($rows);
+        }, 120, 60);
+        fiber\sleep(1);
+        $times = [];
+        $end = microtime(true) + $seconds;
+        while (microtime(true) < $end) {
+            $t0 = hrtime(true);
+            $terminal->press('tab');
+            $terminal->refresh();       // (the frame that shows the focus moved)
+            $times[] = (hrtime(true) - $t0) / 1e6;
+            fiber\sleep(0.05);          // (a person's pace: the CPU may clock down in between)
+        }
+        sort($times);
+        printf("keys: a Tab to the screen in %.1f ms (median), %.1f ms at worst, over %d keys\n", $times[intdiv(count($times), 2)], end($times), count($times));
+        $terminal->detach();            // (the coroutines end with the program)
+    });
+    exit;
+}
 fiber\run(function () use ($mode, $seconds) {
     $terminal = null;
     if ($mode === 'bare') {

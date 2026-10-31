@@ -389,11 +389,12 @@ final class Stylesheet
      */
     public function compute(Element $element, array $states = [], ?ComputedStyle $parent = null, string|array|null $part = null, array $partStates = []): ComputedStyle
     {
-        $states = self::statesOf($element, $states);
+        $a = $element->attributes();
+        $states = self::statesOf($element, $states, $a);
         // the same question gives the same answer: computed once per selector match, not per
         // element per frame (the entry holds the parent, so its object id stays its own)
-        $inline = $element->attribute('style');
-        $key = $element::class . '#' . $element->attribute('id') . '.' . implode('.', $element->attribute('class'))
+        $inline = $a['style'];
+        $key = $element::class . '#' . $a['id'] . '.' . implode('.', $a['class'])
             . ':' . implode(':', $states) . '::' . (\is_array($part) ? implode('>', $part) : $part)
             . ':' . implode(':', $partStates) . '|' . ($inline === [] ? '' : serialize($inline))
             . '|' . ($parent === null ? '' : spl_object_id($parent));
@@ -459,10 +460,11 @@ final class Stylesheet
      * @param list<string> $states
      * @return list<string>
      */
-    private static function statesOf(Element $element, array $states): array
+    private static function statesOf(Element $element, array $states, ?array $attributes = null): array
     {
-        $own = $element->attribute('state');
-        if ($element->attribute('disabled')) {
+        $attributes ??= $element->attributes();
+        $own = $attributes['state'];
+        if ($attributes['disabled']) {
             $own[] = 'disabled';
         }
         foreach ($own as $state) {

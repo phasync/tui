@@ -143,6 +143,17 @@ abstract class Element
     }
 
     /**
+     * @internal All attributes by name (see `attribute()`), for the library's code that reads
+     * several of them for every element of every render.
+     *
+     * @return array<string, mixed>
+     */
+    final public function attributes(): array
+    {
+        return $this->elementAttributes;
+    }
+
+    /**
      * The size the element needs for its content when it may use up to $cols x $rows cells, as
      * [cols, rows]; null when it takes whatever room it is given. Used for the size `'auto'`;
      * a component that knows its size (a one-line field) overrides it.

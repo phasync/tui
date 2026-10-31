@@ -33,7 +33,9 @@ namespace phasync\Tui;
  * program without classes: `$s = new State(['done' => 0])`.
  *
  * **Reading subscribes.** A component whose `render()` reads a property of a `State` (any
- * state, not only its own `$this->state`) renders again when that state is written: a closure
+ * state, not only its own `$this->state`) renders again when that property is written (a write
+ * to another property of the same state does not render it; the component that holds the
+ * state as its `$state` renders on a write to any of them): a closure
  * given to `Tui::run()` or `Tui::inline()` (which is a component), a `Text` with a closure for
  * content (`new Text(fn() => "{$s->done}%")`), a component showing a state another one owns.
  *
@@ -55,8 +57,10 @@ class State
 {
     /** @var array<string, mixed> the values, while the properties are watched */
     private array $values = [];
-    /** @var array<int, \WeakReference<Component>> the components rendered again on a write */
+    /** @var array<int, \WeakReference<Component>> the components holding the state (`watchFor()`): rendered again on any write */
     private array $owners = [];
+    /** @var array<string, array<int, \WeakReference<Component>>> per property: the components whose render read it */
+    private array $readers = [];
     private bool $watching = false;
     /** Reads made during renders, counted (see `reads()`). */
     private static int $reads = 0;
@@ -149,8 +153,8 @@ class State
         $reader = Component::reader();
         if ($reader !== null) {
             self::$reads++;
-            if (($this->owners[spl_object_id($reader)] ?? null)?->get() !== $reader) {
-                $this->owners[spl_object_id($reader)] = \WeakReference::create($reader);
+            if (($this->readers[$name][spl_object_id($reader)] ?? null)?->get() !== $reader) {
+                $this->readers[$name][spl_object_id($reader)] = \WeakReference::create($reader);
             }
         }
         if (!\array_key_exists($name, $this->values)) {
@@ -201,20 +205,27 @@ class State
             [$lent, $state->lent] = [$state->lent, []];
             foreach ($lent as $name => $was) {
                 if (($state->values[$name] ?? null) !== $was) {
-                    $state->changed();
-                    break;
+                    $state->changed($name);
                 }
             }
         }
     }
 
-    /** Render the components that hold or read this state. */
-    private function changed(): void
+    /** Render the components that hold this state or read the property $name. */
+    private function changed(string $name): void
     {
         foreach ($this->owners as $id => $owner) {
             $component = $owner->get();
             if ($component === null) {
                 unset($this->owners[$id]);
+            } else {
+                $component->markDirty();
+            }
+        }
+        foreach ($this->readers[$name] ?? [] as $id => $reader) {
+            $component = $reader->get();
+            if ($component === null) {
+                unset($this->readers[$name][$id]);
             } else {
                 $component->markDirty();
             }
@@ -240,7 +251,7 @@ class State
         }
         $this->values[$name] = $value;
         unset($this->lent[$name]);
-        $this->changed();
+        $this->changed($name);
     }
 
     /** True if the property is set and not null. */
@@ -252,7 +263,10 @@ class State
     /** Forget a property (an undeclared one), as unset() does. */
     final public function __unset(string $name): void
     {
-        unset($this->values[$name]);
+        if (\array_key_exists($name, $this->values)) {
+            unset($this->values[$name], $this->lent[$name]);
+            $this->changed($name);
+        }
     }
 
     /**

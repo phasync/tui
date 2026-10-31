@@ -36,8 +36,10 @@ final class LayoutItem
     public ?int $maxHeight = null;
     /** @var (\Closure(int $cols): int)|null least() of the content for an item without a layout (a component's) */
     public ?\Closure $least = null;
-    /** @var array<string, array{int,int}|null> natural() by room, for an item with no component below */
+    /** @var array<string, array{int,int}|null> natural() by room, until invalidate() */
     private array $naturals = [];
+    /** Something below changed size since the item was last arranged (see invalidate()). */
+    public bool $stale = false;
 
     public function __construct(
         public readonly Surface $surface,
@@ -64,18 +66,27 @@ final class LayoutItem
     /** natural() without the margin. */
     private function naturalInside(int $cols, int $rows): ?array
     {
-        if (!$this->focusable) {
-            // (nothing below changes by itself: the answer for a room stays the answer)
-            $key = $cols . ',' . $rows;
-            if (\array_key_exists($key, $this->naturals)) {
-                return $this->naturals[$key];
-            }
-            if (\count($this->naturals) > 16) {
-                $this->naturals = [];
-            }
-            return $this->naturals[$key] = $this->measureNow($cols, $rows);
+        // (the answer for a room stays the answer until a component below may need another size: invalidate())
+        $key = $cols . ',' . $rows;
+        if (\array_key_exists($key, $this->naturals)) {
+            return $this->naturals[$key];
         }
-        return $this->measureNow($cols, $rows);
+        if (\count($this->naturals) > 16) {
+            $this->naturals = [];
+        }
+        return $this->naturals[$key] = $this->measureNow($cols, $rows);
+    }
+
+    /**
+     * A component below this item may need another size now (it was marked for a render): its
+     * measures are taken again, and the layout that has it arranges it again (see
+     * ElementLayout::arrange()). Items around a component that did not change keep their
+     * measures and their arrangement, so a render of a long list arranges what changed.
+     */
+    public function invalidate(): void
+    {
+        $this->naturals = [];
+        $this->stale = true;
     }
 
     /**
@@ -100,8 +111,14 @@ final class LayoutItem
     /** Rows to measure in for as high as content may be. */
     public const TALL = \PHP_INT_MAX >> 8;
 
+    /** @var list<Surface>|null for tests: when a list, the surface of every item measured (not answered from what it knew) is added */
+    public static ?array $measured = null;
+
     private function measureNow(int $cols, int $rows): ?array
     {
+        if (self::$measured !== null) {
+            self::$measured[] = $this->surface;
+        }
         $n = $this->measure === null ? null : ($this->measure)(min($cols, $this->maxWidth ?? $cols), min($rows, $this->maxHeight ?? $rows));
         // a size given in cells is the size it needs (a Box of height 8 in a Row makes the row 8 high)
         if (\is_int($this->width) && \is_int($this->height)) {

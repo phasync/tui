@@ -169,6 +169,8 @@ abstract class Component extends Element
     private static int $treeVersion = 0;
     /** @var array{int, int, bool}|null hasFocus()'s last answer, with the versions it was found at */
     private ?array $focusCache = null;
+    /** @var \WeakMap<Surface, array{int, int, array<int, Surface>}>|null per root: the surfaces keys take the way of, with the versions they were found at */
+    private static ?\WeakMap $focusPaths = null;
     private bool $rendered = false;
     private bool $renderPending = false;
     private ?Deferred $stopped = null;
@@ -213,8 +215,8 @@ abstract class Component extends Element
     private ?Stylesheet $stylesheet = null;
     /** The style a parent's element tree gives this component to inherit. */
     private ?ComputedStyle $inherited = null;
-    /** @var array{array{int,int}, ?array}|null the room a parent's layout measured this component in, and the answer */
-    private ?array $measured = null;
+    /** @var array<string, array{int, int, ?array}> the rooms parents' layouts measured this component in since its last render, and the answers */
+    private array $measured = [];
     /** @var array<string, array{int,int}|null> measureFor() by room, until the next markDirty() or render */
     private array $sizes = [];
     /** @var array{int, int}|null the width a parent's layout asked leastRows() for, and the answer */
@@ -1146,17 +1148,33 @@ abstract class Component extends Element
             }
         }
         // keys come down from the root of the tree the nearest shown component is in
-        $c = $this->shownFrom();
-        // and take the way dispatch() gives them: at a component, to the child not shown yet it
-        // passes them to (see toUnshown()), else to the window its surface focuses
-        for ($s = $c->surface->root(); $s !== null; $s = $next?->surface ?? $s->focused()) {
-            if ($s === $this->surface) {
-                return true;
-            }
+        return isset(self::focusPath($this->shownFrom()->surface->root())[spl_object_id($this->surface)]);
+    }
+
+    /**
+     * The surfaces keys reaching $root go through, by object id: the way dispatch() gives them,
+     * at a component to the child not shown yet it passes them to (see toUnshown()), else to
+     * the window its surface focuses. Found once per focus and tree version and root, so a
+     * render asking every component of a long list costs one walk, not one per component.
+     *
+     * @return array<int, Surface>
+     */
+    private static function focusPath(Surface $root): array
+    {
+        $versions = [Surface::focusVersion(), self::$treeVersion];
+        self::$focusPaths ??= new \WeakMap();
+        $cached = self::$focusPaths[$root] ?? null;
+        if ($cached !== null && $cached[0] === $versions[0] && $cached[1] === $versions[1]) {
+            return $cached[2];
+        }
+        $path = [];
+        for ($s = $root; $s !== null && !isset($path[spl_object_id($s)]); $s = $next?->surface ?? $s->focused()) {
+            $path[spl_object_id($s)] = $s;
             $on = self::$onSurface[$s] ?? null;
             $next = $on !== null && $on->mounted ? $on->unshownFocus() : null;
         }
-        return false;
+        self::$focusPaths[$root] = [...$versions, $path];
+        return $path;
     }
 
     /**
@@ -1445,10 +1463,21 @@ abstract class Component extends Element
             if ($layout !== null) {
                 $this->surface->setLayout($layout);
             }
-            if (($this->measured !== null && $this->measured[1] !== $this->measureFor(...$this->measured[0]))
-                || ($this->leastAsked !== null && $this->leastNow($this->leastAsked[0]) !== $this->leastAsked[1])) {
-                $this->measured = $this->leastAsked = null;
-                $this->parent?->relayout();     // it needs another size: the parent lays it out again
+            // a size it gave a parent's layout is another now: the items around it measure again
+            // and the parent lays it out again (the rest of the parent's tree stands)
+            [$asked, $this->measured] = [$this->measured, []];
+            $resized = false;
+            foreach ($asked as [$cols, $rows, $size]) {
+                if ($this->measureFor($cols, $rows) !== $size) {
+                    $resized = true;
+                    break;
+                }
+            }
+            if ($resized || ($this->leastAsked !== null && $this->leastNow($this->leastAsked[0]) !== $this->leastAsked[1])) {
+                $this->measured = [];
+                $this->leastAsked = null;
+                Tree::sizeMayChange($this);
+                $this->parent?->relayout();
             }
         }
         // children shown for the first time draw now, at the size the layout gave them (also
@@ -1940,7 +1969,9 @@ abstract class Component extends Element
             $this->sizes[$key] = $this->measure($cols, $rows);
         }
         $size = $this->sizes[$key];
-        $this->measured = [[$cols, $rows], $size];
+        if (isset($this->measured[$key]) || \count($this->measured) < 16) {
+            $this->measured[$key] = [$cols, $rows, $size];
+        }
         return $size;
     }
 

@@ -49,6 +49,19 @@ final class Key implements Event
      */
     public static function parse(string $spec): Key
     {
+        // (bindings are parsed on every render that makes elements with onKey: once per notation)
+        static $parsed = [];
+        if (isset($parsed[$spec])) {
+            return $parsed[$spec];
+        }
+        if (\count($parsed) >= 512) {
+            $parsed = [];
+        }
+        return $parsed[$spec] = self::parseNow($spec);
+    }
+
+    private static function parseNow(string $spec): Key
+    {
         $ctrl = $alt = $shift = false;
         $rest = $spec;
         while (preg_match('/^(ctrl|alt|shift|meta)\+(.+)$/i', $rest, $m)) {

@@ -63,6 +63,8 @@ final class Tree
     private array $focusing = [];
     /** @var list<array{\Closure, Element}> onFocus/onBlur callbacks the last builds found due, to call after the render */
     private array $focusCalls = [];
+    /** @var \WeakMap<Component, array{Tree, string}>|null every component an element tree places (closure content's included): that tree and the path */
+    private static ?\WeakMap $placedAt = null;
 
     /**
      * @param \Closure(string $key, Component $fresh, bool $create): ?Component $place  the child component for a component element (without $create: the one there, or null)
@@ -79,6 +81,28 @@ final class Tree
     ) {
         // (the root container's onMouse: the owner's own surface)
         $owner->surface->on('mouse', fn(Mouse $m) => $this->mouse($owner->surface, $m));
+    }
+
+    /**
+     * $component may need another size now (it is marked for a render): the items of the tree
+     * that placed it, from its own up to the tree's root, measure again and are arranged again;
+     * the rest of the tree keeps its measures and arrangement. (Its owner hears of a size that
+     * did change when it renders, see Component::relayout().)
+     */
+    public static function sizeMayChange(Component $component): void
+    {
+        $at = self::$placedAt[$component] ?? null;
+        if ($at === null) {
+            return;
+        }
+        [$tree, $path] = $at;
+        $tree->builtItem?->invalidate();
+        for ($p = $path; ; $p = substr($p, 0, $cut)) {
+            ($tree->items[$p][1] ?? null)?->invalidate();
+            if (($cut = strrpos($p, '/')) === false) {
+                break;
+            }
+        }
     }
 
     /** The element shown in $surface by an element tree (a component placed in one is its own element), or null. */
@@ -357,7 +381,17 @@ final class Tree
     private static function segment(Element $node, int $i): string
     {
         $key = $node->attribute('key');
-        return $key !== null ? 'k:' . $key : $i . ':' . $node::class;
+        // (a path's parts are split at '/', see sizeMayChange())
+        return $key !== null ? 'k:' . strtr($key, ['%' => '%25', '/' => '%2F']) : $i . ':' . $node::class;
+    }
+
+    /** Note that this tree places $component at $path (see sizeMayChange()). */
+    private function placed(Component $component, string $path): void
+    {
+        if (!$this->dry) {
+            self::$placedAt ??= new \WeakMap();
+            self::$placedAt[$component] = [$this, $path];
+        }
     }
 
     /**
@@ -386,6 +420,7 @@ final class Tree
             }
             $this->seen[$path] = true;
             $this->shows($path, $component->surface, $component);
+            $this->placed($component, $path);
             $sig = 'c' . spl_object_id($component) . '|' . self::sizes($component);
             return $this->kept($path, $sig, $style) ?? $this->keep($path, $sig, $style, $this->componentItem($component, $style));
         }
@@ -401,13 +436,14 @@ final class Tree
             return null;
         }
         $this->shows($path, $surface, $node);
-        $keys = $node->attribute('onKey') !== null && !$node->attribute('disabled');     // (it takes the focus)
+        $a = $node->attributes();
+        $keys = $a['onKey'] !== null && !$a['disabled'];     // (it takes the focus)
         if ($node instanceof Text || $node instanceof Help) {
             $surface->setFocusable($keys);
             $text = $node instanceof Help ? $this->helpText($node, $sheet, $style) : $node;
             $content = $this->content($text, $sheet, $style);
             $wrap = $text->wrap && $style->wrap !== false;
-            $sig = 't' . ($wrap ? 'w' : 'c') . self::sizes($node) . "\0" . $content;
+            $sig = 't' . ($wrap ? 'w' : 'c') . $a['width'] . ',' . $a['height'] . "\0" . $content;
             $item = $this->kept($path, $sig, $style)
                 ?? $this->keep($path, $sig, $style, $this->text($this->frame(new LayoutItem($surface), $node, $style, 'auto', 'auto'), $content, $wrap, $path, $style));
             $item->focusable = $keys;
@@ -443,7 +479,7 @@ final class Tree
                 $focusable = $focusable || $child->focusable;
             }
             $surface->setFocusable($focusable);
-            $sig = 'l' . ($keys ? 'k' : '') . spl_object_id($layout) . '|' . self::sizes($node);
+            $sig = 'l' . ($keys ? 'k' : '') . spl_object_id($layout) . '|' . $a['width'] . ',' . $a['height'];
             if (($item = $this->kept($path, $sig, $style)) !== null) {
                 return $item;
             }
@@ -671,7 +707,8 @@ final class Tree
         if ($focused) {
             $states[] = 'focused';
         }
-        if (!$this->dry && ($node->attribute('onFocus') !== null || $node->attribute('onBlur') !== null)) {
+        $a = $node->attributes();
+        if (!$this->dry && ($a['onFocus'] !== null || $a['onBlur'] !== null)) {
             $this->focusing[$path] = [$focused, $node];
         }
         if (Component::pointerOver($surface)) {
@@ -750,6 +787,7 @@ final class Tree
         }
         if (!$this->dry) {
             $live->inheritStyle($parent);
+            $this->placed($live, $path);
         }
         $sig = 'v' . spl_object_id($live) . '|' . self::sizes($node);
         if (($item = $this->kept($path, $sig, $style)) !== null) {
