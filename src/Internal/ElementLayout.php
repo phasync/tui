@@ -58,8 +58,10 @@ final class ElementLayout implements Layout
                 foreach ($this->items as $item) {
                     $spec = $across ? $item->width : $item->height;
                     if ($spec === 'auto') {
+                        // what the content needs, as a share capped at that (see Size::distribute())
                         $natural = $item->natural($across ? $room : $cols, $across ? $rows : $room);
-                        $spec = $natural === null ? '1fr' : $natural[$across ? 0 : 1];
+                        $sizes[] = $natural === null ? ['fr', 1.0] : ['auto', (float) $natural[$across ? 0 : 1]];
+                        continue;
                     }
                     $sizes[] = Size::parse($spec);
                 }
