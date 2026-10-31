@@ -87,6 +87,10 @@ abstract class TerminalDevice
     private const INLINE_TAKEOVER = "\e[?25l\e[?2004h\e[?1004h";
     /** Inline mode's restore: as RESTORE, without leaving an alternate screen it never entered. */
     private const INLINE_RESTORE = "\e[0m\e[<u\e[?1004l\e[?2004l\e[?1006l\e[?1003l\e[?1002l\e[?1000l\e[0 q\e[?25h";
+    /** Terminals that show iTerm2 inline images, by their XTVERSION answer. */
+    private const ITERM_TERMINALS = '/^(iTerm2|WezTerm|Konsole|mintty)\b/i';
+    /** Kitty's graphics query: a 1x1 image it answers OK to when it has the protocol. */
+    private const KITTY_QUERY = "\e_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\e\\";
     /** Terminals that answer XTVERSION and write OSC 8 hyperlinks. */
     private const HYPERLINK_TERMINALS = '/^(kitty|WezTerm|foot|ghostty|iTerm2|contour|phasync-tui)\b/i';
 
@@ -129,6 +133,15 @@ abstract class TerminalDevice
      * environment) knows it, null to decide from the terminal's XTVERSION answer.
      */
     protected ?bool $hyperlinks = null;
+    /**
+     * The image protocol the terminal has: 'kitty', 'iterm2' or 'none' as the device (or its
+     * environment) knows it, null to decide from the terminal's answers at attach (see `images()`).
+     */
+    protected ?string $images = null;
+    /** The terminal answered Kitty's graphics query at attach. */
+    private bool $kittyGraphics = false;
+    private Internal\DeviceImages $painter;
+
     /** How many colours the terminal shows (`Color::DEPTH_16`, `DEPTH_256`, `DEPTH_TRUECOLOR`); set by subclasses. */
     protected int $colors = Color::DEPTH_TRUECOLOR;
     /** @var array<int, string> SGR for each style as this terminal shows it, by style (styles are interned) */
@@ -239,6 +252,8 @@ abstract class TerminalDevice
         $this->pen = null;
         $this->shown = null;
         $this->kitty = false;
+        $this->kittyGraphics = false;
+        $this->painter = new Internal\DeviceImages($this->images());
         $this->background = null;
         $this->motion = false;
         $this->mouse = false;
@@ -277,7 +292,8 @@ abstract class TerminalDevice
         // the answer to primary device attributes (which every terminal answers) ends the probe
         $this->probing = microtime(true);
         $this->probe = '';
-        $this->send(($this->inline ? self::INLINE_TAKEOVER : self::TAKEOVER) . ($root->title() !== '' ? Ansi::title($root->title()) : '') . "\e[?u\e[>0q\e]11;?\e\\\e[c");
+        $this->send(($this->inline ? self::INLINE_TAKEOVER : self::TAKEOVER) . ($root->title() !== '' ? Ansi::title($root->title()) : '')
+            . "\e[?u\e[>0q\e]11;?\e\\" . ($this->images === null ? self::KITTY_QUERY : '') . "\e[16t\e[c");
         go(fn() => $this->loop($this->frames(...)));
         go(fn() => $this->loop($this->inputs(...)));
     }
@@ -308,7 +324,9 @@ abstract class TerminalDevice
             $this->ending = true;
             $this->refresh();
             $this->ending = false;
-            $this->send($this->link() . "\e[0m" . ($this->keep ? $this->move(0, $this->region) : $this->move(0, 0) . "\e[J"));
+            $this->send($this->link() . "\e[0m" . ($this->keep ? $this->move(0, $this->region) : $this->painter->clear() . $this->move(0, 0) . "\e[J"));
+        } elseif ($this->painter->protocol === 'kitty') {
+            $this->send($this->painter->clear(true));     // (the images leave the terminal's memory with the program)
         }
         $this->root = null;
         unset(self::$devices[$root]);
@@ -488,6 +506,34 @@ abstract class TerminalDevice
         return $this->sgr[$id];
     }
 
+    /**
+     * The image protocol the terminal shows images with: `'kitty'` (Kitty graphics: kitty,
+     * WezTerm, Ghostty, Konsole; it answers Kitty's query at `attach()`), `'iterm2'` (iTerm2
+     * inline images: iTerm2, WezTerm, Konsole, VS Code's terminal and xterm.js, known from
+     * `TERM_PROGRAM`, `LC_TERMINAL` or the terminal's name), or `'none'`. The cells of images
+     * (a `Canvas` drawing in pixels, a hosted program's pictures) are drawn with it, or as
+     * quarter blocks with `none`. The probe never holds start-up up: until the terminal has
+     * answered this is `'none'`, and the screen is drawn again when the answer says more.
+     * `FakeTerminal` is told (`images:`, default `'none'`).
+     */
+    public function images(): string
+    {
+        if ($this->images !== null) {
+            return $this->images;
+        }
+        if ($this->kittyGraphics) {
+            return 'kitty';
+        }
+        return preg_match(self::ITERM_TERMINALS, $this->terminalName) === 1 ? 'iterm2' : 'none';
+    }
+
+    /** Where an iTerm2 image left the terminal's cursor: right of its last row (the column unknown past the right edge). */
+    private function imageLeftCursor(int $x, int $y): void
+    {
+        $cols = $this->root?->cols() ?? 0;
+        $this->at = $x >= $cols ? [-1, $this->inline ? $y : -1] : [$x, $y];
+    }
+
     /** The name the terminal gave when asked (XTVERSION) at `attach()`, such as `kitty(0.36.4)`; '' when it did not answer. */
     public function terminalName(): string
     {
@@ -557,6 +603,7 @@ abstract class TerminalDevice
             // the version first: changes made while the rows are read are drawn next frame
             $version = $root->version();
             $out = $this->inline ? $this->drawInline($root) : $this->drawFull($root);
+            $out .= $this->painter->paint($this->frame, $this->move(...), $this->imageLeftCursor(...));
             $this->drawnVersion = $version;
             $out .= $this->link() . $this->mouseModes($root);
             $cursor = $root->activeCursor();
@@ -609,13 +656,17 @@ abstract class TerminalDevice
             $this->frame = [];
             $this->pen = Style::plain();
             $this->at = [0, 0];
-            $out .= "\e[0m\e[H\e[2J";
+            $out .= $this->painter->clear() . "\e[0m\e[H\e[2J";
             $damaged = range(0, $root->rows() - 1);
         } else {
             $damaged = $root->damagedSince($this->drawnVersion);
         }
+        $fallback = $this->painter->protocol === 'none' && ImageFragment::exist();
         foreach ($damaged as $y) {
             [$chars, $styles] = $root->rowData($y);
+            if ($fallback) {
+                [$chars, $styles] = $this->painter->fallback($chars, $styles);
+            }
             $out .= $this->drawRow($y, $chars, $styles);
         }
         return $out;
@@ -632,7 +683,7 @@ abstract class TerminalDevice
             // (the first frame, or a width change: what the region showed is erased, drawn anew)
             $this->redraw = false;
             if ($this->frame !== []) {
-                $out .= $this->move(0, 0) . $this->link() . "\e[0m\e[J";
+                $out .= $this->painter->clear() . $this->move(0, 0) . $this->link() . "\e[0m\e[J";
                 $this->pen = Style::plain();
             }
             $this->frame = [];
@@ -646,11 +697,16 @@ abstract class TerminalDevice
         }
         array_push($above, ...$this->printed);
         $this->printed = [];
+        $fallback = $this->painter->protocol === 'none' && ImageFragment::exist();
         if ($above !== []) {
             // written over the top of the region, which moves down under them
             foreach ($above as $y => [$chars, $styles]) {
+                if ($fallback) {
+                    [$chars, $styles] = $above[$y] = $this->painter->fallback($chars, $styles);
+                }
                 $out .= $this->drawRow($y, $chars, $styles);
             }
+            $out .= $this->painter->freeze($above, $this->move(...), $this->imageLeftCursor(...));
             $n = \count($above);
             $this->frame = \array_slice($this->frame, $n);
             $this->at[1] -= $n;
@@ -666,6 +722,9 @@ abstract class TerminalDevice
         $this->region = $height;
         for ($y = 0; $y < $height; $y++) {
             [$chars, $styles] = $root->rowData($y);
+            if ($fallback) {
+                [$chars, $styles] = $this->painter->fallback($chars, $styles);
+            }
             $out .= $this->drawRow($y, $chars, $styles);
         }
         return $out;
@@ -795,6 +854,16 @@ abstract class TerminalDevice
             }
             $changed[] = $i;
         }
+        if ($changed !== [] && $this->painter->protocol !== 'none' && ImageFragment::exist()) {
+            foreach ($changed as $i) {
+                if ($styles[$i]->image !== null) {
+                    $this->painter->changed = true;
+                    $this->painter->cells[$y][$i] = true;
+                } elseif (($oldStyles[$i] ?? null)?->image !== null) {
+                    $this->painter->changed = true;
+                }
+            }
+        }
         $out = '';
         $count = \count($changed);
         for ($k = 0; $k < $count;) {
@@ -886,9 +955,20 @@ abstract class TerminalDevice
             [$r, $g, $b] = array_map(fn(string $h) => hexdec($h) / (16 ** \strlen($h) - 1), [$m[1], $m[2], $m[3]]);
             $this->background = 0.2126 * $r + 0.7152 * $g + 0.0722 * $b > 0.5 ? 'light' : 'dark';
         }
-        $bytes = (string) preg_replace(['/\e\[\?[\d;]*[uc]/', '/\eP>\|[^\e\x07]*(?:\e\\\\|\x07)/', '/\e\]11;[^\e\x07]*(?:\e\\\\|\x07)/'], '', $this->probe);
+        if (preg_match('/\e\[6;(\d+);(\d+)t/', $this->probe, $m) && (int) $m[1] > 0 && (int) $m[2] > 0 && $this->root !== null) {
+            $this->root->setCellSize((int) $m[2], (int) $m[1]);
+        }
+        $this->kittyGraphics = preg_match('/\e_Gi=31;OK(?:\e\\\\|\x07)/', $this->probe) === 1;
+        $bytes = (string) preg_replace(['/\e\[\?[\d;]*[uc]/', '/\eP>\|[^\e\x07]*(?:\e\\\\|\x07)/', '/\e\]11;[^\e\x07]*(?:\e\\\\|\x07)/',
+            '/\e_G[^\e\x07]*(?:\e\\\\|\x07)/', '/\e\[[46];\d+;\d+t/'], '', $this->probe);
         $this->probing = null;
         $this->probe = '';
+        if ($this->root !== null && $this->images() !== $this->painter->protocol) {
+            // (the terminal has images: what was drawn of image cells meanwhile is drawn again)
+            $this->painter = new Internal\DeviceImages($this->images());
+            $this->redraw = true;
+            $this->damage();
+        }
         if ($kitty && $this->root !== null) {
             $this->kitty = true;
             $this->send("\e[>1u");

@@ -56,6 +56,7 @@ final class Tty extends TerminalDevice
         $this->in = $in ?? \STDIN;
         $this->out = $out ?? \STDOUT;
         $this->hyperlinks = self::hyperlinksFromEnvironment(getenv());
+        $this->images = self::imagesFromEnvironment(getenv());
         $this->setColors(self::colorsFromEnvironment(getenv()));
     }
 
@@ -115,6 +116,26 @@ final class Tty extends TerminalDevice
             || (int) ($env['VTE_VERSION'] ?? 0) >= 5000
             || \in_array($term, ['xterm-kitty', 'foot', 'foot-extra', 'wezterm', 'xterm-ghostty', 'alacritty'], true)) {
             return true;
+        }
+        return null;
+    }
+
+    /**
+     * @internal The image protocol the environment says the terminal has: 'iterm2' for iTerm2
+     * and VS Code's terminal (`TERM_PROGRAM`, `LC_TERMINAL`), 'none' inside tmux or screen (which
+     * do not pass images on) and on the Linux console, null when it does not say (the terminal's
+     * answer to Kitty's query, then its XTVERSION name, decide).
+     *
+     * @param array<string, string> $env
+     */
+    public static function imagesFromEnvironment(array $env): ?string
+    {
+        $term = $env['TERM'] ?? '';
+        if (isset($env['TMUX']) || isset($env['STY']) || str_starts_with($term, 'screen') || str_starts_with($term, 'tmux') || $term === 'linux' || $term === 'dumb') {
+            return 'none';
+        }
+        if (\in_array($env['TERM_PROGRAM'] ?? '', ['iTerm.app', 'vscode'], true) || ($env['LC_TERMINAL'] ?? '') === 'iTerm2') {
+            return 'iterm2';
         }
         return null;
     }

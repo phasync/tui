@@ -65,13 +65,22 @@ final class FakeTerminal extends TerminalDevice
      * the nearest colour the terminal has; see `colors()`). $background is what it answers
      * when asked for its background colour (OSC 11): `'dark'` (black), `'light'` (white), or
      * null for a terminal that does not answer; the theme follows it (see `background()`).
+     * $images is the image protocol it shows images with (see `images()`): `'none'` (the
+     * device draws image cells as quarter blocks, and a `Canvas` its glyph markers), `'kitty'`
+     * or `'iterm2'`; its own surface understands both, so `text()`, `dump()` and its cells show
+     * what such a terminal would. With null the device asks, as it asks a real terminal, and
+     * the surface answers Kitty's query: `'kitty'` once attached.
      */
-    public function __construct(int $cols = 80, int $rows = 24, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR, ?string $background = 'dark')
+    public function __construct(int $cols = 80, int $rows = 24, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR, ?string $background = 'dark', ?string $images = 'none')
     {
         if ($background !== null && $background !== 'dark' && $background !== 'light') {
             throw new \InvalidArgumentException("A FakeTerminal's background is 'dark', 'light' or null, not '$background'");
         }
+        if (!\in_array($images, ['none', 'kitty', 'iterm2', null], true)) {
+            throw new \InvalidArgumentException("A FakeTerminal's images are 'none', 'kitty' or 'iterm2', not '$images'");
+        }
         $this->hyperlinks = $hyperlinks;
+        $this->images = $images;
         $this->untilHandled = true;
         $this->setColors($colors);
         $this->surface = new Surface($cols, $rows);
@@ -93,9 +102,9 @@ final class FakeTerminal extends TerminalDevice
      * its normal screen, the root's scrollback going into its own (see `TerminalDevice`). With
      * $keep false, detaching erases the region instead of leaving the last frame.
      */
-    public static function inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR, ?string $background = 'dark'): self
+    public static function inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR, ?string $background = 'dark', ?string $images = 'none'): self
     {
-        $terminal = new self($cols, $rows, $hyperlinks, $colors, $background);
+        $terminal = new self($cols, $rows, $hyperlinks, $colors, $background, $images);
         $terminal->useInline($keep);
         return $terminal;
     }

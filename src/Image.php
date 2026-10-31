@@ -172,11 +172,12 @@ final class Image
         if (!\function_exists('imagecreatefromstring')) {
             return null;
         }
-        if ($this->format === 'rgb' || $this->format === 'rgba') {
-            $png = $this->png();
-            $gd = @imagecreatefromstring((string) $png);
-        } else {
-            $gd = @imagecreatefromstring($this->data);
+        // (libpng reports a broken image as a warning even under @)
+        set_error_handler(static fn(): bool => true);
+        try {
+            $gd = imagecreatefromstring($this->format === 'rgb' || $this->format === 'rgba' ? (string) $this->png() : $this->data);
+        } finally {
+            restore_error_handler();
         }
         if ($gd === false) {
             return null;

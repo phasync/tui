@@ -265,8 +265,8 @@ final class Graphics
         $vt = $this->vt;
         $x0 = $vt->x;
         $y0 = $vt->y;
-        // (the cells take the pen, as printed characters do: its background shows through)
-        $pen = $vt->pen;
+        // (a cell keeps its colours and attributes under the image, as in kitty, where the image
+        // is drawn over the cell; its character is covered)
         for ($r = 0; $r < $rows; $r++) {
             if ($r > 0) {
                 if ($move) {
@@ -287,7 +287,7 @@ final class Graphics
             }
             for ($x = $x0; $x < $end; $x++) {
                 $line->chars[$x] = ' ';
-                $line->styles[$x] = $pen->withImage(ImageFragment::of($image, $sx, $sy, $sw, $sh, $cols, $rows, $x - $x0, $r, $placement));
+                $line->styles[$x] = $line->styles[$x]->withImage(ImageFragment::of($image, $sx, $sy, $sw, $sh, $cols, $rows, $x - $x0, $r, $placement));
             }
             $vt->touch($vt->y);
         }
