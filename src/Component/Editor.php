@@ -33,9 +33,10 @@ use phasync\Tui\Text;
  * newest. `history()` and `setHistory()` save and restore them.
  *
  * **Completion** (`complete:`): a function that gets the word before the cursor and returns
- * candidates; Tab (or typing, once open) shows them in a list under the cursor, an overlay
- * (`Component::overlay()`): Up/Down choose, Tab or Enter accepts (the word is replaced),
- * Escape closes it, typing on filters it.
+ * candidates; Tab shows them in a list under the cursor, an overlay (`Component::overlay()`)
+ * as large as the candidates (8 rows and 40 columns at most): Up/Down choose, Tab or Enter accepts (the word is
+ * replaced), Escape closes it, and every edit while it is open (typing on, deleting) asks for
+ * the candidates again, the list growing and shrinking with them.
  *
  * **Extending it**: subclass it for a chat input, a command line or a form field of your own.
  * `bindings()` can add or change keys (`[...parent::bindings(), 'ctrl+l' => 'clear']`); the
@@ -601,8 +602,8 @@ class Editor extends Component implements Field
         [$vr, $vx] = $this->visual($this->row, $c, $cols);
         $left = !$this->wrap || $this->maxLines === 1 ? $this->left : 0;
         $list = new Select($items, filterable: false, onActivate: fn() => $this->acceptCompletion());
-        $width = min(40, max(array_map(Text::width(...), $items)) + 1);
-        $this->completion = $this->overlay($list->with(width: $width, height: min(8, \count($items))), new \phasync\Tui\Rect($vx - $left, $vr - $this->top, 1, 1), 'below');
+        // as large as the candidates (measured every frame: typing that filters them shrinks it), 8 rows and 40 columns at most
+        $this->completion = $this->overlay($list->with(style: ['max-height' => 8, 'max-width' => 40]), new \phasync\Tui\Rect($vx - $left, $vr - $this->top, 1, 1), 'below');
         $this->focus();     // the editor keeps the keys; the list follows them
         return true;
     }
@@ -630,9 +631,6 @@ class Editor extends Component implements Field
             return false;
         }
         $this->type($key->text);
-        if ($this->completion() !== null) {
-            $this->showCompletion(false);      // typing filters the open list
-        }
         return true;
     }
 
@@ -784,6 +782,9 @@ class Editor extends Component implements Field
         }
         $this->goal = null;
         $this->free = false;
+        if ($this->completion() !== null) {
+            $this->showCompletion(false);      // an edit (typing, deleting) filters the open list again
+        }
         $this->call($this->onChange, $this->value(), $this);
         $this->emit('change', $this);
         $this->requestRender();

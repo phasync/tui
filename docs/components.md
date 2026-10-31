@@ -175,11 +175,17 @@ protected function render(): Element
 
 **Sizes.** In a `Column` a child's `height`, in a `Row` its `width`, in `Layers` both: cells,
 `'25%'`, `'1fr'` (a share of what is left after the others), or `'auto'` (what its content
-needs: `measure()`). Without one, `Text`, `Box` and `Help` are `'auto'` (a text is as high as
-its wrapped lines), containers `'1fr'`, and a component `'auto'` when its `measure()` knows a
-size (a one-line `Editor`: 1 row; a `Table`: its rows and its columns' widths) and `'1fr'`
-otherwise. Sizes may also come from the stylesheet (`width`, `height`). When a component's
-`measure()` changes (an editor grew a line), its parent lays the tree out again by itself.
+needs: `measure()`). Without one, everything is `'auto'`: `Text`, `Box` and `Help` are as
+high as their wrapped lines, a component as its `measure()` says (a one-line `Editor`: 1 row; a
+`Table`: its rows and its columns' widths), and a container (`Column`, `Row`, `Layers`) as its
+children need: along its direction the sum of theirs (and the gaps), across it the largest. An
+element whose size is not bounded (a component whose `measure()` is null, a `Log`, a
+multi-line `Editor` without `maxLines`) takes a `'1fr'` share instead, and so does a container
+with such a child in that direction. So a toolbar `Row` of one-line fields, a `Column` of
+one-row `Text`s and a `Column` of `Checkbox`es need no sizes. Sizes may also come from the
+stylesheet (`width`, `height`), and `max-width`/`max-height` cap an `'auto'` size (a `Log`
+with `max-height: 10` takes up to ten rows). When a component's `measure()` changes (an
+editor grew a line), its parent lays the tree out again by itself.
 
 The room is given out in this order: fixed sizes (cells, percentages) first; then the `'auto'`
 and `'1fr'` items share the rest, **each `'auto'` item getting what it needs, but no more than
@@ -299,14 +305,15 @@ Selectors: a type (the element's or component's class name; parents' names match
 the mouse), and widget parts `::part` with their own states. Properties: `color`,
 `background`, `bold`, `dim`, `italic`, `underline`, `inverse`, `strike`, `border` (kind
 `single`/`round`/`double`/`heavy`/`ascii` and/or colour, or `none`), `padding`, `align`,
-`width`, `height`. Colours and attributes inherit down the tree. The cascade: rules by
+`width`, `height`, `max-width`, `max-height` (cells: the most an `'auto'` size, and an
+overlay's measured size, may take). Colours and attributes inherit down the tree. The cascade: rules by
 specificity (ids, then classes/states/parts, then types; later rules win ties), then inline
 `style:`. The default theme uses the 16 terminal colours and the variables `accent`, `muted`,
 `panel`, `error`, `success`, `warning`. See `Stylesheet` for the details.
 
 A component that draws itself asks for its look with `$this->style()` (a `ComputedStyle`:
 `text` is the `Style` for `Ansi::style()`, plus `border`, `padding`, `align`, `width`,
-`height`) and `$this->style('part', 'state')` for its parts; it renders again when its
+`height`, `maxWidth`, `maxHeight`) and `$this->style('part', 'state')` for its parts; it renders again when its
 states change. `properties()` gives a computed style as inline properties, for a `Text` or
 `Span` in a part's style.
 
@@ -381,7 +388,11 @@ $overlay = $this->overlay(Element $element, ?Rect $anchor = null, string|Rect $p
   item, scrolled into view in its new height). When the anchor's component is no longer shown,
   the overlay is cancelled.
 - **Size.** The element's `width`/`height` when given (cells, or `'50%'` of the screen), else
-  what it measures, else the whole screen; plus the border its style gives it.
+  what it measures, else the whole screen; capped by its style's `max-width`/`max-height`;
+  plus the border its style gives it. What it measures is asked again every frame: when the
+  content grows or shrinks (a completion list filtered by typing, a dialog showing a
+  validation message), the overlay is placed again at its new size and what it no longer
+  covers shows again.
 - **Order.** Later overlays above earlier ones, kept across renders.
 - **Focus.** The overlay gets it, by the surface tree's rule (a widget that keeps the keys, as
   an `Editor` with its completion list, calls `$this->focus()` after opening it). Closing
@@ -410,8 +421,9 @@ public function openMenu(): void       // bound to a key
 }
 ```
 
-**Dialogs.** `$this->dialog(Dialog $dialog): object` is an overlay in the middle of the screen,
-modal, and returns an awaitable of the answer. Await it in a coroutine:
+**Dialogs.** `$this->dialog(Dialog $dialog, ?string $key = null): object` is an overlay in
+the middle of the screen, modal, and returns an awaitable of the answer. Await it in a
+coroutine:
 
 ```php
 public function delete(): void          // bound to a key
@@ -430,6 +442,12 @@ closes, the focus goes back where it was. **Quitting with dialogs open ends the 
 disposing a component (the root, or any child) while dialogs it opened are open answers each
 with its cancel value and disposes it, so the coroutines awaiting them go on and end, and
 `fiber\run()` returns. See [widgets](widgets.md) for `Dialog` and `Confirm`.
+
+**One at a time.** A key that opens a dialog and works while one is open (an `always`
+binding: Ctrl-Q asking "Quit?") would open a second one when pressed twice. Give the dialog
+a key: `$this->dialog(new Confirm('Quit?'), key: 'quit')`. While the dialog of that key is
+open, the call gives it the focus and returns its awaitable; the new dialog is not shown.
+Both coroutines get the one answer, so act on it in a way that is fine twice (`dispose()`).
 
 ## Focus
 
@@ -522,7 +540,7 @@ the drag; a press nobody takes starts the host's text selection.
 | `emit(string $event, mixed ...$data)` (protected) | Call the listeners of `$event` (see `on()`); document the events your component emits. `hasListeners(string $event): bool` tells whether anyone listens, to skip work only a listener needs. A listener made by a component renders that component afterwards. |
 | `call(?Closure $callback, mixed ...$args): mixed` (protected) | Call a callback the component was given (`onSubmit`); the component that made it renders afterwards. Use it for the callbacks of your own widgets. |
 | `overlay(Element $element, ?Rect $anchor = null, string\|Rect $place = 'below', bool $modal = false): Overlay` (protected) | Show an element floating over everything (see "Overlays and dialogs"). |
-| `dialog(Dialog $dialog): object` (protected) | Show a modal dialog in the middle of the screen; an awaitable of its answer (see "Overlays and dialogs"). |
+| `dialog(Dialog $dialog, ?string $key = null): object` (protected) | Show a modal dialog in the middle of the screen; an awaitable of its answer (see "Overlays and dialogs"). With a `$key`, one of that key that is open already gets the focus and its awaitable is returned instead (one at a time). |
 | `inOverlay(): ?Overlay` | The overlay this component is shown in, or null. |
 | `children(): array` | The child components by key: `child()` keys, `key:` attributes, and keys of the library's (beginning with "\0") for the rest. How a parent or a test reaches a child: `$app->children()['log']`. |
 | `setStyleState(string $state, bool $on = true)`, `hasStyleState(string $state): bool` | A state of its own for the stylesheet (see "Styles"). |

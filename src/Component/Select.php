@@ -103,6 +103,7 @@ final class Select extends Table implements Field
     {
         $this->rows = self::rows($items);
         $this->propsChanged();
+        $this->list()?->setItems($items);       // a dropdown's open list shows them too (and is placed again at its new size)
         $this->requestRender();
     }
 

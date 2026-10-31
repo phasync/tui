@@ -217,9 +217,40 @@ button), Escape cancels; Page Up/Page Down scroll the content. A click on a butt
 screen: a dialog that does not fit is shrunk, its content scrolls (it is in a `ScrollView`) and
 its buttons stay in view. `with(width: 50, height: 12)` fixes the size.
 
-**A form in a dialog.** Subclass it and override `accept(mixed $answer): bool`: it is asked
-before a button's answer closes the dialog, and returning false keeps it open (show the errors
-in its content). It is not asked for the cancel answer.
+**A form in a dialog.** Give the dialog a `Form` as its content (or put one in it): the form
+is validated before an answer closes the dialog. Enter in a field submits the form and, when
+it is valid, answers with the first button's answer; any button but the cancel one submits it
+first and answers only when it is valid (the form shows its messages, the field in error gets
+the focus); the cancel button and Escape close without validating. The form's `onSubmit` has
+the values:
+
+```php
+public function add(): void
+{
+    $this->go(function () {
+        $contact = null;
+        $answer = fiber\await($this->dialog(new Dialog('Add a contact', new Form(
+            new Column([
+                new Text('Name'),
+                (new Editor(maxLines: 1))->with(id: 'name'),
+                new Text('Email'),
+                (new Editor(maxLines: 1))->with(id: 'email'),
+            ]),
+            validate: fn(array $v) => trim($v['name']) === '' ? ['name' => 'A name, please.'] : [],
+            onSubmit: function (array $values) use (&$contact) {
+                $contact = $values;
+            },
+        ), ['Add' => 'add', 'Cancel' => null])));
+        if ($answer === 'add') {
+            $this->state->contacts = [...$this->state->contacts, $contact];
+        }
+    });
+}
+```
+
+For checks of your own, subclass the dialog and override `accept(mixed $answer): bool`: it is
+asked before a button's answer closes the dialog (after a form inside was valid), and returning
+false keeps it open (show the errors in its content). It is not asked for the cancel answer.
 
 ```php
 final class Rename extends Dialog
@@ -282,12 +313,14 @@ new Form(
 | `Form` | |
 |---|---|
 | `new Form(Element $content, ?Closure $onSubmit = null, ?Closure $validate = null)` | `$content` (a prop) holds the fields; `$validate(array $values, Form $form): array` returns the errors by field id; `$onSubmit(array $values, Form $form)` is called for a submit without errors. |
-| `submit(): bool` | Validate and submit (true when valid). With errors: each field in error is in the state `:invalid` (the default theme: the error colour), the messages show under the content (part `Form::error`), the first field in error gets the focus. |
+| `submit(): bool` | Validate and submit (true when valid). With errors: each field in error is in the state `:invalid` (the default theme: the error colour), the messages show under the content (part `Form::error`), the first field in error gets the focus. Without: `$onSubmit`, then the event `submit` (with the form). |
 | `values(): array`, `fields(): array`, `errors(): array` | The values and the fields by id, the errors of the last submit. |
-| `nextField`, `previousField` | Tab and Shift-Tab: from field to field in the order of the tree (buttons included), around. |
+| `nextField`, `previousField` | Tab and Shift-Tab: from field to field in the order of the tree (buttons included), around; inside a component that moves the focus with Tab too (a `Dialog`), on from the last field to what follows (the dialog's buttons). |
+| `enter()` | Enter and Alt-Enter: `submit()`, the key taken also when the values are not valid. |
 
 **Keys**: Tab/Shift-Tab move; Enter in a one-line field, or on a `Button` without `onPress`,
 submits (as in HTML); Alt-Enter submits from anywhere (a multi-line `Editor` takes Enter).
+In a `Dialog`, see "A form in a dialog" above.
 
 | `Button` | |
 |---|---|

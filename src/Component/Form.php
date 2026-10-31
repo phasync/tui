@@ -23,15 +23,24 @@ use phasync\Tui\Element\Text;
  *     )
  *
  * **Keys**: Tab and Shift-Tab go from field to field in the order of the tree (buttons
- * included), around. Enter in a one-line field, or on a `Button` without `onPress`, submits;
- * Alt-Enter submits from anywhere (a multi-line `Editor` takes Enter for its lines).
+ * included), around; inside a component that moves the focus with Tab itself (a `Dialog`),
+ * from the last field on to what follows the form there (the dialog's buttons). Enter in a
+ * one-line field, or on a `Button` without `onPress`, submits; Alt-Enter submits from anywhere
+ * (a multi-line `Editor` takes Enter for its lines).
  *
  * **Submitting**: `values()` (by field id) goes to `$validate`, which returns the errors by
  * field id (none: valid). With errors, each field in error is in the state `:invalid` for the
  * stylesheet (the default theme: the error colour), the messages are shown under the content,
  * the first field in error gets the focus, and `$onSubmit` is not called. Without errors,
- * `$onSubmit($values, $form)` is called. `$content` is a prop: a form placed with `new` on every
- * render keeps what was typed (its fields are matched by place or `key:`).
+ * `$onSubmit($values, $form)` is called and the form emits the event `submit` (passing
+ * itself). `$content` is a prop: a form placed with `new` on every render keeps what was
+ * typed (its fields are matched by place or `key:`).
+ *
+ * **In a `Dialog`** (`new Dialog('Add', new Form(...), ['Add' => 'add', 'Cancel' => null])`):
+ * Enter in a field submits the form and, when it is valid, answers the dialog with its first
+ * button's answer; a button whose answer is not the dialog's cancel answer submits the form
+ * first and answers only when it is valid; the cancel button and Escape close the dialog
+ * without validating. The dialog's `accept()` is asked after the form was valid.
  *
  * **Style**: `Form`, the part `Form::error` for the messages.
  */
@@ -54,7 +63,13 @@ class Form extends Component
 
     protected function bindings(): array
     {
-        return ['tab' => 'nextField', 'shift+tab' => 'previousField', 'enter' => 'submit', 'alt+enter' => 'submit'];
+        return ['tab' => 'nextField', 'shift+tab' => 'previousField', 'enter' => 'enter', 'alt+enter' => 'enter'];
+    }
+
+    /** Enter (and Alt-Enter): submit (see `submit()`); the key is taken also when the values are not valid. */
+    public function enter(): void
+    {
+        $this->submit();
     }
 
     /** A form passes the focus on to its fields. */
@@ -63,16 +78,30 @@ class Form extends Component
         return false;
     }
 
-    /** Tab: the next field (around). */
+    /**
+     * Tab: the next field (around; inside a component that binds Tab itself, false at the last
+     * field, so that component's Tab goes on from there).
+     */
     public function nextField(): bool
     {
-        return $this->surface->focusNext();
+        return $this->surface->focusNext(false, !$this->insideTabOrder());
     }
 
-    /** Shift-Tab: the field before. */
+    /** Shift-Tab: the field before (as `nextField()`, the other way). */
     public function previousField(): bool
     {
-        return $this->surface->focusNext(true);
+        return $this->surface->focusNext(true, !$this->insideTabOrder());
+    }
+
+    /** True if a component around the form moves the focus with Tab too: the form is part of its order. */
+    private function insideTabOrder(): bool
+    {
+        for ($c = $this->parent(); $c !== null; $c = $c->parent()) {
+            if (isset($c->bindingsInForce()['tab'])) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -126,6 +155,7 @@ class Form extends Component
             return false;
         }
         $this->call($this->onSubmit, $values, $this);
+        $this->emit('submit', $this);
         return true;
     }
 

@@ -121,3 +121,23 @@ it('runs form: fields, validation, the dropdown, the pick list, the switch, the 
         expect($app->pty()->wait(5))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();
     });
 });
+
+it('runs inline-progress: a live region under the shell\'s output, finished jobs printed above it', function () {
+    example('inline-progress.php', [], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('total', 10))->toBeTrue()
+            ->and($app->surface->isAltScreen())->toBeFalse();
+        expect($t->waitFor('total 100%', 20))->toBeTrue();
+        expect($app->pty()->wait(5))->toBe(0);
+        $t->refresh();
+        $lines = explode("\n", rtrim($t->text()));
+        $done = array_values(array_filter($lines, fn($l) => str_contains($l, ' done in ')));
+        expect($done)->toHaveCount(5)
+            ->and(array_search($done[4], $lines))->toBeLessThan(array_key_last(array_filter($lines, fn($l) => str_starts_with($l, 'fetch'))))
+            ->and(end($lines))->toBe('total 100%');
+    });
+    example('inline-progress.php', ['--fullscreen'], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('total', 10))->toBeTrue()->and($app->surface->isAltScreen())->toBeTrue();
+        $t->press('ctrl+c');
+        expect($app->pty()->wait(5))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();
+    });
+});

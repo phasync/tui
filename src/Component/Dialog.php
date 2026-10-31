@@ -35,9 +35,15 @@ use phasync\Tui\Element\Text;
  * `ScrollView`; Page Up/Page Down and the wheel scroll it). `with(width: 50, height: 12)`
  * fixes the size.
  *
+ * **A `Form` as the content** (or in it) is validated before an answer closes the dialog:
+ * Enter in a field submits the form and, when it is valid, answers with the first button's
+ * answer; any other button than the cancel one submits it first and answers only when it is
+ * valid (the messages show in the form); the cancel button and Escape do not validate.
+ *
  * **Subclass it** for dialogs of your own (see `Confirm`): `accept($answer)` decides whether a
  * button's answer closes the dialog (a form dialog checks its fields there and stays open with
- * its error messages), `close($answer)` ends it from code.
+ * its error messages; with a `Form` inside, after the form was valid), `close($answer)` ends
+ * it from code.
  *
  * **Style**: `Dialog` (the default theme: a round border in the accent colour, padding `0 1`),
  * the part `Dialog::title`; its buttons are styled as `Button`.
@@ -45,6 +51,10 @@ use phasync\Tui\Element\Text;
 class Dialog extends Component
 {
     private ?Deferred $answer = null;
+    /** @var \WeakMap<Form, true>|null the forms in the content whose `submit` event is listened to */
+    private ?\WeakMap $forms = null;
+    /** True while a button submits the forms: their `submit` event is not an answer then. */
+    private bool $submitting = false;
 
     /**
      * @param string               $title   shown at the top, in the `Dialog::title` style
@@ -97,8 +107,10 @@ class Dialog extends Component
 
     protected function mount(): void
     {
-        // (measuring makes the fields and buttons, so one can have the focus before the first render)
-        $this->measure($this->surface->cols(), $this->surface->rows());
+        // (measuring the tree makes the fields and buttons, so one can have the focus before the
+        // first render; also when a size given with with() makes measure() skip the tree)
+        $this->measureElement($this->tree(), max(1, $this->surface->cols()), max(1, $this->surface->rows()));
+        $this->forms();
         foreach ($this->fields($this->scroll()) as $field) {
             $field->focus();
             return;
@@ -176,16 +188,61 @@ class Dialog extends Component
         return $this->scroll()->pageDown();
     }
 
-    private function choose(int $i): void
+    /** Answer with button $i's answer: the forms in the content first (unless one just submitted), then `accept()`. */
+    private function choose(int $i, bool $submitted = false): void
     {
         $answers = array_values($this->buttons);
         if ($answers === []) {
             return;
         }
-        $answer = $answers[$i] ?? $answers[0];
+        $answer = \array_key_exists($i, $answers) ? $answers[$i] : $answers[0];     // (an answer may be null)
+        if (!$submitted && $answer !== $this->cancel) {
+            $this->submitting = true;
+            try {
+                foreach ($this->forms() as $form) {
+                    if (!$form->submit()) {
+                        return;     // its messages show; the field in error has the focus
+                    }
+                }
+            } finally {
+                $this->submitting = false;
+            }
+        }
         if ($this->accept($answer)) {
             $this->close($answer);
         }
+    }
+
+    /**
+     * The forms in the content, in order; a form submitted by Enter in one of its fields (its
+     * `submit` event) answers with the first button.
+     *
+     * @return list<Form>
+     */
+    private function forms(): array
+    {
+        $this->forms ??= new \WeakMap();
+        $found = [];
+        $walk = function (Component $c) use (&$walk, &$found): void {
+            foreach ($c->children() as $child) {
+                if ($child instanceof Form) {
+                    $found[] = $child;
+                }
+                $walk($child);
+            }
+        };
+        $walk($this->scroll());
+        foreach ($found as $form) {
+            if (!isset($this->forms[$form])) {
+                $this->forms[$form] = true;
+                $form->on('submit', function (): void {
+                    if (!$this->submitting && $this->isMounted()) {
+                        $this->choose(0, true);
+                    }
+                });
+            }
+        }
+        return $found;
     }
 
     private function focusButton(int $i): bool
@@ -255,7 +312,9 @@ class Dialog extends Component
 
     protected function render(): Element
     {
-        return $this->tree();
+        $tree = $this->tree();
+        $this->forms();     // (the content may have changed)
+        return $tree;
     }
 
     private function tree(): Element

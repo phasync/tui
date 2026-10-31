@@ -267,3 +267,69 @@ it('runs the Rename dialog of docs/widgets.md: refused while empty, with its mes
         expect($app->answers)->toBe(['ok'])->and($rename->name())->toBe('notes.txt');
     });
 });
+
+it('opens a dialog of a key once: pressing the key that opens it again focuses the open one', function () {
+    $app = new class extends Component {
+        public array $answers = [];
+        public int $opened = 0;
+
+        protected function bindings(): array
+        {
+            return ['ctrl+q' => ['quit', 'quit', 'always' => true], 'f3' => 'other'];
+        }
+
+        public function quit(): void
+        {
+            $this->go(function () {
+                $this->opened++;
+                $this->answers[] = await($this->dialog(new Confirm('Quit?'), key: 'quit'));
+            });
+        }
+
+        public function other(): void
+        {
+            $this->go(fn() => $this->answers[] = await($this->dialog(new Dialog(content: 'Other', buttons: ['Close' => 'closed']))));
+        }
+
+        protected function render(): Element
+        {
+            return new Text('app');
+        }
+    };
+    mountOn($app, 40, 12, function (FakeTerminal $t, Component $app) {
+        $t->press('ctrl+q');
+        $t->settle();
+        $t->press('right');                    // the focus on No
+        $t->press('ctrl+q');                   // again: the same dialog, focused, not a second one
+        $t->settle();
+        expect(substr_count($t->text(), 'Quit?'))->toBe(1)->and($app->opened)->toBe(2);
+        $t->press('enter');                    // No (the focus stayed where it was in the dialog)
+        $t->settle();
+        expect($app->answers)->toBe([false, false])->and($t->text())->not->toContain('Quit?');
+        $t->press('ctrl+q');                   // closed: a new one
+        $t->settle();
+        expect($t->text())->toContain('Quit?');
+        $t->press('enter');
+        $t->settle();
+        expect($app->answers)->toBe([false, false, true]);
+    });
+});
+
+it('runs the form in a dialog of docs/widgets.md: refused while the name is empty, then added', function () {
+    $doc = (string) file_get_contents(__DIR__ . '/../../docs/widgets.md');
+    preg_match('/```php\n(public function add\(\): void.*?)\n```/s', $doc, $m);
+    $class = 'final class Contacts extends phasync\Tui\Component { protected function mount(): void { $this->state->contacts = []; } '
+        . $m[1] . ' protected function render(): phasync\Tui\Element { return new Text(count($this->state->contacts) . " contacts"); } }';
+    eval('use phasync\Tui\Component\Dialog; use phasync\Tui\Component\Editor; use phasync\Tui\Component\Form; use phasync\Tui\Element\Column; use phasync\Tui\Element\Text; ' . $class);
+    mountOn(new Contacts(), 50, 16, function (FakeTerminal $t, Component $app) {
+        $app->add();
+        $t->settle();
+        $t->press('enter');
+        $t->settle();
+        expect($t->text())->toContain('A name, please.')->toContain('0 contacts');
+        $t->type("Ada\t");
+        $t->type("ada@example.com\n");
+        $t->settle();
+        expect($t->text())->toContain('1 contacts')->and($t->text())->not->toContain('Add a contact');
+    });
+});

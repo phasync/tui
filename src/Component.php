@@ -184,6 +184,8 @@ abstract class Component extends Element
     private array $overlays = [];
     /** The overlay this component is the content of. */
     private ?Overlay $overlaid = null;
+    /** @var array<string, Dialog> the dialogs opened with a key (`dialog(key:)`), the latest per key */
+    private array $dialogs = [];
     /** @var list<Overlay> on a root: the open overlays of the whole tree, in the order they opened */
     private array $floating = [];
     private ?OverlayLayout $overlayLayout = null;
@@ -1544,10 +1546,34 @@ abstract class Component extends Element
      * disposed, and the focus goes back where it was; when this component is disposed while it
      * is open, it resolves with the cancel answer. Await it in a coroutine (`go()`), not in a key
      * handler: the keys that answer it come through the handlers.
+     *
+     * **One at a time**: with a `$key`, a dialog of that key this component opened and that is
+     * still open is not opened again: it gets the focus, and its awaitable is returned (the new
+     * `$dialog` is not used). For a key that opens a dialog and works while one is open (an
+     * `always` binding: Ctrl-Q asking "Quit?"), so pressing it twice asks once:
+     *
+     *     public function quit(): void        // 'ctrl+q' => ['quit', 'quit', 'always' => true]
+     *     {
+     *         $this->go(function () {
+     *             if (fiber\await($this->dialog(new Confirm('Quit?'), key: 'quit'))) {
+     *                 $this->dispose();
+     *             }
+     *         });
+     *     }
+     *
+     * (Both coroutines then get the one answer: act on it once, as `dispose()` does.)
      */
-    protected function dialog(Dialog $dialog): object
+    protected function dialog(Dialog $dialog, ?string $key = null): object
     {
+        $open = $key === null ? null : ($this->dialogs[$key] ?? null);
+        if ($open !== null && $open->isMounted() && $open->inOverlay()?->isOpen()) {
+            $open->focus();
+            return $open->result();
+        }
         $this->overlay($dialog, place: 'center', modal: true);
+        if ($key !== null) {
+            $this->dialogs[$key] = $dialog;
+        }
         return $dialog->result();
     }
 
@@ -1681,11 +1707,19 @@ abstract class Component extends Element
         }
     }
 
-    /** @return array{int,int} the outer size $content would like as an overlay on a root of $cols x $rows */
+    /**
+     * The outer size $content would like as an overlay on a root of $cols x $rows: its
+     * `width`/`height` when given, else what it measures (measured again every frame, so an
+     * overlay whose content grows or shrinks is placed again), capped by `max-width`/`max-height`.
+     *
+     * @return array{int,int}
+     */
     private static function desired(Component $content, int $cols, int $rows): array
     {
-        $b = $content->style()->border === false ? 0 : 2;
-        $size = $content->measureFor(max(1, $cols - $b), max(1, $rows - $b));
+        $style = $content->style();
+        $b = $style->border === false ? 0 : 2;
+        $max = [$style->maxWidth, $style->maxHeight];
+        $size = $content->measureFor(max(1, min($cols, $max[0] ?? $cols) - $b), max(1, min($rows, $max[1] ?? $rows) - $b));
         $out = [];
         foreach ([0 => [$content->attribute('width'), $cols], 1 => [$content->attribute('height'), $rows]] as $i => [$spec, $total]) {
             if (\is_int($spec)) {
@@ -1693,7 +1727,7 @@ abstract class Component extends Element
             } elseif (\is_string($spec) && str_ends_with($spec, '%')) {
                 $out[$i] = (int) floor($total * (float) $spec / 100);
             } else {
-                $out[$i] = $size === null ? $total : $size[$i] + $b;
+                $out[$i] = min($size === null ? $total : $size[$i] + $b, $max[$i] ?? \PHP_INT_MAX);
             }
         }
         return $out;
