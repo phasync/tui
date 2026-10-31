@@ -19,7 +19,14 @@ final class LayoutItem
     public string|false $border = false;
     public ?Style $borderStyle = null;
     public string $title = '';
+    public string $titleAlign = 'left';
     public string $align = 'left';
+    /** @var array{int,int,int,int} blank cells around it in its parent's room: top, right, bottom, left */
+    public array $margin = [0, 0, 0, 0];
+    /** The share (fr) of the room left along its parent that it takes (`flex-grow`), null for none. */
+    public ?float $grow = null;
+    /** 0: it keeps the size its content needs along its parent (`flex-shrink: 0`). */
+    public ?float $shrink = null;
     /** Something in it takes the focus (a component). */
     public bool $focusable = false;
     /** The most cells its content size may take (`max-width`, `max-height`), null for no limit. */
@@ -44,6 +51,17 @@ final class LayoutItem
      */
     public function natural(int $cols, int $rows): ?array
     {
+        [$t, $r, $b, $l] = $this->margin;
+        if ($t + $r + $b + $l > 0) {
+            $n = $this->naturalInside(max(0, $cols - $l - $r), max(0, $rows - $t - $b));
+            return $n === null ? null : [min($cols, $n[0] + $l + $r), min($rows, $n[1] + $t + $b)];
+        }
+        return $this->naturalInside($cols, $rows);
+    }
+
+    /** natural() without the margin. */
+    private function naturalInside(int $cols, int $rows): ?array
+    {
         if (!$this->focusable) {
             // (nothing below changes by itself: the answer for a room stays the answer)
             $key = $cols . ',' . $rows;
@@ -66,14 +84,15 @@ final class LayoutItem
      */
     public function least(int $cols): int
     {
+        [$t, $r, $b, $l] = $this->margin;
         $n = $this->natural($cols, self::TALL);
         if ($n !== null) {
             return $n[1];
         }
         $border = $this->border === false ? 0 : 2;
-        $inner = max(0, $cols - $border);
+        $inner = max(0, $cols - $border - $l - $r);
         $least = $this->layout?->least($inner) ?? ($this->least !== null ? ($this->least)($inner) : 1);
-        return min($least + $border, $this->maxHeight ?? \PHP_INT_MAX);
+        return min($least + $border, $this->maxHeight ?? \PHP_INT_MAX) + $t + $b;
     }
 
     /** Rows to measure in for as high as content may be. */

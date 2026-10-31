@@ -5,12 +5,14 @@
 //   run    - the root component's run() throws
 //   go     - a coroutine of the root component (go()) throws
 //   tui    - Tui::run() of a root whose run() throws
+//   closure - Tui::run() of a closure that throws when the state it reads changes
 // It must end at once with the exception on stderr and the terminal restored.
 require __DIR__ . '/../../../vendor/autoload.php';
 
 use phasync\Tui\Component;
 use phasync\Tui\Element;
 use phasync\Tui\Element\Text;
+use phasync\Tui\State;
 use phasync\Tui\Surface;
 use phasync\Tui\Tty;
 use phasync\Tui\Tui;
@@ -47,6 +49,17 @@ final class CrashApp extends Component
 }
 
 $mode = $argv[1] ?? 'start';
+if ($mode === 'closure') {
+    fiber\run(function () {
+        $s = new State(['n' => 0]);
+        fiber\go(function () use ($s) {
+            fiber\sleep(0.05);
+            $s->n = 1;
+        });
+        Tui::run(fn() => $s->n > 0 ? throw new RuntimeException('failed in the closure') : new Text("n {$s->n}"));
+    });
+    exit(0);
+}
 if ($mode === 'tui') {
     Tui::run(new CrashApp($mode));
     exit(0);

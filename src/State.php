@@ -29,7 +29,17 @@ namespace phasync\Tui;
  *     }
  *
  * A component that declares none gets a plain `State`, which takes properties of any name
- * (`$this->state->open = true`), untyped.
+ * (`$this->state->open = true`), untyped. A plain `State` can be made with values too, for a
+ * program without classes: `$s = new State(['done' => 0])`.
+ *
+ * **Reading subscribes.** A component whose `render()` reads a property of a `State` (any
+ * state, not only its own `$this->state`) renders again when that state is written: a closure
+ * given to `Tui::run()` or `Tui::inline()` (which is a component), a `Text` with a closure for
+ * content (`new Text(fn() => "{$s->done}%")`), a component showing a state another one owns.
+ *
+ *     $s = new State(['done' => 0]);
+ *     fiber\go(function () use ($s) { while ($s->done < 100) { fiber\sleep(0.1); $s->done++; } });
+ *     Tui::inline(fn() => new ProgressBar($s->done / 100));      // renders on every write
  *
  * Writes are checked against the declared types as usual (a `TypeError` for a string in an
  * int). A write that does not change the value (`===`) renders nothing. Many writes in one
@@ -47,6 +57,28 @@ class State
     /** @var array<int, \WeakReference<Component>> the components rendered again on a write */
     private array $owners = [];
     private bool $watching = false;
+    /** Reads made during renders, counted (see `reads()`). */
+    private static int $reads = 0;
+
+    /**
+     * A state with these values (by property name), watched from the start: what a program
+     * without classes writes (`new State(['done' => 0, 'status' => 'starting'])`). A subclass
+     * with typed properties is made with no arguments; one with a constructor of its own calls
+     * `parent::__construct()` so that reads of it subscribe from the start (else only once a
+     * component holds it as `$state`).
+     *
+     * @param array<string, mixed> $values
+     */
+    public function __construct(array $values = [])
+    {
+        $this->watch();
+        foreach ($values as $name => $value) {
+            if (\is_int($name)) {
+                throw new \InvalidArgumentException('State values are given by name: new State([\'done\' => 0])');
+            }
+            $this->__set($name, $value);
+        }
+    }
 
     /**
      * @internal Render $component again whenever a property changes; called by the component
@@ -55,6 +87,12 @@ class State
     final public function watchFor(Component $component): void
     {
         $this->owners[spl_object_id($component)] = \WeakReference::create($component);
+        $this->watch();
+    }
+
+    /** Move the declared properties into $values, so that every read and write goes through __get() and __set(). */
+    private function watch(): void
+    {
         if ($this->watching) {
             return;
         }
@@ -70,6 +108,12 @@ class State
             }
             unset($this->$name);
         }
+    }
+
+    /** @internal How many reads of any State renders made so far: a change tells that code read state. */
+    final public static function reads(): int
+    {
+        return self::$reads;
     }
 
     /**
@@ -93,6 +137,14 @@ class State
      */
     final public function __get(string $name)
     {
+        // (read by a render: that component renders again when this changes)
+        $reader = Component::reader();
+        if ($reader !== null) {
+            self::$reads++;
+            if (($this->owners[spl_object_id($reader)] ?? null)?->get() !== $reader) {
+                $this->owners[spl_object_id($reader)] = \WeakReference::create($reader);
+            }
+        }
         if (!\array_key_exists($name, $this->values)) {
             if (property_exists($this, $name)) {
                 throw new \Error('Typed property ' . static::class . "::\$$name must not be accessed before initialization");

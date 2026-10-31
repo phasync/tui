@@ -14,6 +14,7 @@ use phasync\Tui\Element\Row;
 use phasync\Tui\Element\Span;
 use phasync\Tui\Element\Text;
 use phasync\Tui\Layout;
+use phasync\Tui\Markup;
 use phasync\Tui\Stylesheet;
 use phasync\Tui\Surface;
 use phasync\Tui\Text as TextUtil;
@@ -63,16 +64,36 @@ final class Tree
     {
         $this->seen = [];
         $this->showsHelp = false;
+        $style = null;
         if ($root instanceof Column || $root instanceof Row || $root instanceof Layers) {
             // the root container arranges the component's own surface
             $style = $sheet->compute($root, $this->states($root, $this->owner->surface), $base);
+        }
+        if ($style !== null && !$style->hidden) {
             $layout = $this->container($root, 'r', $sheet, $style);
             $item = $this->frame(new LayoutItem($this->owner->surface), $root, $style, 'auto', 'auto');
-            $item->measure = self::containerMeasure($root, $layout->items, $item->border === false ? 0 : 2);
+            $item->measure = self::containerMeasure($layout, $item->border === false ? 0 : 2);
             $item->layout = $layout;    // (for least(): this item only measures, it is placed by no layout)
         } else {
-            $item = $this->item($root, 'r', $sheet, $base);
-            $layout = new ElementLayout(ElementLayout::SINGLE, [$item], fill: $base->text);
+            $item = $style === null ? $this->item($root, 'r', $sheet, $base) : null;
+            if ($item === null) {
+                // (hidden: nothing shows)
+                $item = new LayoutItem($this->surface('r'));
+                $item->measure = static fn(): array => [0, 0];
+                $layout = new ElementLayout(ElementLayout::SINGLE, [], fill: $base->text);
+            } else {
+                $layout = new ElementLayout(ElementLayout::SINGLE, [$item], fill: $base->text);
+            }
+        }
+        if ($this->owner instanceof Live) {
+            // (the margin of a live element is laid out where the element is, around its
+            // component; the component takes the focus when something in it does)
+            $item->margin = [0, 0, 0, 0];
+            $focusable = false;
+            foreach ($layout->items as $child) {
+                $focusable = $focusable || $child->focusable;
+            }
+            $this->owner->surface->setFocusable($focusable || $this->owner->surface->root() === $this->owner->surface);
         }
         $this->builtFor = $root;
         $this->builtItem = $item;
@@ -121,7 +142,7 @@ final class Tree
         $dry = $this->dry;
         $this->dry = !$place;
         try {
-            return $this->item($root, 'r', $sheet, $base)->natural($cols, $rows);
+            return ($this->item($root, 'r', $sheet, $base) ?? self::nothing())->natural($cols, $rows);
         } finally {
             $this->dry = $dry;
         }
@@ -131,20 +152,25 @@ final class Tree
     {
         $items = [];
         foreach ($node->children as $i => $child) {
-            $items[] = $this->item($child, $path . '/' . self::segment($child, $i), $sheet, $style);
+            $item = $this->item($child, $path . '/' . self::segment($child, $i), $sheet, $style);
+            if ($item !== null) {
+                $items[] = $item;
+            }
         }
         $kind = match (true) {
+            $node instanceof Layers => ElementLayout::LAYERS,
+            $style->direction !== null => $style->direction === 'row' ? ElementLayout::ROW : ElementLayout::COLUMN,
             $node instanceof Column => ElementLayout::COLUMN,
-            $node instanceof Row => ElementLayout::ROW,
-            default => ElementLayout::LAYERS,
+            default => ElementLayout::ROW,
         };
-        $gap = $node instanceof Layers ? 0 : $node->gap;
+        $gap = $node instanceof Layers ? 0 : ($style->gap ?? $node->gap);
         // the same items in the same way: the layout of the previous build (it knows its arrangement)
         $kept = $this->dry ? null : ($this->layouts[$path] ?? null);
-        if ($kept !== null && $kept->kind === $kind && $kept->gap === $gap && $kept->fill === $style->text && $kept->items === $items) {
+        if ($kept !== null && $kept->kind === $kind && $kept->gap === $gap && $kept->fill === $style->text && $kept->items === $items
+            && $kept->padding === $style->padding && $kept->alignItems === $style->alignItems && $kept->justify === $style->justify) {
             return $kept;
         }
-        $layout = new ElementLayout($kind, $items, $gap, fill: $style->text);
+        $layout = new ElementLayout($kind, $items, $gap, $style->padding, $style->text, $style->alignItems, $style->justify);
         if (!$this->dry) {
             $this->layouts[$path] = $layout;
         }
@@ -163,8 +189,11 @@ final class Tree
      * same items) is that build's item again, so its layout and its measures are kept and
      * nothing below it is laid out anew (see ElementLayout::arrange()).
      */
-    private function item(Element $node, string $path, Stylesheet $sheet, ComputedStyle $parent): LayoutItem
+    private function item(Element $node, string $path, Stylesheet $sheet, ComputedStyle $parent): ?LayoutItem
     {
+        if (($node instanceof Text && $node->content instanceof \Closure) || ($node instanceof Box && $node->title instanceof \Closure)) {
+            return $this->live($node, $path, $sheet, $parent);
+        }
         if ($node instanceof Component) {
             $key = $node->attribute('key');
             $component = $node->isMounted() ? $node : ($this->place)($key !== null ? "\0k:" . $key : "\0p:" . $path, $node, !$this->dry);
@@ -175,6 +204,9 @@ final class Tree
                 $component->inheritStyle($parent);
             }
             $style = $component->style();
+            if ($style->hidden) {
+                return null;
+            }
             $sig = 'c' . spl_object_id($component) . '|' . self::sizes($component);
             return $this->kept($path, $sig, $style) ?? $this->keep($path, $sig, $style, $this->componentItem($component, $style));
         }
@@ -183,24 +215,29 @@ final class Tree
         }
         $surface = $this->surface($path);
         $style = $sheet->compute($node, $this->states($node, $surface), $parent);
+        if ($style->hidden) {
+            return null;
+        }
         if ($node instanceof Text || $node instanceof Help) {
             $surface->setFocusable(false);
             $text = $node instanceof Help ? $this->helpText($node, $sheet, $style) : $node;
             $content = $this->content($text, $sheet, $style);
-            $sig = 't' . ($text->wrap ? 'w' : 'c') . self::sizes($node) . "\0" . $content;
+            $wrap = $text->wrap && $style->wrap !== false;
+            $sig = 't' . ($wrap ? 'w' : 'c') . self::sizes($node) . "\0" . $content;
             return $this->kept($path, $sig, $style)
-                ?? $this->keep($path, $sig, $style, $this->text($this->frame(new LayoutItem($surface), $node, $style, 'auto', 'auto'), $content, $text->wrap, $path, $style));
+                ?? $this->keep($path, $sig, $style, $this->text($this->frame(new LayoutItem($surface), $node, $style, 'auto', 'auto'), $content, $wrap, $path, $style));
         }
         if ($node instanceof Box) {
-            $inner = $this->item($node->child, $path . '/' . self::segment($node->child, 0), $sheet, $style);
+            $inner = $this->item($node->child, $path . '/' . self::segment($node->child, 0), $sheet, $style) ?? self::nothing();
             $surface->setFocusable($inner->focusable);
-            $sig = 'b' . spl_object_id($inner) . '|' . self::sizes($node) . "\0" . $node->title;
+            $title = $node->title === '' ? '' : Markup::toAnsi($node->title, $style->borderStyle ?? $style->text, $sheet);
+            $sig = 'b' . spl_object_id($inner) . '|' . self::sizes($node) . "\0" . $title;
             if (($item = $this->kept($path, $sig, $style)) !== null) {
                 return $item;
             }
             $item = $this->frame(new LayoutItem($surface), $node, $style, 'auto', 'auto');
-            $item->title = $node->title;
-            $item->layout = new ElementLayout(ElementLayout::SINGLE, [$inner], padding: $style->padding, fill: $style->text);
+            $item->title = $title;
+            $item->layout = new ElementLayout(ElementLayout::SINGLE, $inner->surface === self::nothing()->surface ? [] : [$inner], padding: $style->padding, fill: $style->text);
             $item->focusable = $inner->focusable;
             [$t, $r, $b, $l] = $style->padding;
             $extraW = $l + $r + ($item->border === false ? 0 : 2);
@@ -227,16 +264,20 @@ final class Tree
             $item = $this->frame(new LayoutItem($surface), $node, $style, 'auto', 'auto');
             $item->layout = $layout;
             $item->focusable = $focusable;
-            $item->measure = self::containerMeasure($node, $layout->items, $item->border === false ? 0 : 2);
+            $item->measure = self::containerMeasure($layout, $item->border === false ? 0 : 2);
             return $this->keep($path, $sig, $style, $item);
         }
         throw new \InvalidArgumentException('Unknown element ' . $node::class);
     }
 
-    private function componentItem(Component $component, ComputedStyle $style): LayoutItem
+    private function componentItem(Component $component, ComputedStyle $style, ?Element $for = null): LayoutItem
     {
-        $item = $this->frame(new LayoutItem($component->surface), $component, $style, 'auto', 'auto');
+        $item = $this->frame(new LayoutItem($component->surface), $for ?? $component, $style, 'auto', 'auto');
         $item->focusable = true;
+        if ($for !== null) {
+            $item->border = false;      // (the element's own border is drawn inside its component)
+            $item->title = '';
+        }
         $border = $item->border === false ? 0 : 2;
         $item->measure = static function (int $cols, int $rows) use ($component, $border): ?array {
             if (!$component->isMounted()) {
@@ -276,18 +317,21 @@ final class Tree
 
     /**
      * What a container needs: its children's sizes along it added up (with the gaps), across
-     * it the largest, and its border; null when a child takes any room.
-     *
-     * @param list<LayoutItem> $items
+     * it the largest, its padding and its border; null when a child takes any room. A child that
+     * grows (`flex-grow`) needs what its content needs.
      */
-    private static function containerMeasure(Column|Row|Layers $node, array $items, int $border): \Closure
+    private static function containerMeasure(ElementLayout $layout, int $border): \Closure
     {
-        $gap = $node instanceof Layers ? 0 : $node->gap * max(0, \count($items) - 1);
-        $kind = $node instanceof Column ? 0 : ($node instanceof Row ? 1 : 2);
-        return static function (int $cols, int $rows) use ($kind, $items, $border, $gap): ?array {
+        $items = $layout->items;
+        $gap = $layout->kind === ElementLayout::LAYERS ? 0 : $layout->gap * max(0, \count($items) - 1);
+        $kind = $layout->kind === ElementLayout::COLUMN ? 0 : ($layout->kind === ElementLayout::ROW ? 1 : 2);
+        [$t, $r, $b, $l] = $layout->padding;
+        $extraW = $border + $l + $r;
+        $extraH = $border + $t + $b;
+        return static function (int $cols, int $rows) use ($kind, $items, $extraW, $extraH, $gap): ?array {
             $w = $h = 0;
             foreach ($items as $child) {
-                $n = $child->natural(max(0, $cols - $border), max(0, $rows - $border));
+                $n = $child->natural(max(0, $cols - $extraW), max(0, $rows - $extraH));
                 if ($n === null) {
                     return null;
                 }
@@ -298,9 +342,9 @@ final class Tree
                 };
             }
             return match ($kind) {
-                0 => [$w + $border, $h + $gap + $border],
-                1 => [$w + $gap + $border, $h + $border],
-                default => [$w + $border, $h + $border],
+                0 => [$w + $extraW, $h + $gap + $extraH],
+                1 => [$w + $gap + $extraW, $h + $extraH],
+                default => [$w + $extraW, $h + $extraH],
             };
         };
     }
@@ -315,6 +359,10 @@ final class Tree
         $item->border = $style->border;
         $item->borderStyle = $style->borderStyle;
         $item->align = $style->align;
+        $item->titleAlign = $style->titleAlign;
+        $item->margin = $style->margin;
+        $item->grow = $style->grow;
+        $item->shrink = $style->shrink;
         return $item;
     }
 
@@ -323,12 +371,14 @@ final class Tree
     {
         $base = null;
         $content = '';
+        $markup = !$node->isRaw();
         foreach ($node->content as $run) {
             if (\is_string($run)) {
-                $content .= $run;
+                $content .= $markup ? Markup::toAnsi($run, $style, $sheet) : $run;
             } else {
                 $base ??= Ansi::style($style->text);
-                $content .= Ansi::style($sheet->compute($run, [], $style)->text) . $run->text . $base;
+                $span = $sheet->compute($run, $this->widthStates(), $style);
+                $content .= Ansi::style($span->text) . ($markup ? Markup::toAnsi($run->text, $span, $sheet) : $run->text) . $base;
             }
         }
         return $content;
@@ -410,7 +460,7 @@ final class Tree
         $runs = [];
         foreach (($this->help)($node->for, $node->show) as $i => [$key, $action]) {
             $runs[] = $i === 0 ? '' : $node->separator;
-            $runs[] = new Span($key, style: $sheet->compute($node, [], $style, 'key')->properties());
+            $runs[] = new Span(Markup::escape($key), style: $sheet->compute($node, [], $style, 'key')->properties());
             $runs[] = ' ';
             $runs[] = new Span($action, style: $sheet->compute($node, [], $style, 'action')->properties());
         }
@@ -430,7 +480,53 @@ final class Tree
         if ($node->attribute('disabled')) {
             $states[] = 'disabled';
         }
-        return $states;
+        return [...$states, ...$this->widthStates()];
+    }
+
+    /** @return list<string> the width class of the screen the owner is on (`sm`, `md`, `lg`), as a state */
+    private function widthStates(): array
+    {
+        return [Stylesheet::widthClass($this->owner->surface->root()->cols())];
+    }
+
+    /** An item that shows nothing and needs no room (for what is hidden). */
+    private static function nothing(): LayoutItem
+    {
+        static $nothing = null;
+        if ($nothing === null) {
+            $nothing = new LayoutItem(new Surface(1, 1, 0));
+            $nothing->measure = static fn(): array => [0, 0];
+        }
+        return $nothing;
+    }
+
+    /**
+     * An element with a closure for content (a `Text`, a `Box` title): a small component of its
+     * own (`Live`) shows it, so the closure is evaluated in that component's render, a `State`
+     * it reads renders that component alone, and the tree around it is not built again. The
+     * element's size and margin are laid out here, its look inside the component.
+     */
+    private function live(Text|Box $node, string $path, Stylesheet $sheet, ComputedStyle $parent): ?LayoutItem
+    {
+        // (its focus is its component's: the states here are those that size and hide it)
+        $style = $sheet->compute($node, [...($node->attribute('disabled') ? ['disabled'] : []), ...$this->widthStates()], $parent);
+        if ($style->hidden) {
+            return null;
+        }
+        $key = $node->attribute('key');
+        $live = ($this->place)($key !== null ? "\0k:" . $key : "\0p:" . $path, new Live($node), !$this->dry);
+        if ($live === null || !$live->isMounted()) {
+            return new LayoutItem(new Surface(1, 1, 0));
+        }
+        if (!$this->dry) {
+            $live->inheritStyle($parent);
+        }
+        $sig = 'v' . spl_object_id($live) . '|' . self::sizes($node);
+        if (($item = $this->kept($path, $sig, $style)) !== null) {
+            return $item;
+        }
+        $item = $this->componentItem($live, $style, $node);
+        return $this->keep($path, $sig, $style, $item);
     }
 
     /** The surface for the element at $path: the same one as in the previous render. */

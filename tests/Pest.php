@@ -48,3 +48,9 @@ function frame(): void
 {
     \fiber\sleep(1 / 60 + 0.005);
 }
+
+/** The rows of what a FakeTerminal shows, trailing blanks cut. */
+function screenRows(\phasync\Tui\FakeTerminal $t): array
+{
+    return array_map('rtrim', explode("\n", $t->text()));
+}

@@ -24,6 +24,16 @@ final class ComputedStyle
      * @param bool             $hoverAware  @internal a `:hover` rule was considered for it
      * @param int|null         $maxWidth    the most columns its content size may take (`max-width`), null for no limit
      * @param int|null         $maxHeight   the most rows its content size may take (`max-height`), null for no limit
+     * @param array{int,int,int,int} $margin blank cells around it, inside its parent's room: top, right, bottom, left
+     * @param int|null         $gap         a container's blank cells between its children (`gap`), null: its own `gap:`
+     * @param string           $titleAlign  where a border's title goes: `'left'`, `'center'` or `'right'`
+     * @param bool|null        $wrap        text wraps at spaces (true) or each line is cut (false); null: as the element says
+     * @param float|null       $grow        the share (`fr`) of its parent's room left that it takes along the parent, null for none
+     * @param float|null       $shrink      0: it keeps the size its content needs when siblings are squeezed; null: as usual
+     * @param string           $alignItems  a container's children across it: `'stretch'`, `'start'`, `'center'` or `'end'`
+     * @param string           $justify     a container's children along it: `'start'`, `'center'`, `'end'` or `'between'`
+     * @param bool             $hidden      `display: none`: not shown, as if not in the tree
+     * @param string|null      $direction   a container laid out as a `'row'` or a `'column'`, null: as its element is
      */
     public function __construct(
         public readonly Style $text,
@@ -36,6 +46,16 @@ final class ComputedStyle
         public readonly bool $hoverAware = false,
         public readonly ?int $maxWidth = null,
         public readonly ?int $maxHeight = null,
+        public readonly array $margin = [0, 0, 0, 0],
+        public readonly ?int $gap = null,
+        public readonly string $titleAlign = 'left',
+        public readonly ?bool $wrap = null,
+        public readonly ?float $grow = null,
+        public readonly ?float $shrink = null,
+        public readonly string $alignItems = 'stretch',
+        public readonly string $justify = 'start',
+        public readonly bool $hidden = false,
+        public readonly ?string $direction = null,
     ) {
     }
 

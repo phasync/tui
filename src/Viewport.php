@@ -51,6 +51,9 @@ final class Viewport
     private Style $borderStyle;
     private ?Style $focusStyle = null;
     private string $title = '';
+    private string $titleAlign = 'left';
+    /** @var array{string, list<string>, list<Style>}|null the title's cells, for the key they were made for */
+    private ?array $titleCells = null;
     private bool $following = true;
     /** Keys and pastes routed through it bring the bottom of the source into view (see setFollowOnInput()). */
     private bool $followOnInput = true;
@@ -234,14 +237,27 @@ final class Viewport
         return $this->border;
     }
 
-    /** The title shown in the top border (only visible with a border). */
-    public function setTitle(string $title): static
+    /**
+     * The title shown in the top border (only visible with a border), at the left, in the
+     * middle or at the right of it ($align `'left'`, `'center'`, `'right'`; null keeps the one
+     * set before). It is drawn in the border's style; SGR escape sequences in it (from
+     * `Ansi::styled()` or markup, see `Markup::toAnsi()`) style parts of it.
+     */
+    public function setTitle(string $title, ?string $align = null): static
     {
-        if ($title !== $this->title) {
+        $align ??= $this->titleAlign;
+        if ($title !== $this->title || $align !== $this->titleAlign) {
             $this->title = $title;
+            $this->titleAlign = \in_array($align, ['left', 'center', 'right'], true) ? $align : 'left';
             $this->owner->changed($this);
         }
         return $this;
+    }
+
+    /** Where the title goes in the top border: `'left'`, `'center'` or `'right'`. */
+    public function titleAlign(): string
+    {
+        return $this->titleAlign;
     }
 
     /** The title set with `setTitle()`. */
@@ -529,7 +545,7 @@ final class Viewport
         // were added to the scrollback or it was cleared (ED 3), even if its top row is the same
         $scrollback = $top < 0 ? $this->source->linesScrolled() . '/' . $this->source->scrollbackSize() : '';
         return implode(',', [$this->x, $this->y, $this->width, $this->height, $this->border ? $this->borderKind : 0,
-            spl_object_id($style), $this->title, $top, $this->left, $this->source->cols(),
+            spl_object_id($style), $this->title, $this->titleAlign, $top, $this->left, $this->source->cols(),
             $this->source->rows(), json_encode($this->selection), $scrollback]);
     }
 
@@ -682,20 +698,59 @@ final class Viewport
             $chars[$w - 1] = $isTop ? $tr : $br;
         }
         $chars[0] = $isTop ? $tl : $bl;
+        $styles = array_fill(0, $w, $style);
         if ($isTop && $this->title !== '' && $w > 4) {
-            $i = 1;
+            [$tc, $ts] = $this->titleCells($style, $w - 2);
+            $n = \count($tc);
+            $i = 1 + match ($this->titleAlign) {
+                'center' => intdiv($w - 2 - $n, 2),
+                'right' => $w - 2 - $n,
+                default => 0,
+            };
+            array_splice($chars, $i, $n, $tc);
+            array_splice($styles, $i, $n, $ts);
+        }
+        return [$chars, $styles];
+    }
+
+    /**
+     * The cells of ' title ' in $style, at most $room wide: plain text as it is, a title with
+     * escape sequences through a surface of its own (written, as everything is).
+     *
+     * @return array{list<string>, list<Style>}
+     */
+    private function titleCells(Style $style, int $room): array
+    {
+        $key = $this->title . "\0" . spl_object_id($style) . "\0" . $room;
+        if ($this->titleCells !== null && $this->titleCells[0] === $key) {
+            return [$this->titleCells[1], $this->titleCells[2]];
+        }
+        $chars = $styles = [];
+        if (!str_contains($this->title, "\e")) {
+            $i = 0;
             foreach (Text::clusters(' ' . $this->title . ' ') as [$g, $gw]) {
-                if ($i + $gw > $w - 1) {
+                if ($i + $gw > $room) {
                     break;
                 }
-                $chars[$i] = $g;
+                $chars[] = $g;
+                $styles[] = $style;
                 if ($gw === 2) {
-                    $chars[$i + 1] = '';
+                    $chars[] = '';
+                    $styles[] = $style;
                 }
                 $i += $gw;
             }
+        } else {
+            $title = Text::truncate(' ' . $this->title . ' ', $room, '');
+            $width = min($room, Text::width($title));
+            $s = new Surface(max(1, $width), 1, 0);
+            $s->write("\e[?7l" . Ansi::style($style) . str_replace(["\r", "\n"], ' ', $title));
+            [$chars, $styles] = $s->rowData(0);
+            $chars = \array_slice($chars, 0, $width);
+            $styles = \array_slice($styles, 0, $width);
         }
-        return [$chars, array_fill(0, $w, $style)];
+        $this->titleCells = [$key, $chars, $styles];
+        return [$chars, $styles];
     }
 
     /**

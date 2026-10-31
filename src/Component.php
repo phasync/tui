@@ -233,6 +233,10 @@ abstract class Component extends Element
     private static array $floatingRoots = [];
     /** The component whose render() runs now (focus() remembers what renders ask for). */
     private static ?Component $inRender = null;
+    /** The component whose render() is running: a State read now renders it again when written. */
+    private static ?Component $reader = null;
+    /** @var \WeakMap<Component, true>|null roots that give the focus to their first focusable component once it shows */
+    private static ?\WeakMap $unfocused = null;
     /** @var array<int, true> the components this component's last render focused, and the one in progress */
     private array $focusAsked = [];
     private array $focusAskedBefore = [];
@@ -456,7 +460,10 @@ abstract class Component extends Element
             $this->focus();
         }
         if ($this->parent === null) {
+            self::$unfocused ??= new \WeakMap();
+            self::$unfocused[$this] = true;
             $this->firstRender();
+            self::focusFirst();
             if (!$on instanceof TerminalDevice) {
                 // the code that started it fails: the program ends with it (on a device, attach() sees to it)
                 Runtime::watch(function (\Throwable $e): void {
@@ -762,6 +769,27 @@ abstract class Component extends Element
     }
 
     /**
+     * @internal The component whose `render()` is running, if any: a `State` read during it
+     * renders that component again when it is written.
+     */
+    final public static function reader(): ?Component
+    {
+        return self::$reader;
+    }
+
+    /** @internal Run $code as if it were $reader's render, for what State reads (Tui runs a closure's first call this way). */
+    final public static function readAs(Component $reader, \Closure $code): mixed
+    {
+        $before = self::$reader;
+        self::$reader = $reader;
+        try {
+            return $code();
+        } finally {
+            self::$reader = $before;
+        }
+    }
+
+    /**
      * @internal A render in the next frame that the library makes by itself (a state write, a
      * handler, a coroutine step): as `requestRender()`, except that the `focus()` calls of the
      * render that follows take effect only where they are new (see `focus()`).
@@ -802,6 +830,84 @@ abstract class Component extends Element
         } finally {
             self::$framing = false;
         }
+        self::focusFirst();
+    }
+
+    /**
+     * A root whose program focused nothing yet, and whose keys would go to a component that
+     * does not take them (a progress bar, a label), gives the focus to its first component
+     * that takes keys (`canFocus()`), in the order they show (top to bottom, left to right),
+     * once there is one: so the first field of a screen has the focus without a `focus()` call.
+     */
+    private static function focusFirst(): void
+    {
+        foreach (self::$unfocused ?? [] as $root => $_) {
+            if (!$root->mounted || $root->focusRank() > 0) {
+                unset(self::$unfocused[$root]);
+                continue;
+            }
+            // (the keys go to the first window by default: that stands when it takes them)
+            if (self::keyEnd($root->surface)?->canFocus()) {
+                continue;
+            }
+            $first = self::focusables($root->surface)[0] ?? null;
+            if ($first !== null) {
+                unset(self::$unfocused[$root]);
+                $first->focus();
+            }
+        }
+    }
+
+    /**
+     * The components below $surface that take keys themselves (`canFocus()`), enabled, in the
+     * order they show: by their windows top to bottom, left to right, depth first.
+     *
+     * @return list<Component>
+     */
+    private static function focusables(Surface $surface): array
+    {
+        $views = array_filter($surface->viewports(), fn(Viewport $v) => $v->width() > 0 && $v->height() > 0);
+        usort($views, fn(Viewport $a, Viewport $b) => [$a->y(), $a->x()] <=> [$b->y(), $b->x()]);
+        $out = [];
+        foreach ($views as $v) {
+            $c = self::$onSurface[$v->source] ?? null;
+            if ($c !== null && (!$c->mounted || $c->attribute('disabled'))) {
+                continue;
+            }
+            if ($c !== null && $c->canFocus()) {
+                $out[] = $c;
+            } elseif ($c === null && !$v->source->isFocusable()) {
+                continue;
+            }
+            array_push($out, ...self::focusables($v->source));
+        }
+        return $out;
+    }
+
+    /**
+     * Tab or Shift-Tab that nothing bound, at a component with keys of its own: the focus
+     * goes to the next (or previous) such component in the order they show, around; inside the
+     * topmost modal overlay while one is open. False when there is nowhere else to go.
+     */
+    private function walkFocus(bool $backwards): bool
+    {
+        $root = $this->rootComponent();
+        $scope = $root->surface;
+        foreach (array_reverse($root->floating) as $overlay) {
+            if ($overlay->modal) {
+                $scope = $overlay->content->surface;
+                break;
+            }
+        }
+        $all = self::focusables($scope);
+        $n = \count($all);
+        $at = array_search($this, $all, true);
+        if ($n === 0 || ($n === 1 && $at !== false)) {
+            return false;
+        }
+        $next = $at === false ? ($backwards ? $n - 1 : 0) : ($at + ($backwards ? $n - 1 : 1)) % $n;
+        $all[$next]->focus();
+        return true;
     }
 
     private static function renderPasses(): void
@@ -949,6 +1055,12 @@ abstract class Component extends Element
      * box or a dialog around a text field passes it to the field. Override it to decide.
      */
     protected function canFocus(): bool
+    {
+        return $this->ownKeys();
+    }
+
+    /** True if the component has keys of its own: bindings, or an `onKey()`/`onPaste()` of its class. */
+    private function ownKeys(): bool
     {
         static $own = [];
         $class = static::class;
@@ -1216,7 +1328,13 @@ abstract class Component extends Element
             if (!isset(self::$hoverAware[$this]) && $this->wantsPointer()) {
                 $this->followPointer($this->isHovered());
             }
-            $result = $this->render();
+            $reader = self::$reader;
+            self::$reader = $this;
+            try {
+                $result = $this->render();
+            } finally {
+                self::$reader = $reader;
+            }
             // the same tree as the last render's, in the same style and focus: what it laid out stands
             $same = $this->showsAgain($result, $style);
             if ($same) {
@@ -1550,6 +1668,20 @@ abstract class Component extends Element
     }
 
     /**
+     * $text with its markup (`<b>`, `<fg=red>`, `<span class="...">`, see `Markup`) turned into
+     * escape sequences, for text drawn in the style of this component, or of its $part in
+     * $states: how a widget shows labels that take markup. The text ends in that style again.
+     *
+     *     $this->surface->write(Ansi::style($row->text) . $this->markup($label, 'row', 'current'));
+     *
+     * @param string|list<string>|null $part
+     */
+    final protected function markup(string $text, string|array|null $part = null, string ...$states): string
+    {
+        return str_contains($text, '<') ? Markup::toAnsi($text, $this->style($part, ...$states), $this->stylesheet()) : $text;
+    }
+
+    /**
      * Whether the component follows the mouse: it gets every motion of the mouse over it in
      * `onMouse()` (`Mouse::MOVE`, no button held), and its `:hover` state is kept, so it can
      * light up what is under the pointer (a tab, a menu item, a link). By default it does when
@@ -1671,6 +1803,9 @@ abstract class Component extends Element
         if ($this->attribute('disabled')) {
             $states[] = 'disabled';
         }
+        if ($this->mounted) {
+            $states[] = Stylesheet::widthClass($this->surface->root()->cols());     // (sm:, md:, lg:)
+        }
         return [...$states, ...array_keys($this->styleStates)];
     }
 
@@ -1742,6 +1877,11 @@ abstract class Component extends Element
         if ($root->quitKey !== null && (string) $key === $root->quitKey) {
             $root->dispose();       // (Tui::run(): nothing bound the key)
             return true;
+        }
+        $name = (string) $key;
+        if (($name === 'tab' || $name === 'shift+tab') && $mine && $this->ownKeys()) {
+            // (at a component with keys of its own; a Terminal's program keeps its Tab)
+            return $this->walkFocus($name === 'shift+tab');
         }
         return false;
     }

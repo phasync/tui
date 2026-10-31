@@ -306,4 +306,5 @@ it('restores the real terminal and exits non-zero with the message on stderr', f
     'run()' => ['run', 'failed in run()'],
     'go()' => ['go', 'failed in go()'],
     'Tui::run()' => ['tui', 'failed in run()'],
+    'a closure given to Tui::run()' => ['closure', 'failed in the closure'],
 ]);
