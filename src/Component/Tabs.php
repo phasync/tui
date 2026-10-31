@@ -130,12 +130,16 @@ class Tabs extends Component
 
     protected function bindings(): array
     {
-        $keys = [
+        // the bar's keys while the bar has the focus; in the content only the ones that leave
+        // it or switch from anywhere (Left in a tree at a leaf does not change the tab)
+        $keys = $this->inContent() ? [] : [
             'left' => ['previous', 'previous tab'], 'right' => ['next', 'next tab'],
             'home' => 'first', 'end' => 'last',
             'tab' => ['focusContent', 'into the tab'], 'enter' => 'focusContent',
-            'escape' => ['focusBar', 'tab bar'],
             'delete' => 'closeCurrent',
+        ];
+        $keys += [
+            'escape' => ['focusBar', 'tab bar'],
             'ctrl+tab' => ['nextTab', 'next tab', 'first' => true],
             'ctrl+shift+tab' => ['previousTab', 'first' => true],
         ];

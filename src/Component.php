@@ -2374,7 +2374,7 @@ abstract class Component extends Element
         if ($mine && ($this->elementKeys($key) || $this->runBinding($key) || $this->handle(fn() => $this->onKey($key)))) {
             return true;
         }
-        for ($c = $this; $c !== null; $c = $c->parent) {
+        foreach ([$this, ...$this->bubbling()] as $c) {
             // (a parent the key passed on its way down had its `first` bindings asked then;
             // the elements of its tree around this component are inside it: they come first)
             if ($c !== $this && !$c->attribute('disabled') && ((!$c->suspended() && $c->elementKeys($key))
@@ -2400,6 +2400,35 @@ abstract class Component extends Element
             return $this->walkFocus($name === 'shift+tab');
         }
         return false;
+    }
+
+    /**
+     * Where a key this component does not take goes on to, in order: its parent (the owner,
+     * whose render or child() made it) and the parent's parents, and before an owner the
+     * components it is shown in below that owner (a `Tabs` and its pane around a `Tree` the
+     * owner made itself and gave the Tabs as a tab's content). So the keys in force at a
+     * component (and what `Help` lists) do not depend on whether the owner kept it with
+     * child() or made it anew in every render.
+     *
+     * @return list<Component>
+     */
+    private function bubbling(): array
+    {
+        $out = [];
+        for ($c = $this; ($p = $c->parent) !== null; $c = $p) {
+            if ($c->isShownIn($p->surface)) {
+                for ($s = $c->surface->parent(); $s !== null && $s !== $p->surface; $s = $s->parent()) {
+                    $h = self::$onSurface[$s] ?? null;
+                    if ($h !== null && $h->mounted && $h !== $this && !\in_array($h, $out, true)) {
+                        $out[] = $h;
+                    }
+                }
+            }
+            if (!\in_array($p, $out, true)) {
+                $out[] = $p;
+            }
+        }
+        return $out;
     }
 
     /**
@@ -2627,7 +2656,7 @@ abstract class Component extends Element
     {
         $at = $for?->running() ?? $for ?? self::keyEnd($this->surface->root()) ?? $this;
         $out = [];
-        for ($c = $at; $c !== null; $c = $c->parent) {
+        foreach ([$at, ...$at->bubbling()] as $c) {
             if ($c->attribute('disabled') || ($show === 'focused' && $c !== $at) || ($show === 'application' && $c === $at)) {
                 continue;
             }
