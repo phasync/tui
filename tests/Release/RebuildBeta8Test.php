@@ -207,3 +207,12 @@ it('shows after any sequence of changes what a new program of the same elements 
         });
     }
 });
+
+it('moves the cursor with CUP and sets the pen with SGR as before the shortcut for them', function () {
+    foreach (["\e[;5H" => [4, 0], "\e[0;0H" => [0, 0], "\e[99999;99999H" => [19, 4], "\e[2;3;4H" => [2, 1], "\e[3H" => [0, 2], "\e[H" => [0, 0], "\e[?5H" => [7, 3]] as $seq => $at) {
+        $s = vt("\e[4;8H" . $seq);
+        expect(cursorAt($s))->toBe($at, json_encode($seq));
+    }
+    $s = vt("\e[1;31mR\e[;mN\e[0;44mB\e[mP");
+    expect(seen($s))->toBe(seen(vt("\e[1m\e[31mR\e[0mN\e[44mB\e[0mP")));
+});

@@ -76,8 +76,9 @@ between), with `tools/monitor-bench.php`; "back to back" is without the pause.
   sequences that start with ESC and the C0 controls are guarded by it, a well-formed CSI
   sequence is tried first, the C1 forms behind one look at the character), so the end of a
   write no longer tries every kind of sequence. A write of a few sequences costs about a third
-  less (26 to 17.5 µs for a moving bar's write; 6.9 to 3.4 µs for one character). What is
-  parsed and how is unchanged (the grammar is the same language).
+  less (26 to 16 µs for a moving bar's write; 6.9 to 3.5 µs for one character; SGR and
+  cursor positioning without a private marker, intermediates or sub-parameters go straight to
+  their action). What is parsed and how is unchanged (the grammar is the same language).
 - A moving `ProgressBar` whose label keeps its width writes the label over the old one
   instead of erasing to the end of the row first (one sequence less per bar and frame).
 

@@ -498,6 +498,19 @@ final class Emulator
     public function csiSequence(string $seq): void
     {
         $end = \strlen($seq) - 1;
+        $final = $seq[$end];
+        if (($final === 'm' || $final === 'H') && strspn($seq, '0123456789;', 2) === $end - 2) {
+            // (what compositing and widgets send most: SGR and CUP, no marker, no intermediates,
+            // no sub-parameters; the same as dispatchCsi() does with them)
+            $raw = substr($seq, 2, $end - 2);
+            if ($final === 'm') {
+                $this->sgr($raw);
+                return;
+            }
+            $p = explode(';', $raw, 3);
+            $this->cursorPosition(max(1, min((int) $p[0], 65535)), max(1, min((int) ($p[1] ?? 1), 65535)));
+            return;
+        }
         $i = 2;
         $prefix = '';
         if (strspn($seq, '<=>?', 2, 1) === 1) {
