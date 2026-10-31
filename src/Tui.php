@@ -10,7 +10,7 @@ use phasync\Tui\Internal\Live;
  *
  *     $s = new State(['done' => 0]);
  *     fiber\run(function () use ($s) {
- *         fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+ *         Tui::go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { Tui::sleep(0.05); $s->done = $i; } });
  *         Tui::inline(fn() => new Column([
  *             new Text("Working… {$s->done}%"),
  *             new ProgressBar($s->done / 100),
@@ -61,7 +61,8 @@ use phasync\Tui\Internal\Live;
  * `keys:` and to elements, a coroutine started with `Tui::go()`) ends the program: the tree is
  * disposed, the terminal restored, and the exception comes out of the call, as it would
  * without a terminal UI. Start the program's own coroutines with `Tui::go()`, not
- * `fiber\go()` (see `go()`).
+ * `fiber\go()`, and let them wait with `Tui::sleep()`: they stop when the program ends (see
+ * `go()`).
  */
 final class Tui
 {
@@ -206,7 +207,7 @@ final class Tui
      */
     public static function run(Element|\Closure $root, ?string $theme = null, array $keys = []): Component
     {
-        return self::until(self::headlessSize() === null ? new Tty() : null, $root, $theme, $keys);
+        return self::starting(fn() => self::until(self::headlessSize() === null ? new Tty() : null, $root, $theme, $keys));
     }
 
     /**
@@ -223,7 +224,7 @@ final class Tui
      */
     public static function inline(Element|\Closure $root, bool $keep = true, ?string $theme = null, array $keys = []): Component
     {
-        return self::until(self::headlessSize() === null ? Tty::inline(keep: $keep) : null, $root, $theme, $keys, true);
+        return self::starting(fn() => self::until(self::headlessSize() === null ? Tty::inline(keep: $keep) : null, $root, $theme, $keys, true));
     }
 
     /**
@@ -246,8 +247,30 @@ final class Tui
     public static function headless(Element|\Closure $root, int $cols = 80, int $rows = 24, bool $inline = false, ?string $theme = null, ?string $background = 'dark', array $keys = []): FakeTerminal
     {
         $terminal = $inline ? FakeTerminal::inline($cols, $rows, background: $background) : new FakeTerminal($cols, $rows, background: $background);
-        self::start($root, $terminal, $theme, $keys);
+        self::starting(fn() => self::start($root, $terminal, $theme, $keys));
         return $terminal;
+    }
+
+    /**
+     * Run $runner, a runner starting a program; when it fails before the program started (a
+     * wrong theme, a bad `--headless=`, no terminal), the coroutines of go() waiting for that
+     * program end with `Quit` as when it ends, so they do not keep `fiber\run()` waiting.
+     *
+     * @template T
+     * @param \Closure(): T $runner
+     * @return T
+     */
+    private static function starting(\Closure $runner): mixed
+    {
+        try {
+            return $runner();
+        } catch (\Throwable $e) {
+            [$jobs, self::$unclaimed] = [self::$unclaimed, []];
+            foreach ($jobs as $job) {
+                $job->end();
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -259,10 +282,11 @@ final class Tui
     private static function until(?TerminalDevice $device, Element|\Closure $root, ?string $theme, array $keys, bool $inline = false): Component
     {
         return \fiber\run(static function () use ($device, $root, $theme, $keys, $inline): Component {
+            // (this coroutine waits for the program and disposes it whatever happens: it owns it)
             if ($device === null) {
                 [$cols, $rows, $seconds] = self::headlessSize();
                 $terminal = $inline ? FakeTerminal::inline($cols, $rows) : new FakeTerminal($cols, $rows);
-                $app = self::start($root, $terminal, $theme, $keys);
+                $app = Internal\Runtime::owned(fn() => self::start($root, $terminal, $theme, $keys));
                 try {
                     \fiber\sleep($seconds);
                     $terminal->settle();
@@ -274,7 +298,7 @@ final class Tui
                 self::rethrow($app);
                 return $app;
             }
-            $app = self::start($root, $device, $theme, $keys);
+            $app = Internal\Runtime::owned(fn() => self::start($root, $device, $theme, $keys));
             try {
                 $device->wait();
             } finally {
@@ -297,12 +321,14 @@ final class Tui
             return;
         }
         [$e, $root] = self::$failure;
-        $ended = $root?->get();
-        if ($root !== null && $ended !== $app) {
-            if ($ended === null || !$ended->isMounted()) {
-                self::$failure = null;      // (another program's, ended: not this one's)
+        if ($root !== null) {
+            $ended = $root->get();
+            if ($app === null || $ended !== $app) {
+                if ($ended === null || !$ended->isMounted()) {
+                    self::$failure = null;      // (another program's, ended: not this one's)
+                }
+                return;
             }
-            return;
         }
         self::$failure = null;
         throw $e;

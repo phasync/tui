@@ -35,11 +35,10 @@ $screen = fn() => new Column([
 
 $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
 \fiber\run(function () use ($jobs, $s, $log, $screen, $boxes, $theme, $argv) {
-    $running = true;
     foreach ($jobs as $job => $every) {
-        Tui::go(function () use ($job, $every, $s, $log, &$running) {
-            while ($running) {
-                \fiber\sleep($every * (0.5 + mt_rand() / mt_getrandmax()));
+        Tui::go(function () use ($job, $every, $s, $log) {
+            while (true) {      // (Tui::sleep() ends the job when the screen quits)
+                Tui::sleep($every * (0.5 + mt_rand() / mt_getrandmax()));
                 $step = mt_rand(2, 12) / 100;
                 $s->steps = [...$s->steps, $job => [...array_slice($s->steps[$job], -15), $step * 8]];
                 $s->done = [...$s->done, $job => min(1.0, $s->done[$job] + $step)];
@@ -51,9 +50,5 @@ $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
             }
         });
     }
-    try {
-        in_array('--inline', $argv, true) ? Tui::inline($boxes, theme: $theme) : Tui::run($screen, theme: $theme);
-    } finally {
-        $running = false;       // the jobs end with the screen, so fiber\run() returns
-    }
+    in_array('--inline', $argv, true) ? Tui::inline($boxes, theme: $theme) : Tui::run($screen, theme: $theme);
 });

@@ -41,7 +41,7 @@ use phasync\Tui\Component\ProgressBar;
 
 fiber\run(function () {
     $s = new State(['done' => 0]);
-    Tui::go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+    Tui::go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { Tui::sleep(0.05); $s->done = $i; } });
     Tui::inline(fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),
@@ -122,13 +122,28 @@ One dialog at a time per root: opening another while one is open gives the open 
 and returns its awaitable. Without a running program, `Dialog::open()` throws a
 `LogicException`.
 
-**Coroutines.** Start the program's own coroutines with `Tui::go()`: an exception in one ends
-the program at once, the terminal is restored and the exception comes out of `Tui::run()`
-(see "How a program ends"). One started with plain `fiber\go()` is not seen by the library
-(fiber-interop/api has no way to be told of it): its exception waits in `fiber\run()` until
-the screen has ended by itself. The alternative is a class: a component's `$this->go()` is
-contained by its error boundary, so a failure shows in the component's rectangle and the rest
-goes on (see "Errors stay in their rectangle").
+**Coroutines.** Start the program's own coroutines with `Tui::go()` (before `Tui::run()`, or
+from a handler): they belong to the program. An exception in one ends the program at once, the
+terminal is restored and the exception comes out of `Tui::run()` (see "How a program ends").
+And they stop with it: `Tui::sleep($seconds)` sleeps as `fiber\sleep()` does, but throws `Quit`
+once the program has ended (Ctrl-Q, `Tui::quit()`), which ends the coroutine (catch it to clean
+up first), so `fiber\run()` returns when the screen is gone:
+
+```php
+Tui::go(function () use ($s) {
+    while (true) { Tui::sleep(0.1); $s->load = sys_getloadavg()[0]; }
+});
+Tui::run(fn() => new Text("load {$s->load}"));     // Ctrl-Q: the loop ends with the screen
+```
+
+A `fiber\sleep()` cannot be cut short (fiber-interop/api has no cancellation yet): a
+coroutine that sleeps with it runs on after the program, and `fiber\run()` waits for it. A
+coroutine started with plain `fiber\go()` is not the program's: its exception waits in
+`fiber\run()` until the screen has ended by itself, and it is not stopped; end such a loop
+with a flag (`while ($running)`, `$running = false` after `Tui::run()` returns). The
+alternative is a class: a component's `$this->go()` is contained by its error boundary, so a
+failure shows in the component's rectangle and the rest goes on (see "Errors stay in their
+rectangle"), and it ends with the component.
 
 **Kept instances.** A component made once and placed by every render (`$bars[$name] ??= new
 ProgressBar(...)`) keeps its identity wherever the next render places it: its state, its
@@ -242,10 +257,11 @@ quits** when no component on the key's way binds it (a `Help` element lists it a
   does, the program ends with it: the tree is disposed, the terminal restored, and
   `fiber\run()` throws the exception, as it would without a terminal UI. The library watches
   the task that called `start()` (and `TerminalDevice::attach()`) through `fiber\current()`;
-  awaiting that task from inside it needs fiber-interop/api newer than 0.3.1 (main from commit
-  4dc3d41) and, on phasync, fiber-interop/phasync newer than 0.4.1 (main from 8445790); until
-  those are tagged, with older versions nothing watches, and `Tui::run()` (which owns the run
-  closure) or `FakeTerminal::run()` in tests are the way to see the exception. An exception in
+  awaiting that task from inside it needs fiber-interop/api >= 0.3.2 and, on phasync,
+  fiber-interop/phasync >= 0.4.2 (their main branches until those are tagged). With 0.3.1 and
+  0.4.1 nothing can watch it, the program would wait forever, and the library says so in one
+  line on stderr when the program starts; `Tui::run()` (which owns the run closure) or
+  `FakeTerminal::run()` in tests are the way to see the exception there. An exception in
   a coroutine you started yourself with `fiber\go()` is not seen until `fiber\run()` ends: start
   such work with the component's `go()`, whose failure is the component's.
 - **A failing child** is contained to its rectangle (see below); its own children end with it.
@@ -311,6 +327,15 @@ protected function render(): Element
 | `Span(string $text, $class, $style)` | A run of text in another style, inside a `Text`; takes markup. |
 | `Help(?Component $for = null)` | The keys in force for the focused component (or `$for`) and its parents, as "key action" pairs. |
 | any `Component` | Its surface, where it is placed: from `child()`, or `new` (see "Props"). |
+
+**More than fits: a `ScrollView`.** A `Column` (or `Row`) of more than its box holds is cut at
+its end: the rows past the bottom are not shown, and a `Button` or a field among them has no
+room, so it is not in the Tab walk either (Tab cannot reach what nobody sees). Put the list in
+a `ScrollView` when it may be longer than its box (a list of jobs, a long form, anything that
+grows with the data): `new ScrollView(new Column($rows))`. The view shows part of it, scrolls
+with the wheel and the arrow and page keys, and keeps the focus in view: Tab, Shift-Tab, a
+click and `focus()` on a component or an element with `onKey:` out of view scroll it into view,
+also after the user scrolled away from the focused one. See docs/widgets.md, "ScrollView".
 
 **Attributes.** Every element takes `key`, `id`, `class`, `style` (inline style properties),
 `width`, `height`, `disabled`, `selected`, `state` (states of its own for the stylesheet:

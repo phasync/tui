@@ -169,6 +169,10 @@ abstract class Component extends Element
     private static int $treeVersion = 0;
     /** @var array{int, int, bool}|null hasFocus()'s last answer, with the versions it was found at */
     private ?array $focusCache = null;
+    /** @var \WeakReference<Component>|null the running instance a render handed this new one's props to (see running()) */
+    private ?\WeakReference $handedTo = null;
+    /** @var \WeakMap<Component, true>|null the components whose render asked hasFocus(): they render again when it changes */
+    private ?\WeakMap $focusReaders = null;
     /** @var \WeakMap<Surface, array{int, int, array<int, Surface>}>|null per root: the surfaces keys take the way of, with the versions they were found at */
     private static ?\WeakMap $focusPaths = null;
     private bool $rendered = false;
@@ -467,6 +471,9 @@ abstract class Component extends Element
                     $this->guard(fn() => $this->call($callback, $this));
                 }
                 $this->markDirty();
+                foreach ($this->focusReaders ?? [] as $component => $_) {
+                    $component->markDirty();      // (its render asked hasFocus())
+                }
                 // a Help element shows the keys of the focused component
                 foreach (self::$helpShown ?? [] as $component => $_) {
                     $component->markDirty();
@@ -676,6 +683,24 @@ abstract class Component extends Element
     final public function isMounted(): bool
     {
         return $this->mounted;
+    }
+
+    /**
+     * The instance that runs for this one: itself once started; for a new instance made by a
+     * render (`new Editor()` inside a closure or `render()`) that the library matched by its
+     * place (or `key:`) to the instance already running there and handed its props to, that
+     * running instance; null for one that was never placed. A render's new instances are
+     * descriptions: ask the running one what it shows (`$editor->running()?->value()`), or keep
+     * one instance across renders (`$this->editor ??= new Editor()`). `Component::of($surface)`
+     * gives the running component of a surface.
+     */
+    final public function running(): ?Component
+    {
+        if ($this->mounted || $this->stopped !== null) {
+            return $this;
+        }
+        $to = $this->handedTo?->get();
+        return $to?->running();
     }
 
     /**
@@ -1116,12 +1141,25 @@ abstract class Component extends Element
     /**
      * True if keys go to this component (or through it to a descendant): it is on the focus path
      * from the root, also while it is not shown yet (see `focus()`). It reads the very path keys
-     * take, so it is true exactly when the next key would reach the component.
+     * take, so it is true exactly when the next key would reach the component. Asked of a new
+     * instance that a render made and that was matched by its place to the instance running
+     * there (`new Editor()` in a closure's render), it answers for the running one (see
+     * `running()`); in the render that makes it, it is not matched yet (false): ask in a closure
+     * of an element (`new Text(fn() => $field->hasFocus() ? '▸' : ' ')`), which runs after it.
+     * Asked by a render, it subscribes as a `State` read does: that render runs again when the
+     * answer changes.
      */
     final public function hasFocus(): bool
     {
         if (!$this->mounted) {
-            return false;
+            // (a new instance a render handed over: the answer of the one running in its place)
+            $running = $this->running();
+            return $running !== null && $running !== $this && $running->hasFocus();
+        }
+        if (self::$reader !== null && self::$reader !== $this) {
+            // (read by a render, as a State is: that component renders again when the answer changes)
+            $this->focusReaders ??= new \WeakMap();
+            $this->focusReaders[self::$reader] = true;
         }
         // (asked for every element of every render: kept while neither the focus nor the tree changed)
         $focus = Surface::focusVersion();
@@ -1746,6 +1784,7 @@ abstract class Component extends Element
     /** Take the props (public properties) and attributes of $fresh, a new instance of this class. */
     private function receive(Component $fresh): void
     {
+        $fresh->handedTo = \WeakReference::create($this);
         $changed = $this->adoptAttributes($fresh);
         foreach (self::props(static::class) as $name) {
             $value = $fresh->$name;
@@ -2357,7 +2396,7 @@ abstract class Component extends Element
      */
     private function helpFor(?Component $for, string $show = 'all'): array
     {
-        $at = $for ?? self::keyEnd($this->surface->root()) ?? $this;
+        $at = $for?->running() ?? $for ?? self::keyEnd($this->surface->root()) ?? $this;
         $out = [];
         for ($c = $at; $c !== null; $c = $c->parent) {
             if ($c->attribute('disabled') || ($show === 'focused' && $c !== $at) || ($show === 'application' && $c === $at)) {

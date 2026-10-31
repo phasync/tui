@@ -62,11 +62,10 @@ $screen = fn() => new Column([
 
 $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
 \fiber\run(function () use ($jobs, $s, $log, $screen, $boxes, $theme, $argv) {
-    $running = true;
     foreach ($jobs as $job => $every) {
-        Tui::go(function () use ($job, $every, $s, $log, &$running) {
-            while ($running) {
-                \fiber\sleep($every * (0.5 + mt_rand() / mt_getrandmax()));
+        Tui::go(function () use ($job, $every, $s, $log) {
+            while (true) {      // (Tui::sleep() ends the job when the screen quits)
+                Tui::sleep($every * (0.5 + mt_rand() / mt_getrandmax()));
                 $step = mt_rand(2, 12) / 100;
                 $s->steps = [...$s->steps, $job => [...array_slice($s->steps[$job], -15), $step * 8]];
                 $s->done = [...$s->done, $job => min(1.0, $s->done[$job] + $step)];
@@ -78,15 +77,13 @@ $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
             }
         });
     }
-    try {
-        in_array('--inline', $argv, true) ? Tui::inline($boxes, theme: $theme) : Tui::run($screen, theme: $theme);
-    } finally {
-        $running = false;       // the jobs end with the screen, so fiber\run() returns
-    }
+    in_array('--inline', $argv, true) ? Tui::inline($boxes, theme: $theme) : Tui::run($screen, theme: $theme);
 });
 ```
 
-Three jobs run in coroutines and write their progress into a `State`; the screen is closures
+Three jobs run in coroutines of the program (`Tui::go()`, which stop with it: their
+`Tui::sleep()` throws `Quit` once the screen has quit) and write their progress into a
+`State`; the screen is closures
 over that state, so each `ProgressBar` and `Text` is drawn again when what it read changes,
 and nothing else is. The look is utility classes (`grow`, `px-1`, `text-muted`,
 `flex-col md:flex-row`: stacked under 80 columns) on the default theme (rounded borders, one
@@ -104,7 +101,7 @@ use phasync\Tui\Element\{Column, Text};
 
 $s = new State(['done' => 0]);
 fiber\run(function () use ($s) {
-    Tui::go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+    Tui::go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { Tui::sleep(0.05); $s->done = $i; } });
     Tui::inline(fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),
@@ -116,8 +113,9 @@ That is a whole program: a line and a progress bar as a live region under the sh
 counting to 100%. The closure is the screen; it is rendered again whenever a `State` it read
 changes, here from a coroutine. Ctrl-Q quits; `Tui::run()` shows the same screen full screen,
 `Tui::headless()` on an in-memory terminal for tests (`examples/working.php` runs both ways).
-`Tui::go()` is `fiber\go()` that ends the program when the coroutine fails; both must be called
-inside `fiber\run()`, which is why the program is wrapped in one.
+`Tui::go()` is `fiber\go()` for a coroutine of the program: its exception ends the program, and
+it stops with the program when it waits with `Tui::sleep()`; both must be called inside
+`fiber\run()`, which is why the program is wrapped in one.
 
 Such a program takes input without a class too: `keys:` on the runner binds keys to closures
 (`Tui::run($screen, keys: ['ctrl+n' => [fn() => add($s), 'new card']])`), every element takes
@@ -179,11 +177,14 @@ composer require phasync/tui fiber-interop/phasync     # or fiber-interop/revolt
 ```
 
 `fiber-interop/api` is the only runtime dependency; install one adapter to choose the event
-loop. An exception in the code that started a component (the closure given to `fiber\run()`)
-ends the program only with fiber-interop/api newer than 0.3.1 and, on phasync,
-fiber-interop/phasync newer than 0.4.1: until they are tagged, their main branches
-(`composer require fiber-interop/api:0.3.x-dev fiber-interop/phasync:0.4.x-dev`). With the
-tagged versions, run the program with `Tui::run()`, which always sees that exception. Optional: ext-phasync 2.0.7+ (bundled with `phasync/phasync`) captures `echo` of a PHP coroutine
+loop. **Versions:** an exception in the closure given to `fiber\run()` after it started a
+program itself (`Tui::headless()` in a test, `start()`) ends the program only with
+fiber-interop/api >= 0.3.2 and, on phasync, fiber-interop/phasync >= 0.4.2 (the first tags
+with the fix; until they are on Packagist, their main branches:
+`composer require fiber-interop/api:0.3.x-dev fiber-interop/phasync:0.4.x-dev`). With 0.3.1
+and 0.4.1 such a program would wait forever, so the library says so in one line on stderr when
+it starts one; `Tui::run()`, `Tui::inline()` and `Tui::go()` see their failures on every
+version. Optional: ext-phasync 2.0.7+ (bundled with `phasync/phasync`) captures `echo` of a PHP coroutine
 into a window; ext-pcntl gives immediate resizes and terminal restore on SIGTERM.
 
 ## The model
@@ -535,7 +536,11 @@ fiber\run(function () {
 Renders come in the next frame: `settle()` lets the frames that input asked for run (keys
 and output may take a few). `text()` draws what is pending first, renders included, so it reads
 what the next frame shows. Never `usleep()` in a coroutine: it stops the whole program, renders
-included.
+included. A test that fails ends its program and comes out of `fiber\run()` at once with
+fiber-interop/api >= 0.3.2 and fiber-interop/phasync >= 0.4.2; with 0.3.1 and 0.4.1, a test
+whose code throws after `Tui::headless()` waits forever (the library warns of it on stderr when
+the first program starts): wrap the test code in `$terminal->run(fn() => ...)`, which detaches
+on the way out, or install the newer versions.
 
 ## Examples
 

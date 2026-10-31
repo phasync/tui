@@ -470,9 +470,13 @@ mouse button is held on it), `:disabled`.
 
 ## ScrollView
 
-Content taller than its box, scrolling: `new ScrollView(Element $content)` (a prop). The content
+Content taller than its box, scrolling: `new ScrollView(Element $content)` (a prop). Use it for
+anything that may be longer than the room it gets: a `Column` alone is cut at its end, and the
+fields past the cut are out of the Tab walk. The content
 is laid out at the view's width and as high as it needs, behind the view. The focused element
-in it is kept in view (Tab through a long form scrolls along); the wheel scrolls it, and Up/Down,
+in it is kept in view (Tab through a long form scrolls along; so do Shift-Tab, `focus()` on a
+component out of view, and the next Tab after the user scrolled away from the focused field);
+the wheel scrolls it, and Up/Down,
 Page Up/Page Down and Home/End do when nothing in it takes them (at the end they go on, to move
 to the next field). Without a size it is as high as its content, so it only scrolls when its box
 is smaller. `top()`, `scrollTo(int $row)`, `scrollBy(int $rows): bool`. A `Dialog` puts its

@@ -209,6 +209,7 @@ it('changes nothing when the starter returns normally', function () {
 
 it('does without the watcher where the runtime cannot await the starter, and Tui::headless() still ends', function () {
     Runtime::$watching = false;
+    Runtime::$warn = static fn() => null;      // (the warning it gives: tests/Release/RuntimeBeta5Test.php)
     try {
         [$status] = forked(function () {
             fiber\run(function () {
@@ -226,6 +227,7 @@ it('does without the watcher where the runtime cannot await the starter, and Tui
         expect($status)->toBe(3)->and($out)->toContain('in run()');
     } finally {
         Runtime::$watching = null;
+        Runtime::$warn = null;
     }
 });
 

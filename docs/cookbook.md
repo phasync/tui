@@ -11,8 +11,9 @@ callbacks (`onSubmit:`, `onSelect:`, `onFocus:`) change it, and a closure
 builds the screen from it; the screen follows the state by itself (see
 [components.md](components.md), "Reactive"). Utility classes (`grow`, `text-muted`,
 `md:flex-row`, see [styling.md](styling.md)) do the styling, and the default theme the rest.
-A coroutine that should end with the screen checks a flag the program clears when `Tui::run()`
-returns, so `fiber\run()` can return too.
+A coroutine that should end with the screen waits with `Tui::sleep()`, which throws `Quit` once
+the screen has quit (and `Tui::go()` takes that as the coroutine's end), so `fiber\run()`
+returns with the screen.
 
 ## 1. A progress runner
 
@@ -30,7 +31,7 @@ $s = new State(['done' => array_map(fn() => 0.0, $jobs)]);
     foreach ($jobs as $job => $every) {
         Tui::go(function () use ($job, $every, $s) {
             while ($s->done[$job] < 1.0) {
-                \fiber\sleep($every);
+                Tui::sleep($every);
                 $s->done = [...$s->done, $job => min(1.0, $s->done[$job] + 0.05)];
             }
         });
@@ -60,13 +61,12 @@ $show = function () use ($s, $log) {
     $log->setLines(array_values(array_filter($s->lines, fn($l) => $s->filter === '' || stripos($l, $s->filter) !== false)));
 };
 \fiber\run(function () use ($s, $log, $show) {
-    $running = true;
-    Tui::go(function () use ($s, $show, &$running) {
-        for ($i = 1; $running; $i++) {
+    Tui::go(function () use ($s, $show) {
+        for ($i = 1; ; $i++) {      // (until the screen quits: Tui::sleep() then throws Quit)
             $level = ['info', 'info', 'warn', 'error'][$i % 4];
             $s->lines = [...array_slice($s->lines, -999), sprintf('%04d %-5s request %d served', $i, $level, $i * 7)];
             $show();
-            \fiber\sleep(0.05);
+            Tui::sleep(0.05);
         }
     });
     Tui::run(fn() => new Column([
@@ -77,7 +77,6 @@ $show = function () use ($s, $log) {
         new Box($log, fn() => "log <dim>(" . count($s->lines) . " lines)</dim>", class: 'grow'),
         new Help(),
     ]));
-    $running = false;
 });
 ```
 
@@ -262,11 +261,10 @@ $chart = function (int $height) use ($s): string {
     return implode("\n", $rows);
 };
 \fiber\run(function () use ($s, $chart) {
-    $running = true;
-    Tui::go(function () use ($s, &$running) {
-        for ($t = 0; $running; $t++) {
+    Tui::go(function () use ($s) {
+        for ($t = 0; ; $t++) {
             $s->samples = [...array_slice($s->samples, -119), 0.5 + 0.4 * sin($t / 6) * cos($t / 17)];
-            \fiber\sleep(0.1);
+            Tui::sleep(0.1);
         }
     });
     Tui::run(fn() => new Column([
@@ -274,7 +272,6 @@ $chart = function (int $height) use ($s): string {
         new Text(fn() => ($n = count($s->samples)) . ($n === 1 ? ' sample' : ' samples') . ', 10 a second', class: 'text-muted grow'),
         new Help(),
     ]));
-    $running = false;
 });
 ```
 

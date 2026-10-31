@@ -6,7 +6,9 @@ namespace phasync\Tui\Internal;
  * @internal The check that the installed fiber-interop/api has what the library uses, run when a
  * program starts (`Component::start()`, `TerminalDevice::attach()`), so an old version gives a
  * clear message instead of an undefined function deep inside a coroutine; and the watcher that
- * ends a program when the code that started it fails (`watch()`).
+ * ends a program when the code that started it fails (`watch()`), or the warning where the
+ * installed packages cannot (fiber-interop/api 0.3.1 and fiber-interop/phasync 0.4.1, the tags
+ * on Packagist until the fix is tagged).
  */
 final class Runtime
 {
@@ -50,9 +52,36 @@ final class Runtime
      */
     private const CANNOT_AWAIT_STARTER = ['fiber-interop/api' => '0.3.1', 'fiber-interop/phasync' => '0.4.1'];
 
+    /** The first versions that can (see CANNOT_AWAIT_STARTER), for the warning. */
+    private const CAN_AWAIT_STARTER = ['fiber-interop/api' => '0.3.2', 'fiber-interop/phasync' => '0.4.2'];
+
     /** For tests: force whether watch() watches (null: decide from the installed versions). */
     public static ?bool $watching = null;
     private static ?bool $canWatch = null;
+    /** Inside a runner that owns the program it starts (Tui::run(), Tui::inline()): nothing to watch. */
+    private static int $owned = 0;
+    private static bool $warned = false;
+    /** @var (\Closure(string): void)|null for tests: where the warning goes (default: STDERR) */
+    public static ?\Closure $warn = null;
+
+    /**
+     * Run $start as a runner that owns the program it starts: it waits for the program and
+     * ends it when its own code fails (`Tui::run()`), so there is no starter to watch and no
+     * warning to give.
+     *
+     * @template T
+     * @param \Closure(): T $start
+     * @return T
+     */
+    public static function owned(\Closure $start): mixed
+    {
+        self::$owned++;
+        try {
+            return $start();
+        } finally {
+            self::$owned--;
+        }
+    }
 
     /**
      * Run $onFailure when the task calling this ends with an exception, and let the exception
@@ -67,7 +96,11 @@ final class Runtime
     public static function watch(\Closure $onFailure): void
     {
         $starter = \fiber\current();
-        if ($starter === null || !(self::$watching ?? self::$canWatch ??= self::canWatch())) {
+        if ($starter === null || self::$owned > 0) {
+            return;
+        }
+        if (!(self::$watching ?? self::$canWatch ??= self::canWatch())) {
+            self::warnOnce();
             return;
         }
         \fiber\go(static function () use ($starter, $onFailure): void {
@@ -81,6 +114,34 @@ final class Runtime
                 }
             }
         });
+    }
+
+    /**
+     * The installed packages cannot watch the code that started a program: say so, once per
+     * process, on stderr, before the program takes the terminal over. That code failing would
+     * leave `fiber\run()` waiting for the program forever, with nothing on the screen to tell.
+     */
+    private static function warnOnce(): void
+    {
+        if (self::$warned) {
+            return;
+        }
+        self::$warned = true;
+        $installed = [];
+        foreach (array_keys(self::CAN_AWAIT_STARTER) as $package) {
+            if (class_exists(\Composer\InstalledVersions::class) && \Composer\InstalledVersions::isInstalled($package)) {
+                $installed[] = $package . ' ' . \Composer\InstalledVersions::getPrettyVersion($package);
+            }
+        }
+        $needed = array_map(fn(string $package, string $version) => "$package >= $version", array_keys(self::CAN_AWAIT_STARTER), self::CAN_AWAIT_STARTER);
+        $line = 'phasync/tui: with ' . ($installed === [] ? 'the fiber-interop packages' : implode(' and ', $installed))
+            . ' installed, an exception in the fiber\run() closure that started this program cannot end it: fiber\run()'
+            . ' would wait forever (Tui::run(), Tui::inline() and Tui::go() are not affected). Install ' . implode(', ', $needed) . ".\n";
+        if (self::$warn !== null) {
+            (self::$warn)($line);
+        } elseif (\defined('STDERR')) {
+            fwrite(\STDERR, $line);
+        }
     }
 
     private static function canWatch(): bool

@@ -248,6 +248,13 @@ abstract class TerminalDevice
         $this->at = $this->inline ? [-1, 0] : [-1, -1];   // (inline: on the region's top row, the column not known)
         $this->reach = 0;
         $this->printed = [];
+        // the code that attached fails: give the terminal back, so the exception ends fiber\run()
+        // (watched from before the terminal is taken over: a warning that it cannot be is readable)
+        Internal\Runtime::watch(function () use ($root): void {
+            if ($this->root === $root) {
+                $this->detach();
+            }
+        });
         $this->open($this->inline ? self::INLINE_RESTORE : self::RESTORE);
         $this->root = $root;
         self::$devices ??= new \WeakMap();
@@ -273,12 +280,6 @@ abstract class TerminalDevice
         $this->send(($this->inline ? self::INLINE_TAKEOVER : self::TAKEOVER) . ($root->title() !== '' ? Ansi::title($root->title()) : '') . "\e[?u\e[>0q\e]11;?\e\\\e[c");
         go(fn() => $this->loop($this->frames(...)));
         go(fn() => $this->loop($this->inputs(...)));
-        // the code that attached fails: give the terminal back, so the exception ends fiber\run()
-        Internal\Runtime::watch(function () use ($root): void {
-            if ($this->root === $root) {
-                $this->detach();
-            }
-        });
     }
 
     /**
