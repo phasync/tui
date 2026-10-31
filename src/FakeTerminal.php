@@ -59,11 +59,14 @@ final class FakeTerminal extends TerminalDevice
 
     /**
      * A terminal of $cols x $rows (resize it later with `resize()`); with $hyperlinks false,
-     * one that does not show hyperlinks (the device then writes the text of links alone).
+     * one that does not show hyperlinks (the device then writes the text of links alone); with
+     * $colors 256 or 16, one of that many colours (the device then draws truecolour cells in
+     * the nearest colour the terminal has; see `colors()`).
      */
-    public function __construct(int $cols = 80, int $rows = 24, bool $hyperlinks = true)
+    public function __construct(int $cols = 80, int $rows = 24, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR)
     {
         $this->hyperlinks = $hyperlinks;
+        $this->setColors($colors);
         $this->surface = new Surface($cols, $rows);
         $this->idle = new Signal();
         $this->surface->input->pipe(fn(string $bytes) => $this->receive($bytes, true));
@@ -77,9 +80,9 @@ final class FakeTerminal extends TerminalDevice
      * its normal screen, the root's scrollback going into its own (see `TerminalDevice`). With
      * $keep false, detaching erases the region instead of leaving the last frame.
      */
-    public static function inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true): self
+    public static function inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR): self
     {
-        $terminal = new self($cols, $rows, $hyperlinks);
+        $terminal = new self($cols, $rows, $hyperlinks, $colors);
         $terminal->useInline($keep);
         return $terminal;
     }

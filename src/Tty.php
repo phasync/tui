@@ -52,6 +52,26 @@ final class Tty extends TerminalDevice
         $this->in = $in ?? \STDIN;
         $this->out = $out ?? \STDOUT;
         $this->hyperlinks = self::hyperlinksFromEnvironment(getenv());
+        $this->setColors(self::colorsFromEnvironment(getenv()));
+    }
+
+    /**
+     * How many colours a terminal shows, from its environment: truecolour when `COLORTERM` is
+     * `truecolor` or `24bit` (or the terminal is one known to have it), 256 when `TERM` says
+     * `256color`, else 16. `setColors()` changes it for a terminal that says it wrong.
+     *
+     * @param array<string, string> $env
+     */
+    public static function colorsFromEnvironment(array $env): int
+    {
+        $term = $env['TERM'] ?? '';
+        if (\in_array(strtolower($env['COLORTERM'] ?? ''), ['truecolor', '24bit'], true)
+            || \in_array($env['TERM_PROGRAM'] ?? '', ['iTerm.app', 'WezTerm', 'vscode', 'ghostty'], true)
+            || isset($env['KITTY_WINDOW_ID']) || isset($env['WT_SESSION']) || str_contains($term, 'direct')
+            || \in_array($term, ['xterm-kitty', 'foot', 'wezterm', 'xterm-ghostty', 'alacritty'], true)) {
+            return Color::DEPTH_TRUECOLOR;
+        }
+        return str_contains($term, '256') ? Color::DEPTH_256 : Color::DEPTH_16;
     }
 
     /**

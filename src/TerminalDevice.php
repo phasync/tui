@@ -41,7 +41,10 @@ use function fiber\sleep;
  *   mode 1003), bracketed paste and focus reporting on, and the kitty keyboard protocol
  *   (disambiguated keys) pushed when the terminal answers its query; `detach()` undoes all of it;
  * - writes the hyperlinks of the cells (OSC 8) when the terminal supports them
- *   (`supportsHyperlinks()`), else the text alone.
+ *   (`supportsHyperlinks()`), else the text alone;
+ * - writes colours the terminal has: on a terminal of 256 or 16 colours (`colors()`), a
+ *   truecolour cell (a Tailwind colour, `#ff5500`) is drawn in the nearest colour it has
+ *   (`Color::nearest()`), in this one place, so the cells keep the colours the program chose.
  *
  * **Inline mode** (`Tty::inline()`, `FakeTerminal::inline()`): instead of taking the screen
  * over, the root shows as a live region at the bottom of the terminal's normal screen, under
@@ -121,6 +124,10 @@ abstract class TerminalDevice
      * environment) knows it, null to decide from the terminal's XTVERSION answer.
      */
     protected ?bool $hyperlinks = null;
+    /** How many colours the terminal shows (`Color::DEPTH_16`, `DEPTH_256`, `DEPTH_TRUECOLOR`); set by subclasses. */
+    protected int $colors = Color::DEPTH_TRUECOLOR;
+    /** @var array<int, string> SGR for each style as this terminal shows it, by style (styles are interned) */
+    private array $sgr = [];
     /** Inline mode (see the class description), and whether detaching leaves the last frame. */
     private bool $inline = false;
     private bool $keep = true;
@@ -348,7 +355,7 @@ abstract class TerminalDevice
             if ($this->inline) {
                 $this->printed[] = [$chars, $styles];
             } else {
-                $this->held[] = self::rowText($chars, $styles) . "\e[0m\r\n";
+                $this->held[] = $this->rowText($chars, $styles) . "\e[0m\r\n";
             }
         }
         $this->damage();
@@ -360,7 +367,7 @@ abstract class TerminalDevice
      * @param list<string> $chars
      * @param list<Style>  $styles
      */
-    private static function rowText(array $chars, array $styles): string
+    private function rowText(array $chars, array $styles): string
     {
         $plain = Style::plain();
         $end = \count($chars);
@@ -371,7 +378,7 @@ abstract class TerminalDevice
         $pen = $plain;
         for ($i = 0; $i < $end; $i++) {
             if ($styles[$i] !== $pen) {
-                $out .= Ansi::style($styles[$i]);
+                $out .= $this->sgr($styles[$i]);
                 $pen = $styles[$i];
             }
             $out .= $chars[$i];
@@ -390,6 +397,46 @@ abstract class TerminalDevice
     public function supportsHyperlinks(): bool
     {
         return $this->hyperlinks ?? preg_match(self::HYPERLINK_TERMINALS, $this->terminalName) === 1;
+    }
+
+    /**
+     * How many colours the terminal shows: `Color::DEPTH_TRUECOLOR`, `Color::DEPTH_256` or
+     * `Color::DEPTH_16`. Colours a cell has that the terminal has not are drawn as the nearest
+     * one it has. `Tty` knows it from `COLORTERM` and `TERM`; `FakeTerminal` is told (default
+     * truecolour).
+     */
+    public function colors(): int
+    {
+        return $this->colors;
+    }
+
+    /** Draw for a terminal of $colors colours from now on (see `colors()`): for a terminal the environment says wrong. */
+    public function setColors(int $colors): void
+    {
+        $colors = $colors >= Color::DEPTH_TRUECOLOR ? Color::DEPTH_TRUECOLOR : ($colors >= 256 ? 256 : 16);
+        if ($colors !== $this->colors) {
+            $this->colors = $colors;
+            $this->sgr = [];
+            $this->redraw = true;
+            if ($this->root !== null) {
+                $this->damage();
+            }
+        }
+    }
+
+    /** SGR for $style in the colours this terminal has. */
+    private function sgr(Style $style): string
+    {
+        if ($this->colors >= Color::DEPTH_TRUECOLOR) {
+            return Ansi::style($style);
+        }
+        $id = spl_object_id($style);
+        if (!isset($this->sgr[$id])) {
+            $fg = Color::nearest($style->fg, $this->colors);
+            $bg = Color::nearest($style->bg, $this->colors);
+            $this->sgr[$id] = Ansi::style($fg === $style->fg && $bg === $style->bg ? $style : Style::of($fg, $bg, $style->attrs));
+        }
+        return $this->sgr[$id];
     }
 
     /** The name the terminal gave when asked (XTVERSION) at `attach()`, such as `kitty(0.36.4)`; '' when it did not answer. */
@@ -702,7 +749,7 @@ abstract class TerminalDevice
                 }
                 $style = $styles[$i] ?? $plain;
                 if ($style !== $this->pen) {
-                    $out .= Ansi::style($style);
+                    $out .= $this->sgr($style);
                     $this->pen = $style;
                     if ($links && [$style->link, $style->linkId] !== $this->link) {
                         $this->link = [$style->link, $style->linkId];
