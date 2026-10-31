@@ -88,12 +88,12 @@ final class Tui
      * program (the one running, or the next one to start when none runs yet: start your jobs,
      * then call `Tui::run()`):
      *
-     * - **It stops when the program ends.** Wait in it with `Tui::sleep()`: once the program has
-     *   ended (Ctrl-Q, `Tui::quit()`), the sleep throws `Quit` at once, which ends the coroutine
-     *   (or is caught, to clean up). So `fiber\run()` returns when the screen is gone, without a
-     *   flag of yours. (`fiber\sleep()` cannot be cut short: fiber-interop/api has no
-     *   cancellation yet. A coroutine that waits with it runs on until it returns, and
-     *   `fiber\run()` waits for it.)
+     * - **It stops when the program ends.** Once the program has ended (Ctrl-Q, `Tui::quit()`),
+     *   the coroutine is cancelled with `Quit` as the reason: the wait it is in throws it at once
+     *   (`Tui::sleep()`, `fiber\sleep()`, an await, a stream), and so does every later one,
+     *   which ends the coroutine (or is caught, to clean up without waiting). So `fiber\run()`
+     *   returns when the screen is gone, without a flag of yours. (On a runtime that cannot
+     *   cancel, only `Tui::sleep()` throws it: wait with that one.)
      * - **Its exception ends the program** at once: the screen is disposed, the terminal
      *   restored, and the exception comes out of `Tui::run()` (and so out of your
      *   `fiber\run()`), readable on the restored terminal.
@@ -122,7 +122,7 @@ final class Tui
             self::$unclaimed[] = $job;
         }
         self::$jobs ??= new \WeakMap();
-        \fiber\go(static function () use ($task, $job): void {
+        $job->task = \fiber\go(static function () use ($task, $job): void {
             // which job Tui::sleep() is asked from: known by the task's own fiber\current()
             // (on a runtime that tells it only after the task's first suspension, after one)
             if (\fiber\current() === null) {
@@ -143,13 +143,14 @@ final class Tui
                 throw $e;
             }
         });
+        $job->cancel();     // (its program ended before go() returned)
     }
 
     /**
      * Sleep $seconds, as `fiber\sleep()` does, but end at once when the program ends. In a
-     * coroutine started with `Tui::go()` it ends with a `Quit` exception, which `Tui::go()`
-     * takes as the coroutine's end, so the coroutine stops with its program (see there); one
-     * whose program has ended gets `Quit` from every call. Elsewhere (the code that started a
+     * coroutine started with `Tui::go()` it ends with a `Quit` exception (the coroutine is
+     * cancelled with it), which `Tui::go()` takes as the coroutine's end, so the coroutine stops
+     * with its program (see there); one whose program has ended gets `Quit` from every call. Elsewhere (the code that started a
      * `Tui::headless()` program, a handler, a coroutine of `fiber\go()`), where nothing would
      * take the exception, it returns early when the program running at the call ends during
      * the sleep, and sleeps plainly when none runs.
@@ -182,6 +183,13 @@ final class Tui
         }
     }
 
+    /** True if the code running now is the coroutine of $job. */
+    private static function isCurrent(Internal\Job $job): bool
+    {
+        $me = \fiber\current();
+        return $me !== null && (self::$jobs[$me] ?? null) === $job;
+    }
+
     /** $job belongs to the program $root: it ends when the root is disposed. */
     private static function claim(Internal\Job $job, Component $root): void
     {
@@ -190,7 +198,7 @@ final class Tui
             $job->end();
             return;
         }
-        $root->stopped()->then(static fn() => $job->end());
+        $root->stopped()->then(static fn() => $job->end(self::isCurrent($job)));
     }
 
     /**
@@ -297,7 +305,7 @@ final class Tui
         } catch (\Throwable $e) {
             [$jobs, self::$unclaimed] = [self::$unclaimed, []];
             foreach ($jobs as $job) {
-                $job->end();
+                $job->end(self::isCurrent($job));
             }
             throw $e;
         }

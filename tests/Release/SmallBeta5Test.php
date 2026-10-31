@@ -50,7 +50,12 @@ it('throws Quit from every Tui::sleep() of a coroutine whose program has ended',
         $t = Tui::headless(new Text('x'), 10, 1);
         $calls = [];
         Tui::go(function () use (&$calls) {
-            fiber\sleep(0.1);         // (a sleep that cannot be cut short: the program ends meanwhile)
+            try {
+                fiber\sleep(0.1);     // (since 0.0.3-beta8 cut short too: the coroutine is cancelled with the Quit)
+                $calls[] = 'slept';
+            } catch (Quit $e) {
+                $calls[] = 'fiber\sleep: ' . $e->getMessage();
+            }
             foreach ([0.0, 5.0] as $s) {
                 try {
                     Tui::sleep($s);
@@ -62,7 +67,7 @@ it('throws Quit from every Tui::sleep() of a coroutine whose program has ended',
         });
         Tui::quit();
         fiber\sleep(0.2);
-        expect($calls)->toBe(['The program has ended', 'The program has ended']);
+        expect($calls)->toBe(['fiber\sleep: The program has ended', 'The program has ended', 'The program has ended']);
     });
 });
 

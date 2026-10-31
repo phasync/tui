@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "ad2a01886aa60def60e3d9b0eda141ab",
+    "content-hash": "035f60308adc90f06a7a2fb9a5ab458d",
     "packages": [
         {
             "name": "fiber-interop/api",
-            "version": "dev-main",
+            "version": "v0.3.2",
             "source": {
                 "type": "git",
                 "url": "https://github.com/fiber-interop/api.git",
-                "reference": "4dc3d41070ec124ad0ad75c598ad76052a03b7d5"
+                "reference": "47e4a06db26a0a45819fd5f7c8a78c7a3ad4f560"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/fiber-interop/api/zipball/4dc3d41070ec124ad0ad75c598ad76052a03b7d5",
-                "reference": "4dc3d41070ec124ad0ad75c598ad76052a03b7d5",
+                "url": "https://api.github.com/repos/fiber-interop/api/zipball/47e4a06db26a0a45819fd5f7c8a78c7a3ad4f560",
+                "reference": "47e4a06db26a0a45819fd5f7c8a78c7a3ad4f560",
                 "shasum": ""
             },
             "require": {
@@ -27,7 +27,6 @@
             "require-dev": {
                 "phpunit/phpunit": "^10.5 || ^11"
             },
-            "default-branch": true,
             "bin": [
                 "bin/fiber-interop-conformance",
                 "bin/fiber-interop-stress"
@@ -53,9 +52,9 @@
             "description": "One surface for fiber-based concurrency: go, await, sleep, readable, writable on phasync, Revolt, AMPHP and ReactPHP.",
             "support": {
                 "issues": "https://github.com/fiber-interop/api/issues",
-                "source": "https://github.com/fiber-interop/api/tree/main"
+                "source": "https://github.com/fiber-interop/api/tree/v0.3.2"
             },
-            "time": "2026-10-31T01:32:37+00:00"
+            "time": "2026-10-31T14:06:21+00:00"
         },
         {
             "name": "fiber-interop/scope",
@@ -481,16 +480,16 @@
         },
         {
             "name": "fiber-interop/phasync",
-            "version": "dev-main",
+            "version": "v0.4.2",
             "source": {
                 "type": "git",
                 "url": "https://github.com/fiber-interop/phasync.git",
-                "reference": "8445790287397bb0387fac125db8f8a3812e549a"
+                "reference": "84ac9c1473a13f579a9d86c34c5827fb9d14cc10"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/fiber-interop/phasync/zipball/8445790287397bb0387fac125db8f8a3812e549a",
-                "reference": "8445790287397bb0387fac125db8f8a3812e549a",
+                "url": "https://api.github.com/repos/fiber-interop/phasync/zipball/84ac9c1473a13f579a9d86c34c5827fb9d14cc10",
+                "reference": "84ac9c1473a13f579a9d86c34c5827fb9d14cc10",
                 "shasum": ""
             },
             "require": {
@@ -502,7 +501,6 @@
             "require-dev": {
                 "phpunit/phpunit": "^10.5 || ^11"
             },
-            "default-branch": true,
             "type": "library",
             "extra": {
                 "branch-alias": {
@@ -524,9 +522,9 @@
             "description": "fiber-interop/api adapter for the phasync event loop.",
             "support": {
                 "issues": "https://github.com/fiber-interop/phasync/issues",
-                "source": "https://github.com/fiber-interop/phasync/tree/main"
+                "source": "https://github.com/fiber-interop/phasync/tree/v0.4.2"
             },
-            "time": "2026-10-31T01:32:52+00:00"
+            "time": "2026-10-31T14:11:58+00:00"
         },
         {
             "name": "fidry/cpu-core-counter",
@@ -4763,9 +4761,7 @@
     "aliases": [],
     "minimum-stability": "dev",
     "stability-flags": {
-        "charm/parsing": 20,
-        "fiber-interop/api": 20,
-        "fiber-interop/phasync": 20
+        "charm/parsing": 20
     },
     "prefer-stable": true,
     "prefer-lowest": false,

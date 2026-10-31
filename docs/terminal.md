@@ -209,12 +209,9 @@ And this is what ends them:
   `attach()` or `start()`, or the coroutine that called them does): the device detaches by
   itself, so the terminal is restored, the tree is disposed, and `fiber\run()` throws the
   exception, which PHP then prints. The device watches the task that called `attach()`
-  through `fiber\current()`; that needs fiber-interop/api >= 0.3.2 and, on phasync,
-  fiber-interop/phasync >= 0.4.2 (their main branches until those are tagged). With 0.3.1 and
-  0.4.1 nothing can watch it and the program would wait forever, so the device prints one line
-  on stderr when it is attached (once per process), naming the versions installed and needed.
-  `Tui::run()` and `Tui::inline()` own their run and always see the exception (and give no
-  warning).
+  through `fiber\current()` (fiber-interop/api >= 0.3.2 and, on phasync,
+  fiber-interop/phasync >= 0.4.2, which the library requires). `Tui::run()` and
+  `Tui::inline()` own their run and see the exception themselves.
 - **A failure nothing contains** that escapes the device's own work (the dispatch of a key to
   a bare surface's listener, its frame or input loop) ends the program the same way: the
   device detaches and the exception goes on to `fiber\run()` (or to the `press()` of a test).
@@ -266,14 +263,11 @@ once. Start coroutines of test code with `Tui::go()`, not `fiber\go()`: an excep
 plain `fiber\go()` coroutine is kept by `fiber\run()` until everything else has ended, which a
 program still on its terminal never does (fiber-interop/api has no way to learn of it sooner).
 
-**Versions.** Ending the program when the test code itself throws needs fiber-interop/api
->= 0.3.2 and fiber-interop/phasync >= 0.4.2 (until those tags exist, their main branches:
-`composer require --dev fiber-interop/api:0.3.x-dev fiber-interop/phasync:0.4.x-dev`). With
-0.3.1 and 0.4.1, the tags before the fix, such a test waits forever: the library prints one
-line on stderr when the first program starts, naming the installed and the needed versions.
-There, run the test code in `$terminal->run(fn(FakeTerminal $t) => ...)`, which detaches on
-the way out; failures the program owns (its root closure, a `Tui::go()` coroutine, a handler)
-end it on every version.
+**When the test code throws.** A test whose own code throws after `Tui::headless()` ends its
+program, and the exception comes out of `fiber\run()` (the library requires fiber-interop/api
+>= 0.3.2 and, on phasync, fiber-interop/phasync >= 0.4.2, which can await the test's task from
+a task started inside it). `$terminal->run(fn(FakeTerminal $t) => ...)` does the same and
+detaches on the way out.
 
 A device whose terminal is itself a `Surface` (`$terminal->surface`): the device's output is
 parsed by the same emulator, which also answers the device's queries. So in a headless program

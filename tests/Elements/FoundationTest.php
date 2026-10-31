@@ -25,9 +25,9 @@ it('clears the screen and homes the cursor with clearHome()', function () {
 });
 
 it('refuses to start on a fiber-interop/api older than it needs, with what to do', function () {
-    expect(fn() => Runtime::check('v0.3.0'))->toThrow(RuntimeException::class, 'needs fiber-interop/api 0.3.1 or later, but v0.3.0 is installed')
-        ->and(fn() => Runtime::check('0.2.9'))->toThrow(RuntimeException::class, 'composer require fiber-interop/api:^0.3.1');
-    Runtime::check('0.3.1');
+    expect(fn() => Runtime::check('v0.3.1'))->toThrow(RuntimeException::class, 'needs fiber-interop/api 0.3.2 or later, but v0.3.1 is installed')
+        ->and(fn() => Runtime::check('0.2.9'))->toThrow(RuntimeException::class, 'composer require fiber-interop/api:^0.3.2');
+    Runtime::check('0.3.2');
     Runtime::check('dev-main');         // (a branch: the functions decide)
     Runtime::check();
     expect(true)->toBeTrue();

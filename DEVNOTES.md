@@ -45,10 +45,19 @@ README.md and docs/.
       "elsewhere: Quit". Now Tui::sleep() throws Quit only in a Tui::go() coroutine (where
       Tui::go() takes it) and returns early elsewhere; tests/Release/QuitBeta8Test.php
       (headless, headless inline, Tui::inline() in a pty)
-- [x] 3. small: Confirm binds the first letters of its labels (y/n); the version warning was
-      one line once per process already (RuntimeBeta5Test); cookbook recipe 11; fiber-interop
-      0.3.2/0.4.2 are not on Packagist (2026-10-31: 0.3.1/0.4.1 and dev only): pins, warning
-      and Quit stay
+- [x] 3. small: Confirm binds the first letters of its labels (y/n); cookbook recipe 11;
+      fiber-interop api v0.3.2 and phasync v0.4.2 were tagged by continuation 2 (2026-10-31):
+      composer.json requires api ^0.3.2, require-dev phasync ^0.4.2, conflict api <0.3.2 and
+      phasync <0.4.2; the dev pins, Runtime's warning (CANNOT_AWAIT_STARTER, canWatch,
+      warnOnce, $watching, $warn) and the tests of it are gone (RuntimeBeta5Test now checks the
+      exact shape ends with its exception and no warning); Runtime::REQUIRED 0.3.2 and check()
+      wants fiber\cancel. Tui::go() keeps what fiber\go() returned in its Job (only to pass to
+      fiber\cancel(), never compared); Job::end() cancels it with a new Quit (Quit implements
+      fiber\CancelledException), except the job that is the current task (Tui::isCurrent() by
+      the jobs map keyed by fiber\current()): cancelling the task that called Tui::quit() cut
+      the waits of dispose() short, and cancelling a job that failed made the adapter take its
+      exception for the cancellation (exit 0 instead of the error). An adapter without
+      cancellation (NotSupportedException): the Signal path of Tui::sleep() as before.
 
 ## Design decisions (0.0.3-beta8, continuation 2)
 

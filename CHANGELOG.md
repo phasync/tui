@@ -99,10 +99,22 @@ between), with `tools/monitor-bench.php`; "back to back" is without the pause.
 - The cookbook has a recipe "Rows that keep their widgets": per-row component instances kept
   across renders with `??=`, and `key:` on the rows, so a row keeps its widgets when the rows
   are reordered.
-- The fiber-interop version warning was already one line, once per process, on stderr; it
-  stays until fiber-interop/api 0.3.2 and fiber-interop/phasync 0.4.2 can be required. They are
-  not on Packagist yet, so the dev pins stay and `Tui::sleep()` still ends jobs with `Quit`
-  rather than `fiber\cancel()`.
+- fiber-interop/api 0.3.2 and fiber-interop/phasync 0.4.2 are on Packagist: the library
+  requires fiber-interop/api `^0.3.2` and conflicts with fiber-interop/api before 0.3.2 and
+  fiber-interop/phasync before 0.4.2 (`composer update` takes the tags; the dev branches are
+  no longer needed). So the code that started a program can always be watched, and the line
+  on stderr ("phasync/tui: with fiber-interop/api ... an exception in the fiber\run() closure
+  ... cannot end it") is gone: a test whose code throws after `Tui::headless()` ends with its
+  exception.
+- When a program ends, its `Tui::go()` coroutines are cancelled (`fiber\cancel()`) with
+  `Quit` as the reason. A coroutine that waited in `fiber\sleep()`, an `fiber\await()` or a
+  stream used to run on until that wait ended, and `fiber\run()` waited for it; now that wait
+  throws `Quit` at once, as `Tui::sleep()` does. The cancellation is sticky: after catching
+  `Quit`, every further wait in that coroutine throws it again, so clean up without waiting.
+  `Quit` implements `fiber\CancelledException`. The coroutine that ended the program
+  (`Tui::quit()` in it, or its exception) is not cancelled: it goes on to its next
+  `Tui::sleep()`. On an adapter that cannot cancel (`fiber\NotSupportedException`), only
+  `Tui::sleep()` throws `Quit`, as before.
 
 ## 0.0.3-beta7 (2026-11-01)
 

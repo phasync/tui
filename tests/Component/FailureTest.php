@@ -10,7 +10,6 @@ use phasync\Tui\Component;
 use phasync\Tui\Element;
 use phasync\Tui\Element\Text;
 use phasync\Tui\FakeTerminal;
-use phasync\Tui\Internal\Runtime;
 use phasync\Tui\Pty;
 use phasync\Tui\Surface;
 use phasync\Tui\Tui;
@@ -205,30 +204,6 @@ it('changes nothing when the starter returns normally', function () {
         expect($t->isAttached())->toBeTrue()->and($app->isMounted())->toBeTrue();
         $app->dispose();
     });
-});
-
-it('does without the watcher where the runtime cannot await the starter, and Tui::headless() still ends', function () {
-    Runtime::$watching = false;
-    Runtime::$warn = static fn() => null;      // (the warning it gives: tests/Release/RuntimeBeta5Test.php)
-    try {
-        [$status] = forked(function () {
-            fiber\run(function () {
-                (new FailingApp())->start(new FakeTerminal(30, 5));
-                throw new LogicException('hangs without the watcher');
-            });
-        }, 0.5);
-        expect($status)->toBe(-1);      // the documented limit: run() waits for the program
-        [$status, $out] = forked(function () {
-            fiber\run(function () {
-                $t = Tui::headless(new FailingApp('run'), 30, 5);
-                $t->settle();
-            });
-        });
-        expect($status)->toBe(3)->and($out)->toContain('in run()');
-    } finally {
-        Runtime::$watching = null;
-        Runtime::$warn = null;
-    }
 });
 
 it('quits a Tui program with ctrl+q when nothing binds it, and Help lists it', function () {

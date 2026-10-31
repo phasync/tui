@@ -6,6 +6,7 @@
  */
 
 use phasync\Tui\Element\Text;
+use phasync\Tui\Quit;
 use phasync\Tui\Tui;
 
 it('ends every Tui::go() job quietly when one of them quits, headless', function () {
@@ -81,4 +82,50 @@ it('ends the same program quietly with Tui::inline() on a terminal (a pty)', fun
     } finally {
         @unlink($file);
     }
+});
+
+it('cancels a Tui::go() coroutine with Quit wherever it waits when the program quits', function () {
+    $got = [];
+    $start = microtime(true);
+    fiber\run(function () use (&$got) {
+        $t = Tui::headless(new Text('x'), 10, 1);
+        Tui::go(function () use (&$got) {
+            try {
+                fiber\sleep(30);
+            } catch (Quit $quit) {
+                $got[] = 'fiber\sleep: ' . $quit->getMessage();
+            }
+        });
+        Tui::go(function () use (&$got) {
+            try {
+                fiber\await(new fiber\Deferred());
+            } catch (Quit) {
+                $got[] = 'await';
+            }
+        });
+        Tui::go(function () use (&$got) {
+            try {
+                Tui::sleep(30);
+            } finally {
+                $got[] = 'Tui::sleep';
+            }
+        });
+        Tui::go(function () use (&$got) {
+            try {
+                Tui::sleep(30);
+            } catch (Quit) {
+                try {
+                    fiber\sleep(0.01);      // (cancelled: every later wait throws the Quit again)
+                } catch (Quit) {
+                    $got[] = 'again';
+                }
+            }
+        });
+        fiber\sleep(0.05);
+        $t->press('ctrl+q');
+    });
+    sort($got);
+    expect($got)->toBe(['Tui::sleep', 'again', 'await', 'fiber\sleep: The program has ended'])
+        ->and(microtime(true) - $start)->toBeLessThan(5.0)
+        ->and(new Quit())->toBeInstanceOf(fiber\CancelledException::class);
 });

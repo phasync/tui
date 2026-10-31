@@ -81,8 +81,8 @@ $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
 });
 ```
 
-Three jobs run in coroutines of the program (`Tui::go()`, which stop with it: their
-`Tui::sleep()` throws `Quit` once the screen has quit) and write their progress into a
+Three jobs run in coroutines of the program (`Tui::go()`, which stop with it: once the screen
+has quit, they are cancelled with `Quit`, which their `Tui::sleep()` throws) and write their progress into a
 `State`; the screen is closures
 over that state, so each `ProgressBar` and `Text` is drawn again when what it read changes,
 and nothing else is. The look is utility classes (`grow`, `px-1`, `text-muted`,
@@ -178,15 +178,9 @@ runtime: phasync, Revolt/AMPHP, ReactPHP.
 composer require phasync/tui fiber-interop/phasync     # or fiber-interop/revolt, /amp, /react
 ```
 
-`fiber-interop/api` is the only runtime dependency; install one adapter to choose the event
-loop. **Versions:** an exception in the closure given to `fiber\run()` after it started a
-program itself (`Tui::headless()` in a test, `start()`) ends the program only with
-fiber-interop/api >= 0.3.2 and, on phasync, fiber-interop/phasync >= 0.4.2 (the first tags
-with the fix; until they are on Packagist, their main branches:
-`composer require fiber-interop/api:0.3.x-dev fiber-interop/phasync:0.4.x-dev`). With 0.3.1
-and 0.4.1 such a program would wait forever, so the library says so in one line on stderr when
-it starts one; `Tui::run()`, `Tui::inline()` and `Tui::go()` see their failures on every
-version. Optional: ext-phasync 2.0.7+ (bundled with `phasync/phasync`) captures `echo` of a PHP coroutine
+`fiber-interop/api` (0.3.2 or later) is the only runtime dependency; install one adapter to
+choose the event loop (on phasync, fiber-interop/phasync 0.4.2 or later: the library conflicts
+with older ones, which cannot end a program whose starting code threw). Optional: ext-phasync 2.0.7+ (bundled with `phasync/phasync`) captures `echo` of a PHP coroutine
 into a window; ext-pcntl gives immediate resizes and terminal restore on SIGTERM.
 
 ## The model
@@ -539,11 +533,7 @@ fiber\run(function () {
 Renders come in the next frame: `settle()` lets the frames that input asked for run (keys
 and output may take a few). `text()` draws what is pending first, renders included, so it reads
 what the next frame shows. Never `usleep()` in a coroutine: it stops the whole program, renders
-included. A test that fails ends its program and comes out of `fiber\run()` at once with
-fiber-interop/api >= 0.3.2 and fiber-interop/phasync >= 0.4.2; with 0.3.1 and 0.4.1, a test
-whose code throws after `Tui::headless()` waits forever (the library warns of it on stderr when
-the first program starts): wrap the test code in `$terminal->run(fn() => ...)`, which detaches
-on the way out, or install the newer versions.
+included. A test that fails ends its program and comes out of `fiber\run()` at once.
 
 ## Examples
 

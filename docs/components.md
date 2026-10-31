@@ -136,10 +136,12 @@ and returns its awaitable. Without a running program, `Dialog::open()` throws a
 **Coroutines.** Start the program's own coroutines with `Tui::go()` (before `Tui::run()`, or
 from a handler): they belong to the program. An exception in one ends the program at once, the
 terminal is restored and the exception comes out of `Tui::run()` (see "How a program ends").
-And they stop with it: `Tui::sleep($seconds)` sleeps as `fiber\sleep()` does, but throws `Quit`
-once the program has ended (Ctrl-Q, `Tui::quit()`, a `Tui::go()` coroutine calling
-`Tui::quit()`), which ends the coroutine quietly under every runner, `Tui::headless()`
-included (catch it to clean up first), so `fiber\run()` returns when the screen is gone.
+And they stop with it: once the program has ended (Ctrl-Q, `Tui::quit()`, a `Tui::go()`
+coroutine calling `Tui::quit()`), each is cancelled with `Quit`: `Tui::sleep($seconds)`, which
+sleeps as `fiber\sleep()` does, throws it, and so does any other wait the coroutine is in or
+comes to; that ends the coroutine quietly under every runner, `Tui::headless()` included (catch
+it to clean up first), so `fiber\run()` returns when the screen is gone. (The coroutine that
+quit goes on until its next `Tui::sleep()`.)
 Outside a `Tui::go()` coroutine (the code that started a headless program, a handler, a
 `fiber\go()` coroutine) `Tui::sleep()` returns early when the program ends instead, since
 nothing there would take the exception:
@@ -151,9 +153,11 @@ Tui::go(function () use ($s) {
 Tui::run(fn() => new Text("load {$s->load}"));     // Ctrl-Q: the loop ends with the screen
 ```
 
-A `fiber\sleep()` cannot be cut short (fiber-interop/api has no cancellation yet): a
-coroutine that sleeps with it runs on after the program, and `fiber\run()` waits for it. A
-coroutine started with plain `fiber\go()` is not the program's: its exception waits in
+When the program ends, a `Tui::go()` coroutine is cancelled (`fiber\cancel()`) with `Quit` as
+the reason: whatever it waits in throws it, a `fiber\sleep()` or an `fiber\await()` as well as
+`Tui::sleep()`, and so does every later wait, so clean up in a `catch (Quit)` without waiting
+(on an adapter that cannot cancel, only `Tui::sleep()` throws it). A coroutine started with
+plain `fiber\go()` is not the program's: its exception waits in
 `fiber\run()` until the screen has ended by itself, and it is not stopped; end such a loop
 with a flag (`while ($running)`, `$running = false` after `Tui::run()` returns). The
 alternative is a class: a component's `$this->go()` is contained by its error boundary, so a
@@ -232,9 +236,10 @@ program is the same thing without a name.
    or of any of its descendants; the library knows which coroutine runs from
    `fiber\current()`.
 
-Coroutines are not cancelled from outside (fiber-interop has no cancellation): write loops as
+A component's coroutines are not cancelled from outside: write loops as
 `while ($this->sleep(...))`, check `isMounted()`, or race a wait against `stopped()`:
-`fiber\await_any([$work, $this->stopped()])`.
+`fiber\await_any([$work, $this->stopped()])` (a `Tui::go()` coroutine of a program is: see
+"Without a class").
 
 ## How a program ends
 
@@ -271,12 +276,9 @@ quits** when no component on the key's way binds it (a `Help` element lists it a
   (a typo: a protected method called from outside), or the coroutine that started the program
   does, the program ends with it: the tree is disposed, the terminal restored, and
   `fiber\run()` throws the exception, as it would without a terminal UI. The library watches
-  the task that called `start()` (and `TerminalDevice::attach()`) through `fiber\current()`;
-  awaiting that task from inside it needs fiber-interop/api >= 0.3.2 and, on phasync,
-  fiber-interop/phasync >= 0.4.2 (their main branches until those are tagged). With 0.3.1 and
-  0.4.1 nothing can watch it, the program would wait forever, and the library says so in one
-  line on stderr when the program starts; `Tui::run()` (which owns the run closure) or
-  `FakeTerminal::run()` in tests are the way to see the exception there. An exception in
+  the task that called `start()` (and `TerminalDevice::attach()`) through `fiber\current()`
+  (awaiting that task from inside it needs fiber-interop/api >= 0.3.2 and, on phasync,
+  fiber-interop/phasync >= 0.4.2, which the library requires). An exception in
   a coroutine you started yourself with `fiber\go()` is not seen until `fiber\run()` ends: start
   such work with the component's `go()`, whose failure is the component's.
 - **A failing child** is contained to its rectangle (see below); its own children end with it.

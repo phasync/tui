@@ -435,12 +435,9 @@ abstract class Component extends Element
      * `start()`, or the coroutine that called it does), the program ends: the component is
      * disposed, the terminal detached and restored, and the exception comes out of
      * `fiber\run()` as it would without a terminal UI, instead of the program's coroutines
-     * keeping `fiber\run()` running with the exception waiting behind them. This needs a
-     * runtime that can await the calling task from a task started inside it:
-     * fiber-interop/api newer than 0.3.1 (main from commit 4dc3d41) and, under phasync,
-     * fiber-interop/phasync newer than 0.4.1 (main from commit 8445790). With older versions
-     * the library does not watch the caller: use `Tui::run()`, which owns the run and always
-     * sees the exception, or `FakeTerminal::run()` in tests.
+     * keeping `fiber\run()` running with the exception waiting behind them (a task started
+     * inside it awaits the calling task: fiber-interop/api 0.3.2 and, under phasync,
+     * fiber-interop/phasync 0.4.2 or later, which the library requires).
      *
      * @throws \LogicException when already started
      */
