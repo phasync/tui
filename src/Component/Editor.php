@@ -861,6 +861,7 @@ final class Editor extends Component
 
     // ------------------------------------------------------------------------------------------
 
+    /** One row with `maxLines: 1`; its text's rows up to `maxLines`; null (the room given) for any number of lines. */
     public function measure(int $cols, int $rows): ?array
     {
         if ($this->maxLines === 1) {

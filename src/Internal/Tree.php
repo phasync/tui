@@ -271,7 +271,7 @@ final class Tree
         if (!isset($this->surfaces[$path])) {
             $surface = new Surface(1, 1, 0);
             // :focused of the elements follows the focus
-            $surface->on('focus', fn() => $this->owner->requestRender());
+            $surface->on('focus', fn() => $this->owner->markDirty());
             $this->surfaces[$path] = $surface;
         }
         return $this->surfaces[$path];

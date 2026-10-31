@@ -144,6 +144,7 @@ class Dialog extends Component
         return max(0, $w - 2);
     }
 
+    /** As large as the title, the message (wrapped at 60 columns) and the buttons need, or the size given with `with()`. */
     public function measure(int $cols, int $rows): ?array
     {
         [$t, $r, $b, $l] = $this->style()->padding;

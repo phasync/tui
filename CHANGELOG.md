@@ -40,6 +40,11 @@ as before.
   key, after each `sleep()` of its coroutines and the end of a `go()` that waited, after a
   callback or listener it gave to a child ran (`onSubmit`, `on('scroll', ...)`), after new
   props, and when its area changed. `requestRender()` remains for changes it cannot see.
+- A `render()` that calls `focus()` (the README's `$input->focus()`) no longer takes the focus
+  back after the user moved it: renders the library makes by itself leave the focus where it
+  is; the first render that asks, and a render asked for with `requestRender()`, apply it as
+  before. Without this, Alt-Right in the README's program moved to the shell and the render
+  that key caused moved straight back.
 
 **A stylesheet**
 

@@ -267,3 +267,41 @@ it('renders a component after an event of a child it listens to', function () {
         expect($t->text())->toBe("\nseen 1");
     });
 });
+
+it('does not take the focus back when a render that focuses runs again after a key moved it', function () {
+    $app = new class extends Component {
+        protected function onKey(Key $key): bool
+        {
+            if ($key->is('alt+right')) {
+                $this->child('b')->focus();       // handled: a render follows
+                return true;
+            }
+            return $key->is('f1');                 // handled too: another render
+        }
+
+        protected function render(): Element
+        {
+            $a = $this->child('a', fn() => new Counter());
+            $b = $this->child('b', fn() => new Counter());
+            $a->focus();                           // the field the screen starts in, asked on every render
+            return new Column([$a, $b]);
+        }
+
+        public function counter(string $key): Counter
+        {
+            return $this->child($key);
+        }
+    };
+    mountOn($app, 10, 2, function (FakeTerminal $t, Component $app) {
+        expect($app->counter('a')->hasFocus())->toBeTrue();
+        $t->press('alt+right');
+        frame();
+        $t->press('f1');
+        frame();
+        $t->press('+');
+        expect($app->counter('b')->hasFocus())->toBeTrue()->and($app->counter('b')->count())->toBe(1);
+        $app->requestRender();                    // asked for: the render's focus() takes effect again
+        frame();
+        expect($app->counter('a')->hasFocus())->toBeTrue();
+    });
+});

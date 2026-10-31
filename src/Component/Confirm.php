@@ -16,6 +16,7 @@ namespace phasync\Tui\Component;
  */
 final class Confirm extends Dialog
 {
+    /** Ask $question with the buttons $yes (true, focused) and $no (false). */
     public function __construct(string $question, string $yes = 'Yes', string $no = 'No', string $title = '')
     {
         parent::__construct($title, $question, [$yes => true, $no => false], false);

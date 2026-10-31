@@ -87,6 +87,8 @@ class State
     }
 
     /**
+     * A read of a property.
+     *
      * @return mixed
      */
     final public function __get(string $name)
@@ -100,6 +102,7 @@ class State
         return $this->values[$name];
     }
 
+    /** A write to a property: checked as the declared type, and the components holding the state render. */
     final public function __set(string $name, mixed $value): void
     {
         if (!$this->watching) {
@@ -122,16 +125,18 @@ class State
             if ($component === null) {
                 unset($this->owners[$id]);
             } else {
-                $component->requestRender();
+                $component->markDirty();
             }
         }
     }
 
+    /** True if the property is set and not null. */
     final public function __isset(string $name): bool
     {
         return isset($this->values[$name]);
     }
 
+    /** Forget a property (an undeclared one), as unset() does. */
     final public function __unset(string $name): void
     {
         unset($this->values[$name]);

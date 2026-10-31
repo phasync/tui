@@ -74,6 +74,15 @@ ext-phasync (444 tests).
   covers it); parts `Type::part:state` for what widgets draw. Box focus border: Tree sets the
   same style as normal and focus style and re-renders on Focus events of its surfaces, so a
   Box in an unfocused pane is not drawn focused (the compositor's isFocused() is per host).
+- **focus() inside render().** With reactive renders, a render that calls `$input->focus()`
+  (README's first program) ran again after the key that moved the focus (Alt-Right) and took
+  it back: a full-suite hang (the README test failing inside run()) found it. The old test
+  LifecycleTest "focuses ... across renders" pins that an explicit requestRender() re-applies
+  the render's focus. Rule now: Component records the focus() calls made during its render
+  (static `$inRender`); a later render skips those it asked before, unless that render was
+  asked for with requestRender() (`$asked`). All library-made renders go through
+  `markDirty()` (@internal, final public: State and Tree call it); `requestRender()` = asked +
+  markDirty().
 - **Help** lists only bindings with a description (`[method, description]`): an Editor binds
   ~50 keys, a footer of all of them is noise.
 - **Dialogs** (`Component::dialog()`): the dialog is a child "\0dialogN"; the render wraps the

@@ -107,7 +107,7 @@ use function fiber\current;
  *
  *     $log = $this->child('log', function () {
  *         $log = new Log();
- *         $log->on('scroll', fn() => $this->requestRender());
+ *         $log->on('scroll', fn() => $this->markDirty());
  *         return $log;
  *     });
  *     // in render(): 'lines ' . ($log->topLine() + 1) . '-' . ($log->bottomLine() + 1)
@@ -176,6 +176,13 @@ abstract class Component extends Element
     /** @var array<string, array{Dialog, ?Surface}> open dialogs by child key, with the surface focused before */
     private array $dialogs = [];
     private static int $dialogCount = 0;
+    /** The component whose render() runs now (focus() remembers what renders ask for). */
+    private static ?Component $inRender = null;
+    /** @var array<int, true> the components this component's last render focused, and the one in progress */
+    private array $focusAsked = [];
+    private array $focusAskedBefore = [];
+    /** The coming render was asked for with requestRender(): its focus() calls take effect again. */
+    private bool $asked = false;
     /** @var array<int, Component> components to render in the coming frame */
     private static array $dirty = [];
     /** @var \WeakMap<Component, true>|null components whose last render showed a `Help` element */
@@ -341,18 +348,18 @@ abstract class Component extends Element
             $s->on('paste', fn(Paste $e) => ($this->dialogs === [] && !$this->attribute('disabled') && $this->handle(fn() => $this->onPaste($e))) || $this->toUnshown($e)),
             $s->on('focus', function (Focus $e): void {
                 $this->handle(fn() => $this->onFocus($e));
-                $this->requestRender();
+                $this->markDirty();
                 // a Help element shows the keys of the focused component
                 foreach (self::$helpShown ?? [] as $component => $_) {
-                    $component->requestRender();
+                    $component->markDirty();
                 }
             }),
             $s->on('resize', function (Resize $e): void {
                 $this->handle(fn() => $this->onResize($e));
-                $this->requestRender();
+                $this->markDirty();
             }),
             // what render() draws may depend on where the component is: draw again when it moved
-            $s->on('area', fn() => $this->requestRender()),
+            $s->on('area', fn() => $this->markDirty()),
             $s->on('close', fn() => $this->stop()),
         ];
         $this->guard($this->mount(...));
@@ -582,7 +589,7 @@ abstract class Component extends Element
     {
         $that = (new \ReflectionFunction($fn))->getClosureThis();
         if ($that instanceof Component) {
-            $that->requestRender();
+            $that->markDirty();
         }
     }
 
@@ -600,6 +607,17 @@ abstract class Component extends Element
      * component). Calls in the same moment are one render; does nothing once disposed.
      */
     public function requestRender(): void
+    {
+        $this->asked = true;
+        $this->markDirty();
+    }
+
+    /**
+     * @internal A render in the next frame that the library makes by itself (a state write, a
+     * handler, a coroutine step): as `requestRender()`, except that the `focus()` calls of the
+     * render that follows take effect only where they are new (see `focus()`).
+     */
+    final public function markDirty(): void
     {
         if (!$this->mounted || $this->renderPending || !$this->rendered || $this->rendering) {
             return;     // (before the first render: that one is coming)
@@ -643,7 +661,7 @@ abstract class Component extends Element
         }
         foreach ($later as $component) {
             $component->renderPending = false;
-            $component->requestRender();
+            $component->markDirty();
         }
         if ($error !== null) {
             throw $error;
@@ -671,9 +689,23 @@ abstract class Component extends Element
      * render shows it, keys reach it through its nearest shown ancestor, exactly as if it were
      * on the focus path, and go on from it to the same descendant they will reach once it is
      * shown. Nothing needs repeating in `render()`.
+     *
+     * Called in `render()` (the input a screen starts in), it takes effect on the first render
+     * that asks for it and on renders asked for with `requestRender()`, but not on the renders
+     * the library makes by itself (after a key, a state write, a coroutine step): the user can
+     * move the focus away, and the render after that key does not take it back. Prefer
+     * `mount()` for the first focus.
      */
     public function focus(): void
     {
+        if (($r = self::$inRender) !== null) {
+            // asked for by a render: once, not again by every render that follows
+            $id = spl_object_id($this);
+            $r->focusAsked[$id] = true;
+            if (isset($r->focusAskedBefore[$id])) {
+                return;
+            }
+        }
         // not shown yet: the nearest ancestor that is joins the focus path and passes keys down
         $c = $this;
         while ($c->parent !== null && $c->surface->viewport() === null) {
@@ -838,7 +870,7 @@ abstract class Component extends Element
                 $this->guard($task);
             } finally {
                 if ($started) {
-                    $this->requestRender();     // it waited and went on: what it did shows
+                    $this->markDirty();     // it waited and went on: what it did shows
                 }
                 unset($this->tasks[$id]);
                 if ($this->tasks === [] && $this->idle !== null) {
@@ -860,7 +892,7 @@ abstract class Component extends Element
     protected function sleep(float $seconds): bool
     {
         if ($this->mounted) {
-            $this->requestRender();     // what the coroutine did until now shows in the next frame
+            $this->markDirty();     // what the coroutine did until now shows in the next frame
             $this->wake->wait($seconds);
         }
         return $this->mounted;
@@ -872,11 +904,17 @@ abstract class Component extends Element
     {
         $this->used = [];
         $this->rendering = true;
+        $outer = self::$inRender;
+        self::$inRender = $this;
+        $this->focusAskedBefore = $this->asked ? [] : $this->focusAsked;
+        $this->focusAsked = [];
+        $this->asked = false;
         try {
             $result = $this->render();
             $layout = $this->layoutOf($result);
             $used = $this->used;
         } finally {
+            self::$inRender = $outer;
             $this->used = null;
             $this->rendering = false;
         }
@@ -887,7 +925,7 @@ abstract class Component extends Element
         }
         if ($this->measured !== null && $this->measure(...$this->measured[0]) !== $this->measured[1]) {
             $this->measured = null;
-            $this->parent?->requestRender();     // it needs another size: the parent lays it out again
+            $this->parent?->markDirty();     // it needs another size: the parent lays it out again
         }
         // children shown for the first time draw now, at the size the layout gave them
         foreach ($this->children as $child) {
@@ -1006,7 +1044,7 @@ abstract class Component extends Element
         }
         if ($changed) {
             $this->guard($this->propsChanged(...));
-            $this->requestRender();
+            $this->markDirty();
         }
     }
 
@@ -1050,7 +1088,7 @@ abstract class Component extends Element
 
     private function renderSubtree(): void
     {
-        $this->requestRender();
+        $this->markDirty();
         foreach ($this->owned() as $child) {
             $child->renderSubtree();
         }
@@ -1098,7 +1136,7 @@ abstract class Component extends Element
     {
         if ($parent != $this->inherited) {
             $this->inherited = $parent;
-            $this->requestRender();
+            $this->markDirty();
         }
     }
 
@@ -1118,7 +1156,7 @@ abstract class Component extends Element
         self::$pointer = [\WeakReference::create($root), $x, $y];
         foreach (self::$hoverAware ?? [] as $component => $was) {
             if ($component->isHovered() !== $was) {
-                $component->requestRender();
+                $component->markDirty();
             }
         }
         return false;
@@ -1206,7 +1244,7 @@ abstract class Component extends Element
         if ($this->guard(fn() => $this->$method()) === false) {
             return false;
         }
-        $this->requestRender();
+        $this->markDirty();
         return true;
     }
 
@@ -1228,7 +1266,7 @@ abstract class Component extends Element
             $this->boundFor[$for] = [...$this->boundFor[$for] ?? [], ...$normal];
         }
         foreach (self::$helpShown ?? [] as $component => $_) {
-            $component->requestRender();
+            $component->markDirty();
         }
         return $this;
     }
@@ -1358,7 +1396,7 @@ abstract class Component extends Element
             }
         });
         $dialog->focus();
-        $this->requestRender();
+        $this->markDirty();
         return $dialog->result();
     }
 
@@ -1393,7 +1431,7 @@ abstract class Component extends Element
         if ($this->guard($handler) !== true) {
             return false;
         }
-        $this->requestRender();
+        $this->markDirty();
         return true;
     }
 

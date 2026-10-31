@@ -329,6 +329,7 @@ class Table extends Component
         return 0;
     }
 
+    /** As high as its rows, the header and a footer line; as wide as it is given. */
     public function measure(int $cols, int $rows): ?array
     {
         return [$cols, max(1, \count($this->shown()) + ($this->header ? 1 : 0) + $this->footerRows())];

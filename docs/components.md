@@ -340,6 +340,11 @@ draw themselves. See [widgets](widgets.md) for `Dialog` and `Confirm`.
 
 ## Focus
 
+`focus()` in `mount()` sets where a screen starts; in `render()` it takes effect on the first
+render that asks and on renders asked for with `requestRender()`, not on the renders the
+library makes by itself (after a key, a state write, a coroutine step), so a render does not
+take back the focus the user moved.
+
 One component has the keyboard: the one focused last (`focus()`), or the descendant it passes
 the keys on to. A focus request names a component, and through it the descendant that
 component focused: a dialog that focuses its text field in `mount()` and is then focused itself
