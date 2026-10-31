@@ -33,7 +33,9 @@ README.md and docs/.
       left is more than a quarter of the frame; what remains is per-item cost (parser items ~4
       us in situ, windows ~8 us to compose). Ideas not done: damage by column spans (blit only
       the changed windows' extents of a row, not every window on it: ~0.7 ms), a viewport
-      version so damage() compares numbers instead of building look strings (~0.3 ms), Text
+      version so damage() compares numbers instead of building look strings (tried: bars 7.7
+      -> 8.0, a Tab 1.05 -> 0.99, keys 2.9 -> 2.8, all noise; and a stylesheet change that
+      restyles a border would need its own bump: not kept), Text
       elements without a window when they have no handler (like flat containers; ~0.3 ms).
       None of them reaches 3 ms. `keys`: median 2.9 ms (equal within noise); a Tab is 1.05 ms
       back to back: the dispatch and focus walk 0.25, the restyle of two rows 0.2, compose
