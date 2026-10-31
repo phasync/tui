@@ -44,6 +44,8 @@ final class Host
     /** @var array<int, true>|null surfaces placed by the layout being applied */
     private ?array $placed = null;
     private ?Viewport $capture = null;
+    /** @var list<array{int,int,int,int,int}> the shadows the windows cast at the last compose (Viewport::shadowRects()) */
+    private array $shadows = [];
     /** @var array{int,int}|null where a selection drag started, in source coordinates */
     private ?array $anchor = null;
     private bool $dragged = false;
@@ -435,6 +437,23 @@ final class Host
                     }
                 }
             }
+            // shadows that moved, came or went: the windows on those rows are painted again
+            $shadows = [];
+            $casts = [];
+            foreach ($this->viewports as $index => $v) {
+                foreach ($v->shadowRects() as $rect) {
+                    $shadows[] = $rect;
+                    $casts[$index][] = $rect;
+                }
+            }
+            if ($shadows !== $this->shadows) {
+                foreach ([...$shadows, ...$this->shadows] as [, $sy, , $sh]) {
+                    for ($y = max(0, $sy); $y < min($rows, $sy + $sh); $y++) {
+                        $own[$y] = true;
+                    }
+                }
+                $this->shadows = $shadows;
+            }
             $out = '';
             $rects = null;
             $count = \count($this->viewports);
@@ -470,13 +489,17 @@ final class Host
                 $rects ??= array_map(fn(Viewport $v) => $v->rect(), $this->viewports);
                 [$vx, , $vw] = $rects[$index];
                 $covers = [];
+                $shades = [];
                 for ($j = $index + 1; $j < $count; $j++) {
                     [$cx, $cy, $cw, $ch] = $rects[$j];
                     if ($cy < $vy + $vh && $cy + $ch > $vy && $cx < $vx + $vw && $cx + $cw > $vx) {
                         $covers[] = $rects[$j];
                     }
+                    foreach ($casts[$j] ?? [] as $shade) {
+                        $shades[] = $shade;     // (a window above casts its shadow on this one)
+                    }
                 }
-                $out .= $v->paint($set, $cols, $rows, $covers);
+                $out .= $v->paint($set, $cols, $rows, $covers, $shades);
             }
             if ($out !== '') {
                 $this->surface->write($this->wrap($out));

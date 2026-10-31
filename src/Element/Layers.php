@@ -27,6 +27,8 @@ final class Layers extends Element
      * @param list<Element|null> $children bottom first
      * @param string|list<string>|null $class
      * @param array<string, mixed>|null $style
+     * @param string|list<string> $state its own states for the stylesheet; `$selected` adds `selected` (see `Element`)
+     * @param (\Closure(Element): mixed)|null $onFocus called when the focus enters it, `$onBlur` when it leaves (see `Element`)
      */
     public function __construct(
         array $children,
@@ -37,8 +39,12 @@ final class Layers extends Element
         int|string|null $width = null,
         int|string|null $height = null,
         bool $disabled = false,
+        bool $selected = false,
+        string|array $state = [],
+        ?\Closure $onFocus = null,
+        ?\Closure $onBlur = null,
     ) {
         $this->children = Children::of($children);
-        $this->with($key, $id, $class, $style, $width, $height, $disabled);
+        $this->with($key, $id, $class, $style, $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur);
     }
 }

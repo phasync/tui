@@ -25,4 +25,18 @@ final class Children
         }
         return $out;
     }
+
+    /**
+     * The inline style of an element with what its constructor arguments set (`padding:`,
+     * `align:`) under what its `style:` sets itself.
+     *
+     * @param array<string, mixed>|null $style
+     * @param array<string, mixed>      $arguments null for not given
+     * @return array<string, mixed>|null
+     */
+    public static function style(?array $style, array $arguments): ?array
+    {
+        $arguments = array_filter($arguments, fn($v) => $v !== null);
+        return $arguments === [] ? $style : [...$arguments, ...($style ?? [])];
+    }
 }

@@ -174,7 +174,7 @@ it('styles only through write(): there is no cell API, and a replay of the bytes
         $replay = new Surface(12, 4);
         $replay->write($t->output());
         expect($replay->dump())->toBe($app->surface->dump())
-            ->and($app->surface->dump())->toContain('[bold bg=6]title[/][bg=6]       [/]');     // (erased cells take the background only)
+            ->and($app->surface->dump())->toContain('[bold bg=#38bdf8]title[/][bg=#38bdf8]       [/]');     // (erased cells take the background only)
     });
 });
 

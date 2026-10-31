@@ -50,7 +50,10 @@ use phasync\Tui\Text;
  * `›` at its ends, and the current tab is always in view.
  *
  * Closing (the `×`, a middle click, Delete): `$onClose($key, $tabs)` when given, which decides
- * (call `close($key)` or `setTabs()`); else the tab is removed and its component disposed.
+ * (call `setTabs()` without it); else the tab is removed and its component disposed, and it
+ * stays closed while the program goes on listing it in `setTabs()` (a `render()` that sets the
+ * same tabs every time): it comes back when `setTabs()` names it as `$current`, or after a
+ * `setTabs()` without it lists it again.
  * Events: `change` (with the key and the tabs) when the current tab changed, `close` when a tab
  * was asked to close.
  *
@@ -71,6 +74,8 @@ class Tabs extends Component
     private ?string $hover = null;
     /** @var list<array{int, int, string, ?string}> x from, x to (excluded), what, tab key */
     private array $hits = [];
+    /** @var array<string, true> tabs the user closed that the program may go on listing */
+    private array $closed = [];
 
     /**
      * @param array<array-key, array{label: string, content: Component|Element, closable?: bool}> $tabs the tabs by key (the first instance's only: use `setTabs()` later)
@@ -151,6 +156,19 @@ class Tabs extends Component
      * @param array<array-key, array{label: string, content: Component|Element, closable?: bool}> $tabs
      */
     public function setTabs(array $tabs, ?string $current = null): void
+    {
+        foreach ($this->closed as $key => $_) {
+            if (!\array_key_exists($key, $tabs) || $key === $current) {
+                unset($this->closed[$key]);     // (no longer listed, or opened again)
+            } else {
+                unset($tabs[$key]);
+            }
+        }
+        $this->replace($tabs, $current);
+    }
+
+    /** @param array<array-key, array{label: string, content: Component|Element, closable?: bool}> $tabs */
+    private function replace(array $tabs, ?string $current): void
     {
         $old = $this->current;
         $oldIndex = $old === null ? 0 : (int) array_search($old, array_keys($this->tabs), true);
@@ -302,7 +320,8 @@ class Tabs extends Component
         } else {
             $tabs = $this->tabs;
             unset($tabs[$key]);
-            $this->setTabs($tabs);
+            $this->closed[$key] = true;
+            $this->replace($tabs, null);
         }
         return true;
     }

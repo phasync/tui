@@ -252,7 +252,7 @@ abstract class Component extends Element
     private static float $frameAsked = 0.0;
     /** @var \WeakMap<Component, true>|null components whose last render showed a `Help` element */
     private static ?\WeakMap $helpShown = null;
-    /** @var \WeakMap<Component, bool>|null components with `:hover` rules, and whether the mouse was over them */
+    /** @var \WeakMap<Component, string>|null components following the mouse (`:hover` rules, `hover:` classes, theirs or their elements'), and what the mouse was over then (hoverKey()) */
     private static ?\WeakMap $hoverAware = null;
     /** @var array{\WeakReference<Surface>, int, int}|null where the mouse was last: the root and the cell on it */
     private static ?array $pointer = null;
@@ -418,6 +418,12 @@ abstract class Component extends Element
         if ($on instanceof TerminalDevice) {
             $surface = new Surface();
             $on->attach($surface);
+            // the terminal tells its background a moment later: the theme for it then
+            $on->whenProbed(function (): void {
+                if ($this->mounted && $this->theme === null) {
+                    $this->renderSubtree();
+                }
+            });
         } else {
             $surface = $on ?? new Surface();
         }
@@ -440,6 +446,10 @@ abstract class Component extends Element
             $s->on('paste', fn(Paste $e) => (!$this->suspended() && !$this->attribute('disabled') && $this->handle(fn() => $this->onPaste($e))) || $this->toUnshown($e)),
             $s->on('focus', function (Focus $e): void {
                 $this->handle(fn() => $this->onFocus($e));
+                $callback = $this->attribute($e->focused ? 'onFocus' : 'onBlur');
+                if ($callback !== null) {
+                    $this->guard(fn() => $this->call($callback, $this));
+                }
                 $this->markDirty();
                 // a Help element shows the keys of the focused component
                 foreach (self::$helpShown ?? [] as $component => $_) {
@@ -1326,7 +1336,7 @@ abstract class Component extends Element
                 $this->surface->write("\e[0m" . Ansi::style($pen));
             }
             if (!isset(self::$hoverAware[$this]) && $this->wantsPointer()) {
-                $this->followPointer($this->isHovered());
+                $this->followPointer();
             }
             $reader = self::$reader;
             self::$reader = $this;
@@ -1350,6 +1360,15 @@ abstract class Component extends Element
             $this->rendering = false;
         }
         $this->sizes = [];      // (measured by what it rendered now)
+        if ($this->tree !== null) {
+            if (!isset(self::$hoverAware[$this]) && $this->tree->followsPointer()) {
+                $this->followPointer();      // (an element with a hover: class: the mouse is followed)
+            }
+            // the focus entered or left elements with onFocus/onBlur
+            foreach ($this->tree->takeFocusCalls() as [$callback, $element]) {
+                $this->guard(fn() => $this->call($callback, $element));
+            }
+        }
         $returned = $same ? $this->surface->layout() : $layout;
         if (!$same) {
             if ($this->parent === null && ($this->floating !== [] || $this->overlayLayout !== null)) {
@@ -1610,11 +1629,60 @@ abstract class Component extends Element
 
     /**
      * The stylesheet in force for this component: the one set on it with `setStylesheet()`,
-     * else its parent's, up to the root; `Stylesheet::default()` when none was set.
+     * else its parent's, up to the root; the theme in force (`theme()`) when none was set. A
+     * sheet built on a theme (`Stylesheet::default()->with(...)`) is its rules on the theme in
+     * force.
      */
     final public function stylesheet(): Stylesheet
     {
-        return $this->stylesheet ?? $this->parent?->stylesheet() ?? Stylesheet::default();
+        if ($this->stylesheet !== null) {
+            $sheet = $this->stylesheet;
+        } elseif ($this->parent !== null) {
+            $sheet = $this->parent->stylesheet();
+            if ($this->theme === null) {
+                return $sheet;      // (on the theme the parent is on)
+            }
+        } else {
+            return Stylesheet::theme($this->theme());
+        }
+        return $sheet->themeName() === null ? $sheet : $sheet->onTheme($this->theme());
+    }
+
+    /**
+     * The theme this component is drawn in (see `Stylesheet::theme()`): the one set with
+     * `setTheme()` on it or the nearest component above it, else the one for the terminal's
+     * background (`TerminalDevice::background()`: `light` on a light one, else `dark`).
+     */
+    final public function theme(): string
+    {
+        for ($c = $this; $c !== null; $c = $c->parent) {
+            if ($c->theme !== null) {
+                return $c->theme;
+            }
+            if ($c->parent === null) {
+                return $c->mounted && TerminalDevice::of($c->surface->root())?->background() === 'light' ? 'light' : 'dark';
+            }
+        }
+        return 'dark';
+    }
+
+    /**
+     * Draw this component and those below it in the theme $name (`dark`, `light`, `mono`), or,
+     * with null, in the one for the terminal's background again. A stylesheet set with
+     * `setStylesheet()` that is built on a theme (`Stylesheet::default()->with(...)`) keeps its
+     * rules on the new one. `Tui::run($root, theme: ...)` sets it on the root.
+     *
+     * @throws \InvalidArgumentException for a theme that does not exist
+     */
+    final public function setTheme(?string $name): void
+    {
+        if ($name !== null) {
+            Stylesheet::theme($name);       // (it exists)
+        }
+        if ($name !== $this->theme) {
+            $this->theme = $name;
+            $this->renderSubtree();
+        }
     }
 
     /**
@@ -1627,6 +1695,9 @@ abstract class Component extends Element
         $this->stylesheet = $stylesheet;
         $this->renderSubtree();
     }
+
+    /** The theme set with `setTheme()`, null: the one above, or the terminal's. */
+    private ?string $theme = null;
 
     private function renderSubtree(): void
     {
@@ -1661,8 +1732,8 @@ abstract class Component extends Element
         $sheet = $this->stylesheet();
         $own = $this->states();
         $style = $sheet->compute($this, $own, $this->inherited ?? $this->parent?->style(), $part, array_values($states));
-        if ($style->hoverAware) {
-            $this->followPointer(\in_array('hover', $own, true));
+        if ($style->hoverAware && !isset(self::$hoverAware[$this])) {
+            $this->followPointer();
         }
         return $style;
     }
@@ -1695,8 +1766,8 @@ abstract class Component extends Element
         return false;
     }
 
-    /** Ask for motion reports (once) and keep the hover state; $hovered: the mouse is over it now. */
-    private function followPointer(bool $hovered): void
+    /** Ask for motion reports (once) and keep what the mouse is over (hoverKey()). */
+    private function followPointer(): void
     {
         if (!$this->mounted) {
             return;
@@ -1706,7 +1777,26 @@ abstract class Component extends Element
             // motion reports without a button held, so the mouse is followed (the device asks for them)
             $this->surface->write("\e[?1003h");
         }
-        self::$hoverAware[$this] = $hovered;
+        self::$hoverAware[$this] = $this->hoverKey();
+    }
+
+    /** What the mouse is over of this component: itself, and which of its elements that follow it. */
+    private function hoverKey(): string
+    {
+        return ($this->isHovered() ? 'h' : '') . "\0" . ($this->tree?->hovered() ?? '');
+    }
+
+    /**
+     * @internal True if the mouse (as last reported) is over $surface where it shows: how an
+     * element is in the `hover` state.
+     */
+    final public static function pointerOver(Surface $surface): bool
+    {
+        if (self::$pointer === null) {
+            return false;
+        }
+        [$root, $x, $y] = self::$pointer;
+        return $root->get() === $surface->root() && $surface->area()->contains($x, $y);
     }
 
     /**
@@ -1773,8 +1863,10 @@ abstract class Component extends Element
         }
         self::$pointer = [\WeakReference::create($root), $x, $y];
         foreach (self::$hoverAware ?? [] as $component => $was) {
-            if ($component->isHovered() !== $was) {
-                $component->markDirty();
+            $now = $component->hoverKey();
+            if ($now !== $was) {
+                self::$hoverAware[$component] = $now;
+                $component->relayout();     // (its elements' hover states are laid out again too)
             }
         }
         return false;
@@ -1803,8 +1895,9 @@ abstract class Component extends Element
         if ($this->attribute('disabled')) {
             $states[] = 'disabled';
         }
+        array_push($states, ...$this->attribute('state'));
         if ($this->mounted) {
-            $states[] = Stylesheet::widthClass($this->surface->root()->cols());     // (sm:, md:, lg:)
+            array_push($states, ...Stylesheet::breakpoints($this->surface->root()->cols()));     // (sm: ... xl:)
         }
         return [...$states, ...array_keys($this->styleStates)];
     }
@@ -2470,14 +2563,19 @@ abstract class Component extends Element
     private function showError(): void
     {
         $s = $this->surface;
-        $message = $this->error::class . ': ' . $this->error->getMessage();
-        $out = "\e[0m\e[?25l\e[2J";
-        $y = 0;
-        foreach (explode("\n", wordwrap($message, max(1, $s->cols() - 2), "\n", true)) as $line) {
-            if ($y >= $s->rows()) {
-                break;
-            }
-            $out .= Ansi::moveTo(0, $y++) . ($y === 1 ? "\e[1;31m✖ " : "\e[31m  ") . $line;
+        // the class without its namespace and the message, on as many rows as there are (one: cut with …)
+        $class = $this->error::class;
+        $message = substr($class, (int) strrpos('\\' . $class, '\\')) . ': ' . str_replace(["\r", "\n", "\t", "\e"], ' ', $this->error->getMessage());
+        $width = max(1, $s->cols() - 2);
+        $lines = Text::wrap($message, $width, true);
+        if (\count($lines) > $s->rows()) {
+            $lines = \array_slice($lines, 0, max(1, $s->rows()));
+            $last = \count($lines) - 1;
+            $lines[$last] = Text::truncate($lines[$last] . ' …', $width);
+        }
+        $out = "\e[0m\e[?25l\e[?7l\e[2J";
+        foreach ($lines as $y => $line) {
+            $out .= Ansi::moveTo(0, $y) . ($y === 0 ? "\e[1;31m✖ " : "\e[31m  ") . $line;
         }
         $s->write($out . "\e[0m");
     }

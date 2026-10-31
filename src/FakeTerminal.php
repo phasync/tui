@@ -61,15 +61,26 @@ final class FakeTerminal extends TerminalDevice
      * A terminal of $cols x $rows (resize it later with `resize()`); with $hyperlinks false,
      * one that does not show hyperlinks (the device then writes the text of links alone); with
      * $colors 256 or 16, one of that many colours (the device then draws truecolour cells in
-     * the nearest colour the terminal has; see `colors()`).
+     * the nearest colour the terminal has; see `colors()`). $background is what it answers
+     * when asked for its background colour (OSC 11): `'dark'` (black), `'light'` (white), or
+     * null for a terminal that does not answer; the theme follows it (see `background()`).
      */
-    public function __construct(int $cols = 80, int $rows = 24, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR)
+    public function __construct(int $cols = 80, int $rows = 24, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR, ?string $background = 'dark')
     {
+        if ($background !== null && $background !== 'dark' && $background !== 'light') {
+            throw new \InvalidArgumentException("A FakeTerminal's background is 'dark', 'light' or null, not '$background'");
+        }
         $this->hyperlinks = $hyperlinks;
         $this->setColors($colors);
         $this->surface = new Surface($cols, $rows);
+        if ($background === 'light') {
+            $this->surface->setDefaultColors(Color::rgb(0, 0, 0), Color::rgb(255, 255, 255));
+        }
         $this->idle = new Signal();
-        $this->surface->input->pipe(fn(string $bytes) => $this->receive($bytes, true));
+        $this->surface->input->pipe(fn(string $bytes) => $this->receive(
+            $background === null ? (string) preg_replace('/\e\]11;[^\e\x07]*(?:\e\\\\|\x07)/', '', $bytes) : $bytes,
+            true,
+        ));
         $this->surface->on('clipboard', function (string $text): void {
             $this->copied = $text;
         });
@@ -80,9 +91,9 @@ final class FakeTerminal extends TerminalDevice
      * its normal screen, the root's scrollback going into its own (see `TerminalDevice`). With
      * $keep false, detaching erases the region instead of leaving the last frame.
      */
-    public static function inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR): self
+    public static function inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR, ?string $background = 'dark'): self
     {
-        $terminal = new self($cols, $rows, $hyperlinks, $colors);
+        $terminal = new self($cols, $rows, $hyperlinks, $colors, $background);
         $terminal->useInline($keep);
         return $terminal;
     }

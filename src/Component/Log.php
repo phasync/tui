@@ -174,6 +174,12 @@ final class Log extends Component
         }
         $pieces = explode("\n", str_replace("\r\n", "\n", $text));
         $first = array_shift($pieces);
+        if (!isset($this->content)) {
+            // not shown yet: kept, and laid out when it is
+            $this->open .= $first;
+            $this->add($pieces);
+            return;
+        }
         $out = '';
         if ($first !== '') {
             // (an open line with markup is written again whole, so a tag that closes later shows)
@@ -233,6 +239,11 @@ final class Log extends Component
      */
     public function setLines(array $lines): void
     {
+        if (!isset($this->content)) {
+            $this->lines = \array_slice(array_values(array_map('strval', $lines)), -max(1, $this->scrollback - 1));
+            $this->open = '';
+            return;     // (laid out when it is shown)
+        }
         $top = $this->pinnedLine();
         $text = $top === null ? null : ([...$this->lines, $this->open][$top] ?? null);
         $this->lines = \array_slice(array_values(array_map('strval', $lines)), -max(1, $this->scrollback - 1));
@@ -274,7 +285,9 @@ final class Log extends Component
     /** Wrap long lines between words (true) or at any character (false), and lay out again. */
     public function setWordWrap(bool $wordWrap): void
     {
-        if ($wordWrap !== $this->wordWrap) {
+        if ($wordWrap !== $this->wordWrap && !isset($this->content)) {
+            $this->wordWrap = $wordWrap;
+        } elseif ($wordWrap !== $this->wordWrap) {
             $top = $this->pinnedLine();
             $this->wordWrap = $wordWrap;
             $this->layout(null, $top);

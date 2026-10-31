@@ -21,14 +21,15 @@ namespace phasync\Tui;
  * **Selectors** (several separated by commas): an element type (`Text`, `Box`, `Editor`, your
  * component's class name; a subclass matches its parents' names too) or `*`, then any number of
  * `#id`, `.class` and states `:focused`, `:disabled`, `:hover`, `:selected`, `:sm`, `:md`,
- * `:lg`; then optionally `::part` and the part's states, for the pieces a widget draws
+ * `:lg`, `:xl`; then optionally `::part` and the part's states, for the pieces a widget draws
  * (`Select::row:current`, `Editor::selection`, `Dialog::button:focused`; each widget lists its
  * parts and their states). `:focused` is true for an element on the focus path (a `Box` whose
  * content has the keys is focused), `:disabled` for one made with `disabled: true`, `:hover`
  * for a component while the mouse is over it, and on a part (`Tabs::tab:hover`) for the piece
  * under the mouse, as the widget tells it; `:selected` and other states of a component's own
- * come from `Component::setStyleState()`. `:sm`, `:md` and `:lg` are the width of the screen
- * (the root surface): under 60 columns, 60 to 99, 100 and more. A `:hover` rule for a
+ * come from `Component::setStyleState()`, and an element's from its `selected:` and `state:`
+ * arguments. `:sm`, `:md`, `:lg` and `:xl` are the width of the screen (the root surface),
+ * with Tailwind's min-width meaning: from 60, 80, 100 and 140 columns on. A `:hover` rule for a
  * component or one of its parts makes the component follow the mouse: it asks for mouse motion
  * reports and takes its mouse events, as `Component::wantsPointer()` does. There are no
  * combinators: what a parent sets for the text inherits instead (below).
@@ -90,9 +91,11 @@ namespace phasync\Tui;
  * A `{color}` is a Tailwind family and shade (`sky-400`, `slate-800`), one of the 16 names
  * (`red`, `bright-blue`), a palette index (`208`) or a hex value in brackets (`[#ff5500]`).
  * A class takes **variants** as prefixes: `focus:`, `hover:`, `disabled:`, `selected:` apply
- * it only in that state (`focus:bg-sky-800`), and `sm:`, `md:`, `lg:` only at that width of
- * the screen (under 60 columns, 60 to 99, 100 and more), so `'flex-col lg:flex-row'` puts the
- * children side by side on a wide terminal and on top of each other otherwise; variants
+ * it only in that state (`focus:bg-sky-800`), and `sm:`, `md:`, `lg:`, `xl:` from that width
+ * of the screen on (60, 80, 100, 140 columns, as in Tailwind: the class without a variant
+ * applies at every width, a wider breakpoint's class over a narrower one's), so
+ * `'flex-col md:flex-row'` stacks the children under 80 columns and puts them side by side from
+ * 80 on, and `'hidden md:block'` shows an element from 80 columns on; variants
  * combine (`lg:focus:bold`). A class that is not a utility is the program's own (for its rules,
  * `.title`) and is otherwise ignored; `explain()` tells what an element's classes did.
  *
@@ -111,17 +114,30 @@ final class Stylesheet
         'border', 'title-align', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
         'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'align', 'wrap',
         'width', 'height', 'max-width', 'max-height', 'flex-grow', 'flex-shrink', 'display',
-        'gap', 'flex-direction', 'align-items', 'justify-content'];
+        'gap', 'flex-direction', 'align-items', 'justify-content', 'shadow'];
+    /** The theme variables a utility class may name as a colour (`text-accent`, `border-muted`, `bg-panel`). */
+    public const THEME_COLORS = ['accent', 'muted', 'panel', 'error', 'success', 'warning'];
     private const SIDES = ['top', 'right', 'bottom', 'left'];
     /** The variants of utility classes, and the state each one asks for. */
     private const VARIANTS = ['focus' => 'focused', 'hover' => 'hover', 'disabled' => 'disabled', 'selected' => 'selected',
-        'sm' => 'sm', 'md' => 'md', 'lg' => 'lg'];
+        'sm' => 'sm', 'md' => 'md', 'lg' => 'lg', 'xl' => 'xl'];
+    /** The width breakpoints: the state is in force from that many columns of the screen on (Tailwind's min-width). */
+    public const BREAKPOINTS = ['sm' => 60, 'md' => 80, 'lg' => 100, 'xl' => 140];
 
     /** @var list<array{array<string, mixed>, list<array{list<string>, ?string, list<string>, list<string>, ?string, list<string>}>, array{int,int,int}, int, string}> rules: properties, selectors, specificity, order, the selector as written */
     private array $rules = [];
     /** @var array<string, mixed> */
     private array $vars;
-    private static ?Stylesheet $default = null;
+    /** The theme it was built on (`theme()`), null for a sheet of its own. */
+    private ?string $theme = null;
+    /** @var list<array{array<string, array<string, mixed>>, array<string, mixed>}> what `with()` added to the theme, in order */
+    private array $own = [];
+    /** No colours: everything it computes is in the terminal's default colours. */
+    private bool $mono = false;
+    /** @var array<string, Stylesheet> the themes, by name */
+    private static array $themes = [];
+    /** @var array<string, Stylesheet> this sheet on other themes (`onTheme()`), by name */
+    private array $onThemes = [];
     /** How many answers of compute() are kept before the memo starts again. */
     private const MEMO = 20000;
     /** @var array<string, array{ComputedStyle, ?ComputedStyle}> compute()'s answers by question, with the parent they inherit from */
@@ -140,9 +156,48 @@ final class Stylesheet
         $this->add($rules);
     }
 
+    /**
+     * The default theme for the terminal's background: `theme('dark')`. Build a program's sheet
+     * on it with `with()`; that sheet follows the theme a program runs in (see `theme()`).
+     */
     public static function default(): self
     {
-        return self::$default ??= new self([
+        return self::theme('dark');
+    }
+
+    /**
+     * A theme: the look of every element and widget, as a stylesheet. `dark` (for a dark
+     * terminal background, the default), `light` (for a light one) and `mono` (no colours at
+     * all: borders, focus and selection by bold, dim, underline and inverse). The three
+     * differ only in colours and attributes, never in what is drawn where. Each has rounded
+     * borders, one accent colour (the focused window's border, the current tab, buttons),
+     * dimmed titles and borders elsewhere, `Select` rows in inverse and dialogs with a shadow.
+     *
+     * A sheet built on a theme with `with()` (a program's own rules) is the same rules on
+     * whichever theme the program runs in: `Tui::run($root, theme: 'light')`, or by itself the
+     * theme of the terminal's background (`TerminalDevice::background()`). The theme's rules
+     * come first, so a program's rule wins over the theme's.
+     *
+     * Variables: `accent`, `muted`, `panel` (a background a little off the terminal's, for an
+     * edited field), `error`, `success`, `warning` and `shadow` (the background of a dialog's
+     * shadow); utility classes name the colours ones (`text-accent`, `border-muted`).
+     *
+     * @throws \InvalidArgumentException for a theme it does not know
+     */
+    public static function theme(string $name): self
+    {
+        if (isset(self::$themes[$name])) {
+            return self::$themes[$name];
+        }
+        $vars = match ($name) {
+            'dark' => ['accent' => 'sky-400', 'muted' => 'slate-500', 'panel' => 'slate-800', 'error' => 'red-400',
+                'success' => 'emerald-400', 'warning' => 'amber-400', 'shadow' => 'black'],
+            'light' => ['accent' => 'sky-700', 'muted' => 'slate-400', 'panel' => 'slate-200', 'error' => 'red-600',
+                'success' => 'emerald-700', 'warning' => 'amber-700', 'shadow' => 'slate-300'],
+            'mono' => array_fill_keys(['accent', 'muted', 'panel', 'error', 'success', 'warning', 'shadow'], 'default'),
+            default => throw new \InvalidArgumentException("Unknown theme '$name': use 'dark', 'light' or 'mono'"),
+        };
+        $sheet = new self([
             'Box' => ['border' => 'round $muted'],
             'Box:focused' => ['border' => '$accent'],
             'Editor:focused' => ['background' => '$panel'],
@@ -160,7 +215,7 @@ final class Stylesheet
             'Tree::guide' => ['color' => '$muted'],
             'Select:disabled' => ['dim' => true],
             'Select::filter' => ['color' => '$accent'],
-            'Dialog' => ['border' => 'round $accent', 'padding' => '0 1', 'align' => 'center'],
+            'Dialog' => ['border' => 'round $accent', 'padding' => '0 1', 'align' => 'center', 'shadow' => '$shadow'],
             'Dialog::title' => ['bold' => true],
             'Button' => ['color' => '$accent'],
             'Button:focused' => ['inverse' => true, 'bold' => true],
@@ -210,14 +265,63 @@ final class Stylesheet
             'Text.error' => ['color' => '$error'],
             'Text.muted' => ['color' => '$muted'],
             'Text.title' => ['bold' => true],
-        ], [
-            'accent' => 'cyan',
-            'muted' => 'bright-black',
-            'panel' => 'bright-black',
-            'error' => 'red',
-            'success' => 'green',
-            'warning' => 'yellow',
-        ]);
+        ], $vars);
+        if ($name === 'mono') {
+            // what the colours tell in the others, by attributes
+            $sheet->add([
+                'Box' => ['border' => 'dim'],
+                'Box:focused' => ['border' => 'bold'],
+                'Dialog' => ['border' => 'bold'],
+                'Tabs::tab' => ['dim' => true],
+                'Tabs::tab:current' => ['dim' => false],
+                'Tabs::tab:hover' => ['dim' => false],
+                'Help' => ['dim' => true],
+                'Help::key' => ['dim' => false],
+                'Text.muted' => ['dim' => true],
+                'Text.error, Form::error, *:invalid' => ['bold' => true],
+                'Editor::placeholder' => ['dim' => true],
+                'Editor:focused' => ['underline' => true],
+                '*::scrollbar' => ['dim' => true],
+                '*::scrollbar:thumb' => ['dim' => false, 'bold' => true],
+                'Tree::guide' => ['dim' => true],
+                'Markdown::quote, Markdown::url, Markdown::rule, Markdown::border' => ['dim' => true],
+            ]);
+            $sheet->mono = true;
+        }
+        $sheet->theme = $name;
+        return self::$themes[$name] = $sheet;
+    }
+
+    /** The name of the theme this sheet is built on (`theme()`, `default()`), null for a sheet of its own. */
+    public function themeName(): ?string
+    {
+        return $this->theme;
+    }
+
+    /**
+     * This sheet on the theme $name: the rules and variables added with `with()` on that
+     * theme's. Itself when it is on that theme already or on none (`new Stylesheet()`). The
+     * library calls it for the theme a program runs in.
+     */
+    public function onTheme(string $name): self
+    {
+        if ($this->theme === null || $this->theme === $name) {
+            return $this;
+        }
+        if (!isset($this->onThemes[$name])) {
+            $sheet = self::theme($name);
+            foreach ($this->own as [$rules, $vars]) {
+                $sheet = $sheet->with($rules, $vars);
+            }
+            $this->onThemes[$name] = $sheet;
+        }
+        return $this->onThemes[$name];
+    }
+
+    /** True for a sheet without colours (the `mono` theme): what it styles is in the terminal's default colours. */
+    public function isMonochrome(): bool
+    {
+        return $this->mono;
     }
 
     /**
@@ -231,8 +335,12 @@ final class Stylesheet
     {
         $copy = clone $this;
         $copy->memo = [];
+        $copy->onThemes = [];
         $copy->vars = [...$this->vars, ...$vars];
         $copy->add($rules);
+        if ($copy->theme !== null) {
+            $copy->own[] = [$rules, $vars];
+        }
         return $copy;
     }
 
@@ -243,12 +351,20 @@ final class Stylesheet
     }
 
     /**
-     * The width class of a screen $cols wide, as the states `sm`, `md` and `lg` (and the
-     * variants `sm:`, `md:`, `lg:`) name it: under 60 columns, 60 to 99, 100 and more.
+     * The width states in force on a screen $cols wide, as the states `:sm`, `:md`, `:lg`,
+     * `:xl` (and the variants `sm:` ... `xl:`) name them, with Tailwind's min-width meaning:
+     * `sm` from 60 columns, `md` from 80, `lg` from 100, `xl` from 140 (`BREAKPOINTS`). So
+     * 85 columns are `['sm', 'md']`, and under 60 none: what has no variant applies there.
+     *
+     * @return list<string>
      */
-    public static function widthClass(int $cols): string
+    public static function breakpoints(int $cols): array
     {
-        return $cols < 60 ? 'sm' : ($cols < 100 ? 'md' : 'lg');
+        static $memo = [];
+        if (!isset($memo[$cols])) {
+            $memo[$cols] = array_keys(array_filter(self::BREAKPOINTS, fn(int $from) => $cols >= $from));
+        }
+        return $memo[$cols];
     }
 
     /**
@@ -267,15 +383,13 @@ final class Stylesheet
      * a widget that draws several parts on a row asks for each this way.
      *
      * @param string|list<string>|null $part
-     * @param list<string> $states     the element's states: `focused`, `disabled`, `hover`, its
-     *                                 own, and the width class (`sm`, `md`, `lg`)
+     * @param list<string> $states     the element's states: `focused`, `disabled`, `hover`,
+     *                                 `selected`, its own, and the breakpoints in force (`breakpoints()`)
      * @param list<string> $partStates the part's states (each widget lists them)
      */
     public function compute(Element $element, array $states = [], ?ComputedStyle $parent = null, string|array|null $part = null, array $partStates = []): ComputedStyle
     {
-        if ($element->attribute('disabled') && !\in_array('disabled', $states, true)) {
-            $states[] = 'disabled';
-        }
+        $states = self::statesOf($element, $states);
         // the same question gives the same answer: computed once per selector match, not per
         // element per frame (the entry holds the parent, so its object id stays its own)
         $inline = $element->attribute('style');
@@ -303,13 +417,11 @@ final class Stylesheet
      *
      *     echo $sheet->explain(new Text('x', class: 'text-sky-400 md:bold title'), ['md']);
      *
-     * @param list<string> $states as for `compute()`; the width class too (`'md'`) for `sm:`/`md:`/`lg:`
+     * @param list<string> $states as for `compute()`; the breakpoints too (`['sm', 'md']`) for `sm:` ... `xl:`
      */
     public function explain(Element $element, array $states = []): string
     {
-        if ($element->attribute('disabled') && !\in_array('disabled', $states, true)) {
-            $states[] = 'disabled';
-        }
+        $states = self::statesOf($element, $states);
         $id = $element->attribute('id');
         $classes = $element->attribute('class');
         $out = [($element->types()[0] ?? $element::class) . ($id === null ? '' : " #$id")
@@ -317,7 +429,7 @@ final class Stylesheet
         foreach ($this->matched($element, $states, null, []) as [$spec, , $props, $selector]) {
             $out[] = "  rule '$selector' (" . implode(',', $spec) . '): ' . self::describe($props);
         }
-        foreach ($classes as $class) {
+        foreach (self::byBreakpoint($classes) as $class) {
             $u = self::utility($class);
             if ($u === false) {
                 $out[] = "  class '$class': not a utility (selects rules)";
@@ -338,6 +450,27 @@ final class Stylesheet
             . ($s->grow === null ? '' : ", flex-grow $s->grow") . ($s->hidden ? ', display none' : '')
             . ($s->direction === null ? '' : ", flex-direction $s->direction");
         return implode("\n", $out);
+    }
+
+    /**
+     * $states with those the element's attributes put it in: `disabled`, and its `state`
+     * (`selected: true` among them).
+     *
+     * @param list<string> $states
+     * @return list<string>
+     */
+    private static function statesOf(Element $element, array $states): array
+    {
+        $own = $element->attribute('state');
+        if ($element->attribute('disabled')) {
+            $own[] = 'disabled';
+        }
+        foreach ($own as $state) {
+            if (!\in_array($state, $states, true)) {
+                $states[] = $state;
+            }
+        }
+        return $states;
     }
 
     /** @param array<string, mixed> $props */
@@ -361,32 +494,34 @@ final class Stylesheet
             $style = $this->compute($element, $states, $parent);
             foreach ($part as $name) {
                 [$set, $hover] = $this->matching($element, $states, $name, $partStates);
-                $style = $this->resolve($set, $style, $hover || $style->hoverAware);
+                $style = $this->resolve($set, $style, $hover || $style->hoverAware, true);
             }
             return $style;
         }
         [$set, $hoverAware] = $this->matching($element, $states, $part, $partStates);
         if ($part === null) {
-            // the utility classes in the order written, then the inline style
-            foreach ($element->attribute('class') as $class) {
+            // the utility classes in the order written (a wider breakpoint's after), then the inline style
+            $ownBorder = false;
+            foreach (self::byBreakpoint($element->attribute('class')) as $class) {
                 $u = self::utility($class);
                 if ($u === false) {
                     continue;
                 }
                 $missing = array_diff($u[0], $states);
+                // (a hover: class, in force or not: the element follows the mouse)
+                $hoverAware = $hoverAware || \in_array('hover', $u[0], true);
                 if ($missing === []) {
                     $set = self::merge($set, $u[1]);
-                } elseif ($missing === ['hover']) {
-                    $hoverAware = true;
+                    $ownBorder = $ownBorder || self::bordersColor($u[1]);
                 }
             }
-            $set = self::merge($set, self::check($element->attribute('style')));
-        } else {
-            // a part inherits from its element
-            $parent = $this->compute($element, $states, $parent);
-            $hoverAware = $hoverAware || $parent->hoverAware;
+            $inline = self::check($element->attribute('style'));
+            $set = self::merge($set, $inline);
+            return $this->resolve($set, $parent, $hoverAware, $ownBorder || self::bordersColor($inline));
         }
-        return $this->resolve($set, $parent, $hoverAware);
+        // a part inherits from its element
+        $parent = $this->compute($element, $states, $parent);
+        return $this->resolve($set, $parent, $hoverAware || $parent->hoverAware, true);
     }
 
     /**
@@ -496,6 +631,37 @@ final class Stylesheet
     }
 
     /**
+     * $classes in the order they apply: as written, except that a class with a width variant
+     * comes after those with a narrower one or none (Tailwind's order: `md:flex-row flex-col`
+     * is a row from 80 columns on, as `flex-col md:flex-row` is).
+     *
+     * @param list<string> $classes
+     * @return list<string>
+     */
+    private static function byBreakpoint(array $classes): array
+    {
+        static $rank = ['sm' => 1, 'md' => 2, 'lg' => 3, 'xl' => 4];
+        $ranks = [];
+        $sorted = false;
+        foreach ($classes as $i => $class) {
+            $r = 0;
+            if (str_contains($class, ':')) {
+                foreach (self::utility($class)[0] ?? [] as $state) {
+                    $r = max($r, $rank[$state] ?? 0);
+                }
+            }
+            $sorted = $sorted || ($i > 0 && $r < $ranks[$i - 1]);
+            $ranks[$i] = $r;
+        }
+        if (!$sorted) {
+            return $classes;
+        }
+        $order = array_keys($classes);
+        usort($order, fn(int $a, int $b) => [$ranks[$a], $a] <=> [$ranks[$b], $b]);
+        return array_map(fn(int $i) => $classes[$i], $order);
+    }
+
+    /**
      * A utility class as [the states its variants need, the properties it sets], or false when
      * $class is not one (see the class description).
      *
@@ -533,6 +699,7 @@ final class Stylesheet
             'grow' => ['flex-grow' => 1], 'shrink' => ['flex-shrink' => 1], 'shrink-0' => ['flex-shrink' => 0],
             'hidden' => ['display' => 'none'], 'block' => ['display' => 'block'],
             'flex-row' => ['flex-direction' => 'row'], 'flex-col' => ['flex-direction' => 'column'],
+            'shadow' => ['shadow' => true], 'shadow-none' => ['shadow' => false],
             'w-full' => ['width' => '100%'], 'h-full' => ['height' => '100%'], 'w-auto' => ['width' => 'auto'], 'h-auto' => ['height' => 'auto'],
         ];
         if (isset($plain[$u])) {
@@ -576,7 +743,9 @@ final class Stylesheet
         }
         if (preg_match('/^(text|bg|border)-(.+)$/', $u, $m)) {
             $color = $m[2];
-            try {
+            if (\in_array($color, self::THEME_COLORS, true)) {
+                $color = '$' . $color;      // (the theme's: text-accent)
+            } else try {
                 Color::parse($color);
             } catch (\InvalidArgumentException) {
                 return null;
@@ -617,12 +786,12 @@ final class Stylesheet
     {
         foreach ($props as $name => $value) {
             if ($name === 'border') {
-                $old = $set['border'] ?? [null, null];
-                [$kind, $color] = self::parseBorder($value);
+                $old = $set['border'] ?? [null, null, null];
+                [$kind, $color, $attrs] = self::parseBorder($value);
                 if ($kind === true) {
                     $kind = \is_string($old[0]) ? $old[0] : 'single';
                 }
-                $set['border'] = [$kind ?? $old[0], $color ?? $old[1]];
+                $set['border'] = [$kind ?? $old[0], $color ?? $old[1], $attrs ?? $old[2]];
             } elseif ($name === 'padding' || $name === 'margin') {
                 // (each side keeps the value, read when resolved: it may be a variable)
                 foreach (self::SIDES as $i => $side) {
@@ -635,31 +804,46 @@ final class Stylesheet
         return $set;
     }
 
-    /** @return array{string|bool|null, mixed} the kind of line (true: on, of the kind set before) and the colour, null where not given */
+    /**
+     * @return array{string|bool|null, mixed, ?int} the kind of line (true: on, of the kind set
+     *         before), the colour and the attributes (`bold`, `dim`), null where not given
+     */
     private static function parseBorder(mixed $value): array
     {
         if ($value === false || $value === 'none') {
-            return [false, null];
+            return [false, null, null];
         }
         if ($value === true) {
-            return [true, null];
+            return [true, null, null];
         }
         if (\is_array($value)) {
-            return [null, $value['color'] ?? null];
+            return [null, $value['color'] ?? null, null];
         }
-        $kind = $color = null;
+        $kind = $color = $attrs = null;
         foreach (preg_split('/\s+/', trim((string) $value)) as $token) {
             if (isset(Viewport::BORDERS[$token])) {
                 $kind = $token;
+            } elseif ($token === 'bold' || $token === 'dim' || $token === 'plain') {
+                $attrs = ($attrs ?? 0) | ($token === 'bold' ? Style::BOLD : ($token === 'dim' ? Style::DIM : 0));
             } elseif ($token !== '') {
                 $color = $token;
             }
         }
-        return [$kind, $color];
+        return [$kind, $color, $attrs];
     }
 
-    /** @param array<string, mixed> $set */
-    private function resolve(array $set, ?ComputedStyle $parent, bool $hoverAware): ComputedStyle
+    /** @param array<string, mixed> $props true if they give the border a colour */
+    private static function bordersColor(array $props): bool
+    {
+        return isset($props['border']) && self::parseBorder($props['border'])[1] !== null;
+    }
+
+    /**
+     * @param array<string, mixed> $set
+     * @param bool $ownBorder the element's classes or inline style gave its border a colour
+     *                        (else a colour the element around it passes on wins over the rules')
+     */
+    private function resolve(array $set, ?ComputedStyle $parent, bool $hoverAware, bool $ownBorder): ComputedStyle
     {
         $base = $parent?->text ?? Style::plain();
         $fg = \array_key_exists('color', $set) ? $this->color($set['color']) : $base->fg;
@@ -671,9 +855,23 @@ final class Stylesheet
             }
         }
         $text = Style::of($fg, $bg, $attrs);
-        [$kind, $color] = $set['border'] ?? [false, null];
-        $kind ??= $color !== null ? 'single' : false;
-        $borderStyle = Style::of($color === null ? $fg : $this->color($color), $bg);
+        // a colour alone draws no border: it colours one set elsewhere, or the border of the
+        // nearest element inside that draws one (a component's `border-red-500` for its Box)
+        [$kind, $color, $borderAttrs] = $set['border'] ?? [false, null, null];
+        $kind ??= false;
+        $color = $color === null ? null : $this->color($color);
+        $inner = $parent?->innerBorder;
+        if ($kind !== false) {
+            if (!$ownBorder && $inner !== null) {
+                $color = $inner;
+            }
+            $inner = null;
+        } elseif ($ownBorder && $color !== null) {
+            $inner = $color;
+        }
+        $borderStyle = Style::of($color ?? $fg, $bg, $borderAttrs ?? 0);
+        $shadow = $set['shadow'] ?? false;
+        $shadow = $shadow === false || $shadow === 'none' ? null : ($shadow === true ? Color::DEFAULT : $this->color($shadow));
         $sides = function (string $name) use ($set): array {
             $out = [];
             foreach (self::SIDES as $side) {
@@ -706,6 +904,8 @@ final class Stylesheet
             (string) $this->value($set['justify-content'] ?? 'start'),
             ($this->value($set['display'] ?? 'block')) === 'none',
             $direction === null ? null : ($direction === 'row' ? 'row' : 'column'),
+            $inner,
+            $shadow,
         );
     }
 
@@ -722,11 +922,12 @@ final class Stylesheet
         return $value;
     }
 
-    /** A colour value as a `Color` int (see `Color::parse()`). */
+    /** A colour value as a `Color` int (see `Color::parse()`); the default colour on a monochrome sheet. */
     private function color(mixed $value): int
     {
         $value = $this->value($value);
-        return \is_int($value) ? $value : Color::parse((string) $value);
+        $color = \is_int($value) ? $value : Color::parse((string) $value);
+        return $this->mono ? Color::DEFAULT : $color;
     }
 
     /** @return array{int,int,int,int} */

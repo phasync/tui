@@ -111,6 +111,10 @@ abstract class TerminalDevice
     private ?float $probing = null;
     private string $probe = '';
     private bool $kitty = false;
+    /** The terminal's background as it answered OSC 11: 'light' or 'dark'; null when it did not. */
+    private ?string $background = null;
+    /** @var list<\Closure(): void> called when the probe has ended */
+    private array $probed = [];
     /** Mouse motion without a button is reported (mode 1003 on the terminal). */
     private bool $motion = false;
     /** Inline mode: mouse reporting is on, because a surface in the tree asked for it. */
@@ -215,6 +219,7 @@ abstract class TerminalDevice
         $this->pen = null;
         $this->shown = null;
         $this->kitty = false;
+        $this->background = null;
         $this->motion = false;
         $this->mouse = false;
         $this->terminalName = '';
@@ -241,11 +246,11 @@ abstract class TerminalDevice
             $root->on('clipboard', fn(string $text) => $this->clipboard($text)),
             $root->on('close', fn() => $this->release(false)),
         ];
-        // ask for the kitty keyboard protocol and the terminal's name; the answer to primary
-        // device attributes (which every terminal answers) ends the probe
+        // ask for the kitty keyboard protocol, the terminal's name and its background colour;
+        // the answer to primary device attributes (which every terminal answers) ends the probe
         $this->probing = microtime(true);
         $this->probe = '';
-        $this->send(($this->inline ? self::INLINE_TAKEOVER : self::TAKEOVER) . ($root->title() !== '' ? Ansi::title($root->title()) : '') . "\e[?u\e[>0q\e[c");
+        $this->send(($this->inline ? self::INLINE_TAKEOVER : self::TAKEOVER) . ($root->title() !== '' ? Ansi::title($root->title()) : '') . "\e[?u\e[>0q\e]11;?\e\\\e[c");
         go($this->frames(...));
         go($this->inputs(...));
         // the code that attached fails: give the terminal back, so the exception ends fiber\run()
@@ -799,15 +804,47 @@ abstract class TerminalDevice
         if (preg_match('/\eP>\|([^\e\x07]*)(?:\e\\\\|\x07)/', $this->probe, $m)) {
             $this->terminalName = $m[1];
         }
-        $bytes = (string) preg_replace(['/\e\[\?[\d;]*[uc]/', '/\eP>\|[^\e\x07]*(?:\e\\\\|\x07)/'], '', $this->probe);
+        if (preg_match('/\e\]11;rgb:([0-9a-f]+)\/([0-9a-f]+)\/([0-9a-f]+)(?:\e\\\\|\x07)/i', $this->probe, $m)) {
+            // (each channel 1 to 4 hex digits) by its luminance
+            [$r, $g, $b] = array_map(fn(string $h) => hexdec($h) / (16 ** \strlen($h) - 1), [$m[1], $m[2], $m[3]]);
+            $this->background = 0.2126 * $r + 0.7152 * $g + 0.0722 * $b > 0.5 ? 'light' : 'dark';
+        }
+        $bytes = (string) preg_replace(['/\e\[\?[\d;]*[uc]/', '/\eP>\|[^\e\x07]*(?:\e\\\\|\x07)/', '/\e\]11;[^\e\x07]*(?:\e\\\\|\x07)/'], '', $this->probe);
         $this->probing = null;
         $this->probe = '';
         if ($kitty && $this->root !== null) {
             $this->kitty = true;
             $this->send("\e[>1u");
         }
+        [$probed, $this->probed] = [$this->probed, []];
+        foreach ($probed as $listener) {
+            $listener();
+        }
         if ($bytes !== '') {
             $this->receive($bytes, true);
+        }
+    }
+
+    /**
+     * The terminal's background as it told when attached (it answers the OSC 11 query):
+     * `'light'` or `'dark'`, null when it did not answer (yet). The themes follow it: a program
+     * that sets no theme is drawn in `light` on a light terminal, else in `dark`. The answer
+     * comes a moment after `attach()` (it never holds start-up up), and the screen is drawn
+     * again in the other theme when it says light. `FakeTerminal` answers as it was made
+     * (`background:`).
+     */
+    public function background(): ?string
+    {
+        return $this->background;
+    }
+
+    /** @internal Call $listener when the terminal has answered what attach() asked (at once when it has). */
+    public function whenProbed(\Closure $listener): void
+    {
+        if ($this->probing === null) {
+            $listener();
+        } else {
+            $this->probed[] = $listener;
         }
     }
 

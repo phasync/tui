@@ -25,9 +25,11 @@ use phasync\Tui\Text;
  * `right`, `center`) and `sortable` (default true). **Rows** by key (your ids: pids, file
  * names), each a list of cells in column order; a cell takes markup (`'<fg=red>failed</>'`,
  * see `Markup`) and may carry SGR escape sequences for colours. A cell wider than its column
- * is cut with "…". The widths of `'auto'` columns are measured when the rows change (a new
- * `rows` array, `setItems()`), not when the cursor or the view moves, so moving through
- * 10,000 rows costs what it costs through 100. When the columns do not fit, the
+ * is cut with "…". The widths of `'auto'` columns are measured when the rows change (`rows`
+ * or `setItems()` with other cells), not when the cursor or the view moves, and not when a
+ * render builds the same rows anew (they are compared by value first), so moving through
+ * 10,000 rows costs what it costs through 100 and an app that rebuilds its row array on every
+ * render is not measured again. When the columns do not fit, the
  * table scrolls sideways by column (Left/Right, the wheel sideways), the first column shown
  * at the left edge.
  *

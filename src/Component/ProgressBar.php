@@ -4,6 +4,7 @@ namespace phasync\Tui\Component;
 
 use phasync\Tui\Ansi;
 use phasync\Tui\Component;
+use phasync\Tui\Markup;
 use phasync\Tui\Text;
 
 /**
@@ -24,10 +25,12 @@ use phasync\Tui\Text;
  * `$value` and `$label` are props: place a `new ProgressBar(...)` in the tree on every render,
  * or set them with `setValue()`. The value may be a closure (`fn() => $state->done / 100`):
  * the bar reads it when it renders, and renders again by itself when a `State` the closure read
- * changes, without the component around it rendering. The label takes markup (see `Markup`).
- * A new value that draws the same bar (a change smaller than a cell, the same percentage)
- * costs nothing: the bar compares what it would draw, so `setValue()` from a fast coroutine is
- * cheap. One row; it takes the width it is given.
+ * changes, without the component around it rendering (so a closure reading a value that
+ * changes every frame is called every frame). The label takes markup (see `Markup`). A new
+ * value that draws the same bar (a change smaller than a cell, the same percentage) costs a
+ * comparison: the bar compares the cells it would fill and the label it would show with what
+ * it drew before drawing anything, so neither `setValue()` from a fast coroutine nor a closure
+ * needs rounding of its own. One row; it takes the width it is given.
  *
  * **Style**: `ProgressBar` (the label and the empty part), the part `ProgressBar::bar` (the
  * filled part; the default theme: the accent colour).
@@ -36,7 +39,7 @@ class ProgressBar extends Component
 {
     private int $tick = 0;
     private bool $animating = false;
-    /** What it wrote last. */
+    /** What it drew last: its look in short (drawn()), so a value that draws the same costs no drawing. */
     private string $drawn = '';
 
     /**
@@ -64,7 +67,7 @@ class ProgressBar extends Component
     {
         $this->value = $value;
         $this->label = $label ?? $this->label;
-        if ($value instanceof \Closure || !$this->isMounted() || $this->drawing($value) !== $this->drawn) {
+        if ($value instanceof \Closure || !$this->isMounted() || $this->look($value) !== $this->drawn) {
             $this->requestRender();
         }
     }
@@ -99,10 +102,10 @@ class ProgressBar extends Component
     {
         $value = $this->value();
         $this->animate($value);       // (every value it gets, by props or setValue(), comes with a render)
-        $out = $this->drawing($value);
-        if ($out !== $this->drawn) {
-            $this->drawn = $out;
-            $this->surface->write($out);
+        $look = $this->look($value);
+        if ($look !== $this->drawn) {
+            $this->drawn = $look;
+            $this->surface->write($this->drawing($value));
         }
         return null;
     }
@@ -112,6 +115,24 @@ class ProgressBar extends Component
     {
         $value = $this->value instanceof \Closure ? ($this->value)() : $this->value;
         return $value === null ? null : (float) $value;
+    }
+
+    /**
+     * What the bar shows for $value, in short: its width, the label (with the percentage), the
+     * cells filled and the styles. Equal for two values that draw the same.
+     */
+    private function look(float|\Closure|null $value): string
+    {
+        if ($value instanceof \Closure) {
+            $value = $this->value();
+        }
+        $cols = $this->surface->cols();
+        $label = $this->labelText($value);
+        $room = intdiv($cols, 2) - 1;
+        $shown = $room < 1 || $label === '' ? 0 : min($room, Text::width(Markup::plain($label)));
+        $width = max(0, $cols - ($shown === 0 ? 0 : $shown + 1));
+        $cells = $value === null ? 't' . $this->tick : (int) round(max(0, min(1, $value)) * $width);
+        return $cols . "\0" . $cells . "\0" . spl_object_id($this->style()) . "\0" . spl_object_id($this->style('bar')) . "\0" . $label;
     }
 
     /** What the bar writes for $value at its size now. */

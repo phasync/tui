@@ -70,6 +70,8 @@ final class Viewport
     private ?string $paintedGeometry = null;
     /** @var array<int, array{list<string>, list<Style>}> the cells painted on each host row, outer width */
     private array $frame = [];
+    /** The shadow it casts on the windows below, right and under it: their cells dimmed, on this background (`Color::DEFAULT`: dimmed only); null for none. */
+    private ?int $shadow = null;
 
     /**
      * @internal Viewports are made by `Surface::host()`.
@@ -223,6 +225,42 @@ final class Viewport
         $this->fitSource();
         $this->owner->changed($this);
         return $this;
+    }
+
+    /**
+     * Cast a shadow on the windows below this one, one cell to the right of it and one row
+     * under it: their cells there are drawn dimmed, on the background $color (`Color::DEFAULT`:
+     * dimmed only, in their own colours); null for none. Dialogs have one in the default themes
+     * (the `shadow` style). It falls on windows, not on what the host draws itself.
+     */
+    public function setShadow(?int $color): static
+    {
+        if ($color !== $this->shadow) {
+            $this->shadow = $color;
+            $this->owner->changed($this);
+        }
+        return $this;
+    }
+
+    /** The shadow's background (see `setShadow()`), null for none. */
+    public function shadow(): ?int
+    {
+        return $this->shadow;
+    }
+
+    /**
+     * @internal The host rectangles its shadow falls on, with its colour: the column right of it
+     * (from its second row down to the row under it) and the row under it (from its second
+     * column on).
+     *
+     * @return list<array{int,int,int,int,int}> x, y, width, height, colour
+     */
+    public function shadowRects(): array
+    {
+        if ($this->shadow === null || $this->width <= 0 || $this->height <= 0) {
+            return [];
+        }
+        return [[$this->x + $this->width, $this->y + 1, 1, $this->height, $this->shadow], [$this->x + 1, $this->y + $this->height, $this->width, 1, $this->shadow]];
     }
 
     /** The kind of line the border is drawn with (see `setBorder()`), also while there is none. */
@@ -569,8 +607,9 @@ final class Viewport
      *
      * @param array<int, mixed>             $wanted host rows to consider, as keys
      * @param list<array{int,int,int,int}> $covers rectangles of the windows above this one
+     * @param list<array{int,int,int,int,int}> $shades the shadows of windows above this one (see shadowRects())
      */
-    public function paint(array $wanted, int $cols, int $rows, array $covers = []): string
+    public function paint(array $wanted, int $cols, int $rows, array $covers = [], array $shades = []): string
     {
         // the version first: changes made while the rows are read are painted next time
         $version = $this->source->version();
@@ -665,6 +704,13 @@ final class Viewport
                         }
                     }
                 }
+                foreach ($shades as [$sx, $sy, $sw, $sh, $color]) {
+                    if ($ty >= $sy && $ty < $sy + $sh) {
+                        for ($x = max($x0, $sx); $x < min($x0 + $w, $sx + $sw); $x++) {
+                            $styles[$x - $x0] = self::shaded($styles[$x - $x0], $color);
+                        }
+                    }
+                }
                 $old = $this->frame[$ty] ?? null;
                 $this->frame[$ty] = [$chars, $styles];
                 $out .= self::diffAnsi($chars, $styles, $old, $visible, $x0, $ty);
@@ -673,6 +719,13 @@ final class Viewport
         $this->paintedVersion = $version;
         $this->paintedKey = $this->paintKey();
         return $out;
+    }
+
+    /** $style under a shadow of $color: dimmed, on that background unless it is the default. */
+    private static function shaded(Style $style, int $color): Style
+    {
+        $style = $style->with(Style::DIM);
+        return $color === Color::DEFAULT ? $style : $style->withBg($color);
     }
 
     /** @param array{int,int,int,int} $sel */

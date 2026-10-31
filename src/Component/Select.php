@@ -97,13 +97,18 @@ final class Select extends Table implements Field
 
     /**
      * Replace the items (labels or cells by key). The current and the marked items stay
-     * (by key) where they still are.
+     * (by key) where they still are. The same items as shown (a render that builds its list
+     * anew every time) cost a comparison: nothing is measured or drawn again.
      *
      * @param array<int|string, string|list<string>> $items
      */
     public function setItems(array $items): void
     {
-        $this->rows = self::rows($items);
+        $rows = self::rows($items);
+        if ($rows === $this->rows) {
+            return;     // (the same items: nothing to measure or draw again)
+        }
+        $this->rows = $rows;
         $this->propsChanged();
         $this->list()?->setItems($items);       // a dropdown's open list shows them too (and is placed again at its new size)
         $this->requestRender();

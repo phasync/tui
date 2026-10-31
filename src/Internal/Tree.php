@@ -47,6 +47,14 @@ final class Tree
     private array $layouts = [];
     /** @var array<string, array{string, array<string, mixed>}> per text path: its content and what was computed from it (lines per width, the widest line) */
     private array $wrapped = [];
+    /** @var array<string, Surface> the elements of the last build with a `hover:` class or `:hover` rule, by path */
+    private array $hovers = [];
+    /** @var array<string, array{bool, Element}> per path: whether the element was focused at the last build, the element */
+    private array $focused = [];
+    /** @var array<string, array{bool, Element}> the same, for the build in progress */
+    private array $focusing = [];
+    /** @var list<array{\Closure, Element}> onFocus/onBlur callbacks the last builds found due, to call after the render */
+    private array $focusCalls = [];
 
     /**
      * @param \Closure(string $key, Component $fresh, bool $create): ?Component $place  the child component for a component element (without $create: the one there, or null)
@@ -64,10 +72,15 @@ final class Tree
     {
         $this->seen = [];
         $this->showsHelp = false;
+        $this->hovers = [];
+        $this->focusing = [];
         $style = null;
         if ($root instanceof Column || $root instanceof Row || $root instanceof Layers) {
             // the root container arranges the component's own surface
-            $style = $sheet->compute($root, $this->states($root, $this->owner->surface), $base);
+            $style = $sheet->compute($root, $this->states($root, $this->owner->surface, 'r'), $base);
+            if ($style->hoverAware) {
+                $this->hovers['r'] = $this->owner->surface;
+            }
         }
         if ($style !== null && !$style->hidden) {
             $layout = $this->container($root, 'r', $sheet, $style);
@@ -97,6 +110,19 @@ final class Tree
         }
         $this->builtFor = $root;
         $this->builtItem = $item;
+        // the focus entered or left an element with onFocus/onBlur: called after the render
+        // (as the frame shows it: blurs first, then what has the focus now)
+        $focus = [];
+        foreach ($this->focusing + $this->focused as $path => [, $node]) {
+            $was = $this->focused[$path][0] ?? false;
+            $now = $this->focusing[$path][0] ?? false;
+            $fn = $now !== $was ? $node->attribute($now ? 'onFocus' : 'onBlur') : null;
+            if ($fn !== null) {
+                $now ? $focus[] = [$fn, $node] : $this->focusCalls[] = [$fn, $node];
+            }
+        }
+        array_push($this->focusCalls, ...$focus);
+        $this->focused = $this->focusing;
         foreach ($this->surfaces as $path => $surface) {
             if (!isset($this->seen[$path])) {
                 unset($this->surfaces[$path], $this->painted[$path], $this->wrapped[$path], $this->items[$path], $this->layouts[$path]);
@@ -214,7 +240,10 @@ final class Tree
             $node = new Text([$node]);
         }
         $surface = $this->surface($path);
-        $style = $sheet->compute($node, $this->states($node, $surface), $parent);
+        $style = $sheet->compute($node, $this->states($node, $surface, $path), $parent);
+        if ($style->hoverAware && !$this->dry) {
+            $this->hovers[$path] = $surface;
+        }
         if ($style->hidden) {
             return null;
         }
@@ -358,6 +387,7 @@ final class Tree
         $item->maxHeight = $style->maxHeight;
         $item->border = $style->border;
         $item->borderStyle = $style->borderStyle;
+        $item->shadow = $style->shadow;
         $item->align = $style->align;
         $item->titleAlign = $style->titleAlign;
         $item->margin = $style->margin;
@@ -469,24 +499,60 @@ final class Tree
     }
 
 
-    /** @return list<string> */
-    private function states(Element $node, Surface $surface): array
+    /** @return list<string> the states of the element at $path, shown in $surface (its own come with it, see Stylesheet) */
+    private function states(Element $node, Surface $surface, string $path): array
     {
         $states = [];
         $focused = $node instanceof Component ? $node->hasFocus() : ($surface->viewport() !== null && $surface->hasFocus() && $this->owner->hasFocus());
         if ($focused) {
             $states[] = 'focused';
         }
-        if ($node->attribute('disabled')) {
-            $states[] = 'disabled';
+        if (!$this->dry && ($node->attribute('onFocus') !== null || $node->attribute('onBlur') !== null)) {
+            $this->focusing[$path] = [$focused, $node];
+        }
+        if (Component::pointerOver($surface)) {
+            $states[] = 'hover';
         }
         return [...$states, ...$this->widthStates()];
     }
 
-    /** @return list<string> the width class of the screen the owner is on (`sm`, `md`, `lg`), as a state */
+    /**
+     * The paths of the elements with `hover:` classes or `:hover` rules that the mouse is over
+     * now, as one string: when it changes, the owner lays its tree out again.
+     */
+    public function hovered(): string
+    {
+        $over = '';
+        foreach ($this->hovers as $path => $surface) {
+            if (Component::pointerOver($surface)) {
+                $over .= $path . "\0";
+            }
+        }
+        return $over;
+    }
+
+    /** True if an element of the last build follows the mouse. */
+    public function followsPointer(): bool
+    {
+        return $this->hovers !== [];
+    }
+
+    /**
+     * The onFocus/onBlur callbacks that came due in the builds since the last call, with
+     * their elements: the owner calls them after its render.
+     *
+     * @return list<array{\Closure, Element}>
+     */
+    public function takeFocusCalls(): array
+    {
+        [$calls, $this->focusCalls] = [$this->focusCalls, []];
+        return $calls;
+    }
+
+    /** @return list<string> the breakpoints in force on the screen the owner is on (`sm` ... `xl`), as states */
     private function widthStates(): array
     {
-        return [Stylesheet::widthClass($this->owner->surface->root()->cols())];
+        return Stylesheet::breakpoints($this->owner->surface->root()->cols());
     }
 
     /** An item that shows nothing and needs no room (for what is hidden). */

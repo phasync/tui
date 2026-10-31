@@ -17,7 +17,9 @@ use phasync\Tui\Text;
  *     ], gap: 2)
  *
  * Drawn as `[ label ]`, one row, as wide as that (its `measure()`). The label takes markup
- * (`'<u>S</u>ave'`, see `Markup`). Pressing it calls
+ * (`'<u>S</u>ave'`, see `Markup`), and may be a closure, as a `Text`'s content may
+ * (`new Button(fn() => "Run ({$s->queued})")`): it is called when the button renders, and the
+ * button renders again by itself when a `State` it read changes. Pressing it calls
  * `$onPress($button)` and emits the event `press`. In a `Form`, a button without `$onPress`
  * submits the form. A disabled button (`disabled: true`) takes no input.
  *
@@ -27,13 +29,13 @@ use phasync\Tui\Text;
 class Button extends Component
 {
     /**
-     * @param string $label the text on it (a prop)
+     * @param string|(\Closure(): string) $label the text on it, or a closure giving it (a prop)
      * @param (\Closure(Button): void)|null $onPress what pressing it does
      * @param string|list<string>|null $class
      * @param array<string, mixed>|null $style
      */
     public function __construct(
-        public string $label,
+        public string|\Closure $label,
         private readonly ?\Closure $onPress = null,
         ?string $key = null,
         ?string $id = null,
@@ -92,12 +94,18 @@ class Button extends Component
 
     public function measure(int $cols, int $rows): ?array
     {
-        return [min($cols, Text::width(Markup::plain($this->label)) + 4), 1];
+        return [min($cols, Text::width(Markup::plain($this->labelText())) + 4), 1];
+    }
+
+    /** The label now: the prop, or what its closure gives. */
+    private function labelText(): string
+    {
+        return str_replace(["\r", "\n"], ' ', (string) ($this->label instanceof \Closure ? ($this->label)() : $this->label));
     }
 
     protected function render(): null
     {
-        $text = Text::truncate('[ ' . $this->markup($this->label) . ' ]', $this->surface->cols());
+        $text = Text::truncate('[ ' . $this->markup($this->labelText()) . ' ]', $this->surface->cols());
         $this->surface->write("\e[?25l\e[2J\e[H" . Ansi::style($this->style()->text) . $text);
         return null;
     }

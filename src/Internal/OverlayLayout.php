@@ -43,6 +43,7 @@ final class OverlayLayout implements Layout
             } elseif ($view->hasBorder()) {
                 $view->setBorder(false);
             }
+            $view->setShadow($style->shadow);
             $view->move($x, $y)->resize($w, $h)->setFit(true);
             $order[] = $surface;
         }

@@ -31,19 +31,34 @@ namespace phasync\Tui;
  * - `style`: inline style properties (see `Stylesheet`), over every rule;
  * - `width`, `height`: its size in a `Row` (width) or `Column` (height), and in `Layers` both:
  *   cells, `'25%'`, `'1fr'` (a share of what is left) or `'auto'` (as much as its content needs);
- * - `disabled`: shown in the `:disabled` style; a disabled widget takes no input.
+ * - `disabled`: shown in the `:disabled` style; a disabled widget takes no input;
+ * - `selected` and `state`: put the element in the state `selected` (`selected: $id === $current`)
+ *   or in states of your own (`state: ['done']`), for `selected:` classes and `:selected` rules
+ *   (`new Text('<b>Card</>', class: 'selected:bg-sky-700', selected: true)`);
+ * - `onFocus`, `onBlur`: closures called (with the element) when the focus enters the element
+ *   (a component in it, or the component itself, gets the keys) and when it leaves, so a
+ *   program without classes can follow the focused row: `onFocus: fn() => $s->current = $id`.
+ *
+ * An element is in the state `hover` while the mouse is over it, when a `hover:` class or a
+ * `:hover` rule asks for it (it then follows the mouse); `focused` while the focus is in it.
  */
 abstract class Element
 {
-    /** @var array{key: ?string, id: ?string, class: list<string>, style: array<string, mixed>, width: int|string|null, height: int|string|null, disabled: bool} */
-    private array $elementAttributes = ['key' => null, 'id' => null, 'class' => [], 'style' => [], 'width' => null, 'height' => null, 'disabled' => false];
+    /** @var array{key: ?string, id: ?string, class: list<string>, style: array<string, mixed>, width: int|string|null, height: int|string|null, disabled: bool, state: list<string>, onFocus: ?\Closure, onBlur: ?\Closure} */
+    private array $elementAttributes = ['key' => null, 'id' => null, 'class' => [], 'style' => [], 'width' => null, 'height' => null,
+        'disabled' => false, 'state' => [], 'onFocus' => null, 'onBlur' => null];
 
     /**
      * Set attributes (see the class description); those not given stay as they are. Returns the
      * element itself: `$this->child('name', fn() => new Editor())->with(id: 'name', height: 1)`.
      *
+     * `selected: true` adds the state `selected` to `state`, `selected: false` takes it out.
+     *
      * @param string|list<string>|null $class
      * @param array<string, mixed>|null $style
+     * @param string|list<string>|null $state the element's own states (replacing those it had)
+     * @param (\Closure(Element): mixed)|null $onFocus
+     * @param (\Closure(Element): mixed)|null $onBlur
      */
     final public function with(
         ?string $key = null,
@@ -53,9 +68,21 @@ abstract class Element
         int|string|null $width = null,
         int|string|null $height = null,
         ?bool $disabled = null,
+        ?bool $selected = null,
+        string|array|null $state = null,
+        ?\Closure $onFocus = null,
+        ?\Closure $onBlur = null,
     ): static {
         $before = $this->elementAttributes;
-        foreach (['key' => $key, 'id' => $id, 'width' => $width, 'height' => $height, 'disabled' => $disabled, 'style' => $style] as $name => $value) {
+        if ($state !== null) {
+            $this->elementAttributes['state'] = \is_array($state) ? array_values($state) : preg_split('/[\s,]+/', trim($state), -1, \PREG_SPLIT_NO_EMPTY);
+        }
+        if ($selected !== null) {
+            $states = array_values(array_diff($this->elementAttributes['state'], ['selected']));
+            $this->elementAttributes['state'] = $selected ? [...$states, 'selected'] : $states;
+        }
+        foreach (['key' => $key, 'id' => $id, 'width' => $width, 'height' => $height, 'disabled' => $disabled, 'style' => $style,
+            'onFocus' => $onFocus, 'onBlur' => $onBlur] as $name => $value) {
             if ($value !== null) {
                 if ($name === 'width' || $name === 'height') {
                     Internal\Size::parse($value === 'auto' ? 0 : $value);
@@ -74,7 +101,7 @@ abstract class Element
 
     /**
      * An attribute: `'key'`, `'id'`, `'class'` (a list), `'style'` (an array), `'width'`,
-     * `'height'` or `'disabled'`.
+     * `'height'`, `'disabled'`, `'state'` (a list), `'onFocus'` or `'onBlur'`.
      *
      * @throws \InvalidArgumentException for another name
      */

@@ -18,6 +18,8 @@ final class LayoutItem
     public ?ElementLayout $layout = null;
     public string|false $border = false;
     public ?Style $borderStyle = null;
+    /** The shadow its window casts (see Viewport::setShadow()). */
+    public ?int $shadow = null;
     public string $title = '';
     public string $titleAlign = 'left';
     public string $align = 'left';

@@ -32,6 +32,11 @@ use phasync\Tui\Internal\Live;
  * (read what it collected from it). **Quitting**: the root quits when it is disposed
  * (`$this->dispose()` in the root, `$root->dispose()` from anywhere) or when Ctrl-Q reaches it
  * and no component on the way binds Ctrl-Q (a `Help` element lists it as "quit").
+ * **Theme**: `theme:` is `'dark'`, `'light'` or `'mono'` (see `Stylesheet::theme()`); without it the
+ * program is drawn in the theme for the terminal's background (it is asked when the program
+ * starts: `light` on a light terminal, `dark` on a dark one and when it does not say). A
+ * stylesheet of the program's (`$root->setStylesheet(Stylesheet::default()->with([...]))`)
+ * refines the theme in force.
  * **Failing**: an exception anywhere in the program that no error boundary contains (the
  * root's hooks, handlers or coroutines, the closure given as the root) ends the program: the
  * tree is disposed, the terminal restored, and the exception comes out of the call, as it
@@ -48,11 +53,12 @@ final class Tui
      * ended.
      *
      * @param Element|(\Closure(): ?Element) $root
+     * @param string|null $theme `'dark'`, `'light'`, `'mono'`; null: the one for the terminal's background
      * @throws \RuntimeException when STDIN or STDOUT is not a terminal
      */
-    public static function run(Element|\Closure $root): Component
+    public static function run(Element|\Closure $root, ?string $theme = null): Component
     {
-        return self::until(new Tty(), $root);
+        return self::until(new Tty(), $root, $theme);
     }
 
     /**
@@ -63,11 +69,12 @@ final class Tui
      * component, ended.
      *
      * @param Element|(\Closure(): ?Element) $root
+     * @param string|null $theme as for `run()`
      * @throws \RuntimeException when STDIN or STDOUT is not a terminal
      */
-    public static function inline(Element|\Closure $root, bool $keep = true): Component
+    public static function inline(Element|\Closure $root, bool $keep = true, ?string $theme = null): Component
     {
-        return self::until(Tty::inline(keep: $keep), $root);
+        return self::until(Tty::inline(keep: $keep), $root, $theme);
     }
 
     /**
@@ -83,18 +90,20 @@ final class Tui
      *     });
      *
      * @param Element|(\Closure(): ?Element) $root
+     * @param string|null $theme      as for `run()`
+     * @param string|null $background what the terminal says its background is: `'dark'`, `'light'`, null for nothing (see `FakeTerminal`)
      */
-    public static function headless(Element|\Closure $root, int $cols = 80, int $rows = 24, bool $inline = false): FakeTerminal
+    public static function headless(Element|\Closure $root, int $cols = 80, int $rows = 24, bool $inline = false, ?string $theme = null, ?string $background = 'dark'): FakeTerminal
     {
-        $terminal = $inline ? FakeTerminal::inline($cols, $rows) : new FakeTerminal($cols, $rows);
-        self::start($root, $terminal);
+        $terminal = $inline ? FakeTerminal::inline($cols, $rows, background: $background) : new FakeTerminal($cols, $rows, background: $background);
+        self::start($root, $terminal, $theme);
         return $terminal;
     }
 
-    private static function until(TerminalDevice $device, Element|\Closure $root): Component
+    private static function until(TerminalDevice $device, Element|\Closure $root, ?string $theme): Component
     {
-        return \fiber\run(static function () use ($device, $root): Component {
-            $app = self::start($root, $device);
+        return \fiber\run(static function () use ($device, $root, $theme): Component {
+            $app = self::start($root, $device, $theme);
             try {
                 $device->wait();
             } finally {
@@ -104,8 +113,11 @@ final class Tui
         });
     }
 
-    private static function start(Element|\Closure $root, TerminalDevice $device): Component
+    private static function start(Element|\Closure $root, TerminalDevice $device, ?string $theme = null): Component
     {
+        if ($theme !== null) {
+            Stylesheet::theme($theme);      // (an unknown one fails before the terminal is taken over)
+        }
         if ($root instanceof \Closure) {
             $live = new Live($root);
             $reads = State::reads();
@@ -124,6 +136,9 @@ final class Tui
             $app = $root instanceof Component ? $root : new Live($root);
         }
         $app->quitOn(self::QUIT);
+        if ($theme !== null) {
+            $app->setTheme($theme);
+        }
         return $app->start($device);
     }
 }

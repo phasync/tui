@@ -34,6 +34,8 @@ final class ComputedStyle
      * @param string           $justify     a container's children along it: `'start'`, `'center'`, `'end'` or `'between'`
      * @param bool             $hidden      `display: none`: not shown, as if not in the tree
      * @param string|null      $direction   a container laid out as a `'row'` or a `'column'`, null: as its element is
+     * @param int|null         $innerBorder @internal a border colour set on an element without a border, for the border of the element inside it
+     * @param int|null         $shadow      a shadow under the window right and below (`shadow`): the colour of its background (`Color::DEFAULT`: the cells under it dimmed only), null for none
      */
     public function __construct(
         public readonly Style $text,
@@ -56,6 +58,8 @@ final class ComputedStyle
         public readonly string $justify = 'start',
         public readonly bool $hidden = false,
         public readonly ?string $direction = null,
+        public readonly ?int $innerBorder = null,
+        public readonly ?int $shadow = null,
     ) {
     }
 

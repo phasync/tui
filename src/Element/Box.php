@@ -26,6 +26,9 @@ final class Box extends Element
     /**
      * @param string|list<string>|null $class
      * @param array<string, mixed>|null $style
+     * @param int|string|null $padding blank cells between the border and the content (`1`, `'0 1'`; the `padding` style)
+     * @param string|list<string> $state its own states for the stylesheet; `$selected` adds `selected` (see `Element`)
+     * @param (\Closure(Element): mixed)|null $onFocus called when the focus enters it, `$onBlur` when it leaves (see `Element`)
      */
     public function __construct(
         public readonly Element $child,
@@ -37,9 +40,14 @@ final class Box extends Element
         ?array $style = null,
         int|string|null $width = null,
         int|string|null $height = null,
+        int|string|null $padding = null,
         bool $disabled = false,
+        bool $selected = false,
+        string|array $state = [],
+        ?\Closure $onFocus = null,
+        ?\Closure $onBlur = null,
     ) {
-        $this->with($key, $id, $class, $style, $width, $height, $disabled);
+        $this->with($key, $id, $class, Children::style($style, ['padding' => $padding]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur);
     }
 
     /** @internal This box with a closure's title as it is now (what the component that shows it renders). */
@@ -48,6 +56,6 @@ final class Box extends Element
         if (!$this->title instanceof \Closure) {
             return $this;
         }
-        return new self($this->child, (string) ($this->title)(), null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'));
+        return new self($this->child, (string) ($this->title)(), null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'), state: $this->attribute('state'), onFocus: $this->attribute('onFocus'), onBlur: $this->attribute('onBlur'));
     }
 }

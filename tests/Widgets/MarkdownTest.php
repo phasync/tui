@@ -75,9 +75,9 @@ it('renders headings, paragraphs, emphasis and code spans with their parts style
         $rows = mdRows($t);
         expect($rows[0])->toBe('Heading one')
             ->and($rows[2])->toBe('Intro with bold, emphasis, gone and code')
-            ->and($t->dump())->toContain('[bold underline fg=6]Heading [/][bold italic underline fg=6]one[/]')
+            ->and($t->dump())->toContain('[bold underline fg=#38bdf8]Heading [/][bold italic underline fg=#38bdf8]one[/]')
             ->and($t->dump())->toContain('[bold]bold[/]')->toContain('[italic]emphasis[/]')->toContain('[strike]gone[/]')
-            ->and($t->dump())->toContain('[fg=3]code[/]')->toContain('[bold fg=6]Second level[/]');
+            ->and($t->dump())->toContain('[fg=#fbbf24]code[/]')->toContain('[bold fg=#38bdf8]Second level[/]');
     });
 });
 
@@ -97,7 +97,7 @@ it('wraps paragraphs between words at 40 columns, every row within the width', f
 it('shows a link with its address dimmed after the text', function () {
     md(new Markdown('See [the docs](https://x.org/a) now, <https://y.org> too.'), 60, 2, function (FakeTerminal $t) {
         expect(mdRows($t)[0])->toBe('See the docs (https://x.org/a) now, https://y.org too.')
-            ->and($t->dump())->toContain('[underline fg=6]the docs[/][dim fg=8] (https://x.org/a)[/]');
+            ->and($t->dump())->toContain('[underline fg=#38bdf8]the docs[/][dim fg=#64748b] (https://x.org/a)[/]');
     });
 });
 
@@ -129,7 +129,7 @@ it('wraps a long list item under its marker', function () {
 it('renders block quotes with a bar, nested blocks inside', function () {
     md(new Markdown("> quoted *text*\n> more\n>\n> - item\n\nafter"), 30, 8, function (FakeTerminal $t) {
         expect(mdRows($t))->toMatchArray(['│ quoted text more', '│', '│ • item', '', 'after'])
-            ->and($t->dump())->toContain('[fg=8]│ [/]');
+            ->and($t->dump())->toContain('[fg=#64748b]│ [/]');
     });
 });
 
@@ -137,22 +137,22 @@ it('renders fenced code blocks filled across the width, highlighting php, js, sh
     md(new Markdown("```php\n<?php\n// c\n\$x = \"s\" . 42;\nreturn true;\n```"), 24, 6, function (FakeTerminal $t) {
         $d = $t->dump();
         expect(mdRows($t)[2])->toBe(' $x = "s" . 42;')
-            ->and($d)->toContain('[fg=5 bg=8]<?php[/]')->toContain('[italic fg=8 bg=8]// c[/]')->toContain('[fg=6 bg=8]$x[/]')
-            ->and($d)->toContain('[fg=2 bg=8]"s"[/]')->toContain('[fg=3 bg=8]42[/]')->toContain('[fg=5 bg=8]return[/]');
+            ->and($d)->toContain('[fg=5 bg=#1e293b]<?php[/]')->toContain('[italic fg=#64748b bg=#1e293b]// c[/]')->toContain('[fg=#38bdf8 bg=#1e293b]$x[/]')
+            ->and($d)->toContain('[fg=#34d399 bg=#1e293b]"s"[/]')->toContain('[fg=#fbbf24 bg=#1e293b]42[/]')->toContain('[fg=5 bg=#1e293b]return[/]');
     });
     md(new Markdown("```js\nconst a = `x` + 1; // c\n```\n```sh\necho \$HOME --flag # c\n```\n```json\n{\"k\": [true, 2]}\n```\n``` weird\nplain\n```"), 40, 12, function (FakeTerminal $t) {
         $d = $t->dump();
-        expect($d)->toContain('[fg=5 bg=8]const[/]')->toContain('[fg=2 bg=8]`x`[/]')
+        expect($d)->toContain('[fg=5 bg=#1e293b]const[/]')->toContain('[fg=#34d399 bg=#1e293b]`x`[/]')
             ->and($t->text())->toContain(' echo $HOME --flag # c');
-        expect($d)->toContain('[fg=6 bg=8]$HOME[/]')->toContain('[fg=3 bg=8]--flag[/]')
-            ->and($d)->toContain('[fg=6 bg=8]"k"[/]')->toContain('[fg=5 bg=8]true[/]')->toContain('[fg=3 bg=8]2[/]')
+        expect($d)->toContain('[fg=#38bdf8 bg=#1e293b]$HOME[/]')->toContain('[fg=#fbbf24 bg=#1e293b]--flag[/]')
+            ->and($d)->toContain('[fg=#38bdf8 bg=#1e293b]"k"[/]')->toContain('[fg=5 bg=#1e293b]true[/]')->toContain('[fg=#fbbf24 bg=#1e293b]2[/]')
             ->and($t->text())->toContain(' plain');
     });
 });
 
 it('keeps an unterminated fence as code running to the end', function () {
     md(new Markdown("text\n\n```js\nlet x = 1;"), 20, 5, function (FakeTerminal $t) {
-        expect(mdRows($t)[2])->toBe(' let x = 1;')->and($t->dump())->toContain('[fg=5 bg=8]let[/]');
+        expect(mdRows($t)[2])->toBe(' let x = 1;')->and($t->dump())->toContain('[fg=5 bg=#1e293b]let[/]');
     });
 });
 
@@ -303,7 +303,7 @@ it('renders an unfinished construct at the tail as well as the text so far allow
         $md->append("nk](http://u)\n\n```php\n\$a = ");
         frame();
         expect($t->text())->toContain('A bold and *emphasis done, a link (http://u)')->toContain(' $a =')
-            ->and($t->dump())->toContain('[fg=6 bg=8]$a[/]');
+            ->and($t->dump())->toContain('[fg=#38bdf8 bg=#1e293b]$a[/]');
     });
 });
 

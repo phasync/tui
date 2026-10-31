@@ -39,6 +39,9 @@ final class Text extends Element
      * @param string|list<string|Span>|\Closure(): (string|list<string|Span>) $content
      * @param string|list<string>|null $class
      * @param array<string, mixed>|null $style
+     * @param string|null $align where the lines go: `left`, `center` or `right` (the `align` style)
+     * @param string|list<string> $state its own states for the stylesheet; `$selected` adds `selected` (see `Element`)
+     * @param (\Closure(Element): mixed)|null $onFocus called when the focus enters it, `$onBlur` when it leaves (see `Element`)
      */
     public function __construct(
         string|array|\Closure $content,
@@ -49,10 +52,15 @@ final class Text extends Element
         ?array $style = null,
         int|string|null $width = null,
         int|string|null $height = null,
+        ?string $align = null,
         bool $disabled = false,
+        bool $selected = false,
+        string|array $state = [],
+        ?\Closure $onFocus = null,
+        ?\Closure $onBlur = null,
     ) {
         $this->content = $content instanceof \Closure ? $content : self::runs($content);
-        $this->with($key, $id, $class, $style, $width, $height, $disabled);
+        $this->with($key, $id, $class, Children::style($style, ['align' => $align]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur);
     }
 
     /**
@@ -94,7 +102,7 @@ final class Text extends Element
         if (!$this->content instanceof \Closure) {
             return $this;
         }
-        $text = new self(($this->content)(), $this->wrap, null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'));
+        $text = new self(($this->content)(), $this->wrap, null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'), state: $this->attribute('state'), onFocus: $this->attribute('onFocus'), onBlur: $this->attribute('onBlur'));
         $text->raw = $this->raw;
         return $text;
     }

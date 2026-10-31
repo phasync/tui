@@ -253,6 +253,7 @@ final class ElementLayout implements Layout
             $view->setBorder(false);
         }
         $view->setTitle($item->title, $item->titleAlign);
+        $view->setShadow($item->shadow);
         $view->move($x, $y)->resize($w, $h)->setFit(true);
         if ($item->layout !== null) {
             $item->surface->setLayout($item->layout);

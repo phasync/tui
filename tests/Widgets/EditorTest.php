@@ -5,6 +5,7 @@
  * kill ring, selection by keyboard and mouse, bracketed paste, single-line mode, styles.
  */
 
+use phasync\Tui\Color;
 use phasync\Tui\Component;
 use phasync\Tui\Component\Editor;
 use phasync\Tui\Element;
@@ -127,7 +128,7 @@ it('shows the selection in the selection style', function () {
     mountOn(new Editor('abcdef'), 10, 2, function (FakeTerminal $t, Editor $e) {
         $e->select(0, 1, 0, 3);
         frame();
-        expect($t->dump())->toContain('a[/][inverse bg=8]bc[/][bg=8]def');     // (on the focused panel)
+        expect($t->dump())->toContain('a[/][inverse bg=#1e293b]bc[/][bg=#1e293b]def');     // (on the focused panel)
     });
 });
 
@@ -218,17 +219,17 @@ it('looks different focused, shows its placeholder, and takes no input disabled'
     mountOn($app, 10, 2, function (FakeTerminal $t) use ($a, $b) {
         $a->focus();
         frame();
-        expect($t->dump())->toContain('[fg=8 bg=8]name')        // placeholder, on the focused panel
+        expect($t->dump())->toContain('[fg=#64748b bg=#1e293b]name')        // placeholder, on the focused panel
             ->and($t->surface->cell(0, 1)->style)->toBe(Style::plain());
         $b->focus();
         frame();
         $t->refresh();
-        expect($t->surface->cell(0, 1)->style->bg)->toBe(8)
+        expect($t->surface->cell(0, 1)->style->bg)->toBe(Color::parse('slate-800'))
             ->and($t->surface->cursor()->visible)->toBeTrue();
         $b->with(disabled: true);
         $t->type('yz');
         frame();
-        expect($b->value())->toBe('x')->and($t->dump())->toContain('[dim bg=8]x');
+        expect($b->value())->toBe('x')->and($t->dump())->toContain('[dim bg=#1e293b]x');
     });
 });
 

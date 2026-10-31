@@ -146,20 +146,36 @@ it('ignores a class that is no utility, and explain() tells what resolved', func
         ->toContain('= bold italic underline');
 });
 
-it('switches flex-col md:flex-row at a resize across 100 columns', function () {
-    $app = new UtilityScreen(fn() => new Row([new Text('one'), new Text('two')], class: 'flex-col md:flex-row'));
-    mountOn($app, 120, 4, function (FakeTerminal $t) {
-        expect(screenRows($t)[0])->toBe('one')->and(screenRows($t)[1])->toBe('two');      // 120: lg, a column
+it('switches flex-col md:flex-row at a resize across 80 columns, md: and up (min-width)', function () {
+    $app = new UtilityScreen(fn() => new Row([new Text('one'), new Text('two')], class: 'md:flex-row flex-col'));
+    mountOn($app, 79, 4, function (FakeTerminal $t) {
+        expect(screenRows($t)[0])->toBe('one')->and(screenRows($t)[1])->toBe('two');      // 79: sm only, a column
         $t->resize(80, 4);
         $t->settle();
         expect(screenRows($t)[0])->toBe('onetwo');                                          // 80: md, a row
-        $t->resize(101, 4);
+        $t->resize(150, 4);
         $t->settle();
-        expect(screenRows($t)[0])->toBe('one');
+        expect(screenRows($t)[0])->toBe('onetwo');                                          // xl: md and up still
         $t->resize(50, 4);
         $t->settle();
-        expect(screenRows($t)[0])->toBe('one');                                             // sm: the class without a variant
+        expect(screenRows($t)[0])->toBe('one');                                             // under sm: the class without a variant
     });
+});
+
+it('applies the breakpoints with Tailwind min-width meaning, a wider one over a narrower one', function () {
+    expect(Stylesheet::breakpoints(59))->toBe([])->and(Stylesheet::breakpoints(60))->toBe(['sm'])
+        ->and(Stylesheet::breakpoints(85))->toBe(['sm', 'md'])->and(Stylesheet::breakpoints(100))->toBe(['sm', 'md', 'lg'])
+        ->and(Stylesheet::breakpoints(140))->toBe(['sm', 'md', 'lg', 'xl']);
+    $s = new Stylesheet();
+    $text = new Text('x', class: 'xl:text-red lg:text-green sm:text-blue text-yellow');
+    foreach ([50 => Color::YELLOW, 70 => Color::BLUE, 90 => Color::BLUE, 120 => Color::GREEN, 150 => Color::RED] as $cols => $fg) {
+        expect($s->compute($text, Stylesheet::breakpoints($cols))->text->fg)->toBe($fg);
+    }
+    // hidden md:block: shown from 80 columns on
+    $panel = new Text('x', class: 'hidden md:block');
+    expect($s->compute($panel, Stylesheet::breakpoints(79))->hidden)->toBeTrue()
+        ->and($s->compute($panel, Stylesheet::breakpoints(80))->hidden)->toBeFalse()
+        ->and($s->compute($panel, Stylesheet::breakpoints(200))->hidden)->toBeFalse();
 });
 
 it('draws a truecolour class in the nearest colour a 16- or 256-colour terminal has', function () {

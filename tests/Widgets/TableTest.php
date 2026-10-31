@@ -98,7 +98,7 @@ it('selects one item: callbacks, Enter and the second click activate', function 
         frame();
         expect($log)->toBe(['select b', 'activate b', 'select c', 'activate c'])
             ->and($s->selected())->toBe('c')->and($s->selection())->toBe(['c'])
-            ->and($t->dump())->toContain('[bold inverse fg=6]Cherry');
+            ->and($t->dump())->toContain('[bold inverse fg=#38bdf8]Cherry');
     });
 });
 
@@ -130,7 +130,7 @@ it('marks several items with Space, keeps marks and the current item across new 
         $s->setItems(['z' => 'Z', 'c' => 'C', 'a' => 'A']);
         frame();
         expect($s->selection())->toBe(['c', 'a'])->and($s->selected())->toBe('c')
-            ->and($t->dump())->toContain('[bold fg=6]A');
+            ->and($t->dump())->toContain('[bold fg=#38bdf8]A');
         $s->setItems(['z' => 'Z', 'a' => 'A']);       // the current item is gone: the one at its place
         expect($s->selection())->toBe(['a'])->and($s->selected())->toBe('a');
         $t->press('alt+a');
