@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.0.3-beta5 (2026-11-01)
+
+A program never hangs without saying why, `'quit'` works on an element, a key costs the rows it
+changes, and the coroutines of a program stop with it. Everything from 0.0.3-beta4 works as
+before, except where an entry says what changed.
+
+**Hangs**
+
+- On fiber-interop/api 0.3.1 and fiber-interop/phasync 0.4.1 (the versions Composer installs
+  today), test code that throws after `Tui::headless()` in your `fiber\run()` closure hung with
+  no output. Those versions cannot tell the library that the closure failed, so the program
+  still waits, but the library now says so: one line on stderr when the program starts, naming
+  the installed versions and the ones needed (`fiber-interop/api >= 0.3.2`,
+  `fiber-interop/phasync >= 0.4.2`). What the library owns ends the program on every version:
+  `Tui::run()` and `Tui::inline()` (which give no warning), the closure given as the root, a
+  `Tui::go()` coroutine, a handler. docs/terminal.md and the README say what to do in tests
+  (`$terminal->run(...)`, or the newer versions). `composer.json` cannot exclude the old
+  versions until the fixed ones are tagged.
+- `onKey: ['q' => ['quit', 'quit']]` (or `['q' => 'quit']`) on an element no longer hangs the
+  program when `q` is pressed: it quits, exactly as the same binding in `Tui::run(keys:)`.
+  An element's bindings take every action a component's do: a closure, `'quit'`, or the name of
+  a public method of the component whose render made the element (before, any name was a
+  `TypeError` that stopped the terminal's input).
+- A failure that nothing in the program contains and that escapes the terminal's own work (a
+  listener of a bare root surface, the dispatch of a key) ends the program with that exception,
+  the terminal given back, instead of leaving the screen standing with nobody reading the keys.
+
+**Coroutines stop with the program**
+
+- `Tui::sleep($seconds)`: a sleep that throws `Quit` once the program has ended. A coroutine
+  started with `Tui::go()` that waits with it stops when you press Ctrl-Q (or call
+  `Tui::quit()`): `fiber\run()` returns with the screen, with no `$running` flag of yours (one
+  program used to wait 100 s after Ctrl-Q for its loops). Catch `Quit` to clean up first.
+  `fiber\sleep()` cannot be cut short (fiber-interop/api has no cancellation yet), and plain
+  `fiber\go()` coroutines are not the program's: end those with a flag, as the docs say. The
+  README, the cookbook, `examples/dashboard.php` and `examples/working.php` use `Tui::sleep()`.
+- Coroutines of `Tui::go()` started before a runner that fails to start (an unknown theme, a
+  bad `--headless=`) end with it, instead of keeping `fiber\run()` waiting.
+- A failed `Tui::go()` coroutine that ended a headless program no longer comes out of a later
+  `Tui::headless()` after that program has been garbage collected.
+
+**The cost of a key**
+
+- A Tab between the rows of a program without classes (50 `Row([Text, ProgressBar, Button,
+  Button])` with `onKey:` and `onFocus:`) measures, arranges and paints the two rows the focus
+  moves between and nothing else, and reaches the screen in about 10 ms (median, bars moving)
+  instead of 90-170 ms. Asking the focus of 150 components no longer walks the tree for each,
+  layouts keep the measures of rows whose components did not change size, and only rows with
+  a component that did are arranged again. `php tools/monitor-bench.php keys` measures it.
+- Changed: a render that read some properties of a `State` renders again when one of those is
+  written, not when any property of it is (`onFocus: fn() => $s->current = $i` no longer
+  renders a closure that never reads `current`; it cost a second render per Tab). The
+  component holding a state as its `$state` still renders on every write, and `unset($s->x)`
+  now renders those that read `x`.
+
+**Small**
+
+- `hasFocus()` of a new instance made in a render (`new Editor()` in a closure) that was matched
+  by its place to the running instance answers for the running one (before: always false), and
+  a render that asks `hasFocus()` renders again when the answer changes. `running()` gives the
+  instance that runs for a new one.
+- `Help(for: $field)` with such a new instance lists the running one's keys and its parents'.
+- docs/components.md and docs/widgets.md say when a `ScrollView` is needed: a `Column` of more
+  rows than its box cuts the rest, and the buttons cut off are out of the Tab walk. In a
+  `ScrollView`, whatever takes the focus is scrolled into view: by Tab, Shift-Tab, `focus()` and
+  after the user scrolled away from it (tests for buttons, cards with `onKey:` and rows).
+
 ## 0.0.3-beta4 (2026-11-01)
 
 Two focus defects fixed at their cause, and the last rough edges of the one-file program.

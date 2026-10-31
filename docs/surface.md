@@ -229,6 +229,7 @@ Measured on PHP 8.5 without JIT, FakeTerminal 120x60, phasync adapter
 | 50 such rows, each with its coroutine ticking at 10 Hz (500 steps a second), one row in twenty changing per tick | about 12-15% of a core (about 8% with the garbage collector off); every row changing on every tick: about 50-57% |
 | The same 50 coroutines sleeping with `fiber\sleep()` and drawing nothing | about 6.5% of a core: the runtime's part of the above (about 2.5% with the garbage collector off; the rest is phasync's idle garbage collection, which runs whenever the loop idles, up to 5% of the time) |
 | A key to the frame that shows it, with those 50 rows ticking | median 0.2 ms, at most about 2 ms |
+| A program without classes of 50 `Row([Text, ProgressBar, Button, Button])` with `onKey:` and `onFocus:`, the bars moved by 50 `Tui::go()` coroutines at 10 Hz: Tab to the frame that shows it | median about 10 ms with the CPU clocked down between keys (the closure builds its 250 elements again, the library matches them; what is measured, arranged and painted is the two rows the focus moved between); about 4 ms within a row, where the closure does not run |
 
 A frame renders everything asked for since the last one (see "Frames" in
 [components.md](components.md#state-rendering-by-itself)), and `sleep()` ends on ticks of the
@@ -239,7 +240,8 @@ work on a machine whose CPU clocks down when idle (the `schedutil` and `powersav
 governors): on the machine these numbers come from, the same frames cost 2.5 times the CPU
 time with 40 ms of idle between them as back to back. Compare the cost of a frame (as the
 first rows do) rather than a percentage when you tune a tree. In the repository,
-`php tools/monitor-bench.php [some|all|bare]` runs the monitor of the table.
+`php tools/monitor-bench.php [some|all|bare]` runs the monitor of the table, and
+`php tools/monitor-bench.php keys` the program without classes and its keys.
 
 **Budget.** A few hundred elements of which a few change make a frame of one or two
 milliseconds. What costs is what changed, times the levels of surfaces it is composited

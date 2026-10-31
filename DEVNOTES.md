@@ -3,6 +3,95 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.3-beta5; TODO-0.0.3-beta5.md)
+
+- [x] 1. No silent hang on the tagged runtime: Runtime::watch() warns once on stderr when it
+      cannot watch (installed and needed versions), before the terminal is taken over;
+      Runtime::owned() for Tui::run()/inline() (no warning, they own their run); device loops
+      and the dispatch end the program on an uncontained failure; tests/Release/RuntimeBeta5Test.php
+      (the exact shape in a process, canWatch() forced off; owned failures still end)
+- [x] 2. 'quit' on an element: the element path ran a string action as a closure (TypeError in
+      the input coroutine, which then died: no reader, the screen stood). Component::runAction()
+      for every binding; tests/Release/QuitBeta5Test.php (both forms, element and root,
+      headless and on a pty via tests/fixtures/programs/quit.php)
+- [x] 3. Key cost: Component::focusPath() (one walk per root and focus/tree version),
+      LayoutItem caches every natural() until Tree::sizeMayChange(), ElementLayout::arrange()
+      arranges again only stale items, State subscriptions per property, Key::parse() memo;
+      tests/Release/KeyCostBeta5Test.php (rows measured/painted on a Tab, one render per Tab,
+      timing), tools/monitor-bench.php keys
+- [x] 4. Small: Tui::go() jobs stop (Tui::sleep(), Quit, Internal\Job); running()/hasFocus()
+      of handed-over instances, hasFocus() subscribes renders; Help(for:) resolves; ScrollView
+      and Column docs and tests; tests/Release/SmallBeta5Test.php
+- [x] CHANGELOG, docs (components.md, terminal.md, widgets.md, surface.md, cookbook.md), README,
+      examples
+
+Not reproduced in this tree (tests kept in the reported shape): the Help line showing the tab
+bar's keys while a fresh instance in a tab had the focus (the default Help lists the focused
+component's keys first, then the Tabs'); ScrollView already scrolled every focus change into
+view (Tab, Shift-Tab, focus(), after the user scrolled away, element stops).
+
+## Design decisions (0.0.3-beta5)
+
+- **The warning instead of a conflict.** composer.json could say
+  `"conflict": {"fiber-interop/api": "<0.3.2", "fiber-interop/phasync": "<0.4.2"}` and require
+  `^0.3.2`, but 0.3.2/0.4.2 are not tagged (vendor has the dev branches, `dev-main`): a
+  conflict now would make the package uninstallable. When they are tagged: require
+  `fiber-interop/api: ^0.3.2`, add the conflict for the adapter, and drop CANNOT_AWAIT_STARTER,
+  warnOnce() and the owned() bookkeeping. The warning is printed only where a watch is needed
+  (a start not inside Tui::run()/inline(), which wait for and dispose their program), once per
+  process, before the takeover (watch() moved before open() in attach()).
+- **Uncontained failures end the program.** TerminalDevice::loop() wraps the frame and input
+  loops, dispatch() detaches before passing the exception on. A component failure was already
+  contained or ended the root; this covers what is outside any component (bare surfaces) and
+  library bugs (the item 2 TypeError would have ended the program visibly).
+- **One runAction()** for bindings of components, `keys:` and elements' arrays. A method name
+  on an element is a method of the component whose tree made it (the only object there is).
+- **Item invalidation instead of uncached focusable items.** LayoutItem::naturalInside() used
+  to skip its cache for items with a component below ("a component may want another size"),
+  and arrange() re-arranged them always: O(rows) per render. Now a component that gave a
+  parent's layout an answer (Component::$measured, every room asked since its last render,
+  at most 16) compares them after its render; only when one changed does it invalidate the
+  items from its own up its tree's root (Tree::$placedAt: component -> [tree, path];
+  sizeMayChange()) and relayout() its parent. Invalidating at markDirty() was tried first: it
+  left lingering invalidations (a row measured again a key later). Key segments in paths are
+  %-escaped so a key with '/' cannot confuse the prefixes.
+- **Focus path once.** hasFocus() for N components walked the focus path N times, and each
+  step asked unshownFocus() over all children of that component: O(N^2) for a closure root
+  with 150 children. focusPath(root) is cached by (focusVersion, treeVersion), as the per
+  component cache already was.
+- **State per property.** `$readers[name]` instead of one owners list for reads; holders
+  (`watchFor()`) still render on any write. The docs already said "when that property is
+  written"; the code now does. It removed the second render of every cross-row Tab (onFocus
+  writes `current`, which the closure does not read).
+- **Measuring keys.** Wall time with the CPU clocked down (schedutil) between keys is 2.5x the
+  back-to-back time; the test budget is 40 ms against ~10-12 ms measured here.
+- **Tui::go() jobs**: Internal\Job (program weak ref, ended flag, Signal). Claimed by the
+  running root, else by the next program Tui starts (Tui::start() claims self::$unclaimed);
+  ended by `$root->stopped()->then(...)` (a Deferred's then(): synchronous, no coroutine), or
+  by Tui::starting() when a runner fails before its program starts. The job is found from
+  inside by `fiber\current()` as a WeakMap key (identity only, as `===`), registered from
+  inside the task too (phasync runs it before go() returns). Tui::sleep() waits on the job's
+  Signal (the shared clock); outside a job it makes a job for the running root on the spot.
+- **running()/handedTo**: receive() notes the running instance on the fresh one; hasFocus() of
+  an unstarted instance answers for it. In the render that makes it, it is not handed over yet
+  (documented: ask in an element closure). hasFocus() read in a render registers the reader
+  (`$focusReaders`) and the component's focus listener marks it dirty, as State does.
+
+## fiber\ finding (0.0.3-beta5)
+
+- **No cancellation.** TODO item 4 asks that a `Tui::go()` coroutine's next `fiber\sleep()` or
+  wait throw a `Quit` when its program ends. fiber-interop/api has no way to make another
+  task's wait throw (its README: cooperative cancellation is the planned follow-up;
+  `CancelledException` exists but nothing raises it portably). The library does without in the
+  plain way: its own wait, `Tui::sleep()`, ends with `Quit`; `fiber\sleep()` in a job runs to
+  its end and `fiber\run()` waits for the job. The smallest addition that would do it:
+  `fiber\cancel(object $task, ?\Throwable $reason = null): void`, making the task's current or
+  next wait (`sleep`, `await*`, `readable`, `writable`) throw `$reason` (default a
+  `CancelledException`), with the api's `run()` treating a task ended by its own cancellation
+  as finished. With it Tui::go() would cancel its jobs on quit and Tui::sleep() could go.
+- **Tagged versions.** The beta4 finding (await of a `current()` handle) is fixed on the main
+  branches only; see "The warning instead of a conflict" above for what to do when tagged.
+
 ## Status (0.0.3-beta4; TODO-0.0.3-beta4.md)
 
 - [x] 1. Tab trapped after a shown and left shell tab, in the exact shape (setTabs() every

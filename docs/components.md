@@ -81,7 +81,9 @@ open, as in a class.
 (`new Text($card, onKey: [...], onMouse: fn(Mouse $m) => ...)`, also `->with(onKey: ...)`):
 
 - `onKey:` is a bindings array as above, or a closure `fn(Key $key, Element $element): bool`
-  (true when it took the key). Its keys apply **while the focus is in the element**; its
+  (true when it took the key). Its actions are those of every binding: a closure (given the key
+  and the element), `'quit'` (`['q' => 'quit']` ends the program, as in `keys:`), or the name
+  of a public method of the component whose render made the element. Its keys apply **while the focus is in the element**; its
   `focus:` classes and `:focused` rules apply then (`class: 'focus:inverse'`), `onFocus:` runs
   when the focus enters it from outside, and `Help` lists its described keys. Which element
   is a stop of the Tab walk:
@@ -540,7 +542,11 @@ coroutine in the row, and a parent that only lists its rows. See "Performance" i
 [surface.md](surface.md#performance) for what a frame costs.
 
 **Reading subscribes.** A component whose `render()` reads a property of any `State`, not
-only its own `$this->state`, renders again when that property is written. That is how a closure
+only its own `$this->state`, renders again when that property is written, and not when another
+property of the same state is (an `onFocus:` that notes the current row in `$s->current`
+renders nothing that does not read it; the component holding the state as its `$state` renders
+on any of its writes). A render that asks a component's `hasFocus()` subscribes to its focus the
+same way. That is how a closure
 component works, and how a component shows a state another one owns. A plain state with values
 is `new State(['done' => 0])`; a subclass with typed properties needs no constructor (one that
 has its own calls `parent::__construct()`, so that reads subscribe before a component holds it).
@@ -948,7 +954,8 @@ any other method.
 | `types(): array` | The type names it matches in a stylesheet (its class's short name and its parents'). |
 | `focusNext(bool $wrap = true): bool`, `focusPrevious(bool $wrap = true): bool` | Move the focus to the next (previous) field inside it, around; with `$wrap` false, false at the last (first) one so the key goes on. Bind them to Tab and Shift-Tab for a group of fields of its own (unbound, Tab walks every component that takes keys; see "Focus"). |
 | `focus()` | Give it the focus (on a component not started yet: when it starts), and through it to the descendant it focused (see "Focus" above): every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). It takes effect at once, for the very next key, also for a component not shown yet (a dialog created in a key handler, shown by the render that follows). The focus stays with it through every re-render, also one that moves it into a different nested layout; when it is no longer shown, the component focused before it gets the focus back. |
-| `hasFocus(): bool` | True if keys go to it or through it to a descendant, also while it is not shown yet: it follows the path the keys take. False once disposed. |
+| `hasFocus(): bool` | True if keys go to it or through it to a descendant, also while it is not shown yet: it follows the path the keys take. False once disposed. Asked of a new instance that a render handed over to the one running at its place, the running one's answer; asked by a render, that render runs again when the answer changes. |
+| `running(): ?Component` | The instance that runs for this one: itself once started; for a new instance a render made (`new Editor()` in a closure) that was matched by its place or `key:` to the instance running there, that one; null for one never placed. Ask the running one what it shows: `$editor->running()?->value()`. |
 | `on(string $event, Closure $listener): Closure` | Listen to an event of the component (the built-ins document theirs: `Log` and `ListView` emit `scroll`); returns a function that removes the listener. See "Showing another component's state". |
 | `parent(): ?Component` | The parent, null for a root. |
 | `error(): ?Throwable` | The exception that ended it, if one did. |
