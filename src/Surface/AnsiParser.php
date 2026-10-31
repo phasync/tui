@@ -1082,7 +1082,7 @@ class AnsiParser
             return AnsiParserSignal::MISS;
         }
         if ($_seq28_3 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq28_3;
+            $_result['text'] = $_seq28_3;
         }
         $_seq28_4 = $this->parseStrEnd();
         if ($_seq28_4 === AnsiParserSignal::MISS) {
@@ -1092,7 +1092,7 @@ class AnsiParser
             return AnsiParserSignal::MISS;
         }
         if ($_seq28_4 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq28_4;
+            $_result['end'] = $_seq28_4;
         }
         $_result = $this->snippet_Dcs_1($_seq28_0, $_seq28_1, $_seq28_2, $_seq28_3, $_seq28_4);
 
@@ -1129,7 +1129,7 @@ class AnsiParser
             return AnsiParserSignal::MISS;
         }
         if ($_seq30_1 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq30_1;
+            $_result['text'] = $_seq30_1;
         }
         $_seq30_2 = $this->parseStrEnd();
         if ($_seq30_2 === AnsiParserSignal::MISS) {
@@ -1139,7 +1139,7 @@ class AnsiParser
             return AnsiParserSignal::MISS;
         }
         if ($_seq30_2 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq30_2;
+            $_result['end'] = $_seq30_2;
         }
         $_result = $this->snippet_DcsC1_1($_seq30_0, $_seq30_1, $_seq30_2);
 
@@ -2059,13 +2059,13 @@ class AnsiParser
     private function snippet_Dcs_1($_p0, $_p1, $_p2, $_p3, $_p4): mixed
     {
         $state = &$this->globals;
-         $state['vt']->ignoredString($_p1); return true; 
+         $state['vt']->dcs($_p1, $_p3, $_p4); return true; 
     }
 
     private function snippet_DcsC1_1($_p0, $_p1, $_p2): mixed
     {
         $state = &$this->globals;
-         return true; 
+         $state['vt']->dcs([], $_p1, $_p2); return true; 
     }
 
     private function snippet_Str_1($_p0, $_p1, $_p2, $_p3, $_p4): mixed

@@ -100,10 +100,11 @@ OscEnd = /\x07|\x1b\\|\x{9c}/
        | &/\x1b[^\\]|[\x{80}-\x{9b}\x{9d}-\x{9f}]/  <? return ''; ?>
 
 # --- DCS: ESC P or U+0090, a header and data up to ST -----------------------------------------
-# Parsed and ignored (sixel, tmux pass-through, XTGETTCAP and DECRQSS requests).
-Dcs = /\x1b/ pre:Embedded* "P" StrText StrEnd             <? $state['vt']->ignoredString($pre); return true; ?>
+# The text goes to the emulator, which reads Sixel graphics (a header of parameters and q) and
+# ignores the rest (tmux pass-through, XTGETTCAP and DECRQSS requests).
+Dcs = /\x1b/ pre:Embedded* "P" text:StrText end:StrEnd   <? $state['vt']->dcs($pre, $text, $end); return true; ?>
 
-DcsC1 = /\x{90}/ StrText StrEnd                           <? return true; ?>
+DcsC1 = /\x{90}/ text:StrText end:StrEnd                 <? $state['vt']->dcs([], $text, $end); return true; ?>
 
 # --- SOS, PM and APC: ESC X, ESC ^, ESC _ or U+0098, U+009E, U+009F, data up to ST ------------
 # The text goes to the emulator, which reads Kitty graphics commands (APC G) and ignores the rest.

@@ -3,6 +3,7 @@
 namespace phasync\Tui\Surface;
 
 use phasync\Tui\Color;
+use phasync\Tui\Internal\Sixel;
 use phasync\Tui\Style;
 use phasync\Tui\Text;
 
@@ -23,6 +24,9 @@ final class Emulator
 
     /** How the terminal identifies itself to XTVERSION. */
     public const NAME = 'phasync-tui(0.0.1)';
+
+    /** The answer to primary device attributes (DA1): a VT220-level terminal (62) with Sixel graphics (4) and ANSI colour (22). */
+    private const DEVICE_ATTRIBUTES = "\e[?62;4;22c";
 
     /** Largest pending tail kept for an unterminated sequence before it is dropped. */
     public const MAX_PENDING = 64 << 20;
@@ -576,6 +580,7 @@ final class Emulator
                 'K' => $this->eraseLine($p[0] ?? 0),
                 'n' => ($p[0] ?? 0) === 6 ? $this->reply(sprintf("\e[?%d;%dR", $this->reportedRow(), $this->x + 1)) : null,
                 'u' => $this->reply(sprintf("\e[?%du", $this->keyboardFlags())),
+                'S' => $this->graphicsAttributes($p[0] ?? 0, $p[1] ?? 0),
                 default => null,
             };
             return;
@@ -707,7 +712,7 @@ final class Emulator
                 break;
             case 'c':
                 if (($p[0] ?? 0) === 0) {
-                    $this->reply("\e[?62;22c");
+                    $this->reply(self::DEVICE_ATTRIBUTES);
                 }
                 break;
             case 'd':
@@ -844,7 +849,7 @@ final class Emulator
                     $this->keypadApplication = false;
                     break;
                 case 'Z':
-                    $this->reply("\e[?62;22c");
+                    $this->reply(self::DEVICE_ATTRIBUTES);
                     break;
             }
             return;
@@ -909,10 +914,18 @@ final class Emulator
         }
     }
 
-    /** DCS: ignored apart from controls embedded before the introducer. */
-    public function ignoredString(array $pre): void
+    /**
+     * DCS with its text; $end is '' when cancelled or aborted. A Sixel image (parameters, then
+     * `q`) is placed; the rest are ignored.
+     *
+     * @param list<string> $pre
+     */
+    public function dcs(array $pre, string $text, string $end): void
     {
         $this->executeAll($pre);
+        if ($end !== '' && preg_match('/^([0-9;]*)q/', $text, $m) === 1) {
+            $this->graphics->sixel($m[1], substr($text, \strlen($m[0])));
+        }
     }
 
     /**
@@ -965,6 +978,24 @@ final class Emulator
     public function reply(string $bytes): void
     {
         ($this->emit)('reply', $bytes);
+    }
+
+    /**
+     * XTSMGRAPHICS (`CSI ? Pi ; Pa S`): the number of Sixel colour registers (Pi 1) and the
+     * largest Sixel image, the screen's size in pixels (Pi 2), read (Pa 1, 4) or set (Pa 2, 3:
+     * answered with the fixed value); other items (ReGIS) are not offered.
+     */
+    private function graphicsAttributes(int $item, int $action): void
+    {
+        if ($item !== 1 && $item !== 2) {
+            $this->reply("\e[?$item;1;0S");
+        } elseif ($action < 1 || $action > 4) {
+            $this->reply("\e[?$item;2;0S");
+        } elseif ($item === 1) {
+            $this->reply("\e[?1;0;" . Sixel::REGISTERS . 'S');
+        } else {
+            $this->reply(sprintf("\e[?2;0;%d;%dS", $this->cols * $this->cellSize[0], $this->rows * $this->cellSize[1]));
+        }
     }
 
     private function reportedRow(): int

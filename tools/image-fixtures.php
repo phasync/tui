@@ -1,9 +1,11 @@
 <?php
 /**
- * Writes tests/fixtures/images/{icat,imgcat}.bytes: a 120x90 PNG sent the way
+ * Writes tests/fixtures/images/{icat,imgcat,sixel}.bytes: a 120x90 PNG sent the way
  * `kitty +kitten icat` (centred in 40 columns, direct transmission in chunks) and iTerm2's
  * `imgcat` send it, as a pty passes them on (a line feed becomes CR LF). There is no kitty or
- * iTerm2 on the machine these were made on; the forms follow their sources.
+ * iTerm2 on the machine these were made on; the forms follow their sources. sixel.bytes is
+ * what ImageMagick's `convert image.png sixel:-` prints for it (made only where convert is
+ * installed).
  */
 require __DIR__ . '/../vendor/autoload.php';
 
@@ -27,3 +29,11 @@ foreach ($chunks as $i => $chunk) {
 file_put_contents("$dir/icat.bytes", $icat . "\r\n");
 // imgcat: OSC 1337 File= with the name and size, BEL, a line feed
 file_put_contents("$dir/imgcat.bytes", "\e]1337;File=name=" . base64_encode('gradient.png') . ';size=' . strlen($png) . ';inline=1:' . base64_encode($png) . "\x07\r\n");
+// sixel: ImageMagick's encoder, a line feed after
+$convert = trim((string) shell_exec('command -v convert 2>/dev/null'));
+if ($convert !== '') {
+    $file = sys_get_temp_dir() . '/gradient-' . getmypid() . '.png';
+    file_put_contents($file, $png);
+    file_put_contents("$dir/sixel.bytes", shell_exec(escapeshellarg($convert) . ' ' . escapeshellarg($file) . ' sixel:-') . "\r\n");
+    unlink($file);
+}

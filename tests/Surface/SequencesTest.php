@@ -370,8 +370,8 @@ describe('OSC and other strings', function () {
             ->and($s->cell(1, 0)->style->attrs)->toBe(Style::BOLD);
     });
 
-    it('parses and ignores DCS, SOS, PM and APC', function () {
-        $s = vt("a\eP1\$r0m\e\\b\eXsos\e\\c\e^pm\e\\d\e_Gapc;x=1\e\\e\ePq#0;2;0;0;0#0~~@@vv\e\\f");
+    it('parses and ignores DCS (other than Sixel, see ImagesTest), SOS, PM and APC', function () {
+        $s = vt("a\eP1\$r0m\e\\b\eXsos\e\\c\e^pm\e\\d\e_Gapc;x=1\e\\e\eP+q544e\e\\f");
         expect($s->line(0))->toBe('abcdef');
     });
 
@@ -465,7 +465,7 @@ describe('unknown and malformed sequences', function () {
 describe('replies', function () {
     it('answers DSR status and cursor position, and device attributes', function () {
         $s = vt("\e[5n\e[2;3H\e[6n\e[c\e[>c\e[?6n");
-        expect($s->input->peek())->toBe("\e[0n\e[2;3R\e[?62;22c\e[>1;10;0c\e[?2;3R");
+        expect($s->input->peek())->toBe("\e[0n\e[2;3R\e[?62;4;22c\e[>1;10;0c\e[?2;3R");
     });
 
     it('reports the text area size and private modes', function () {

@@ -2,12 +2,14 @@
 
 namespace phasync\Tui\Surface;
 
+use phasync\Tui\Color;
 use phasync\Tui\Image;
 use phasync\Tui\ImageFragment;
+use phasync\Tui\Internal\Sixel;
 
 /**
- * @internal The image protocols of the emulator: Kitty graphics (APC G) and iTerm2 inline
- * images (OSC 1337 File=). A placement marks the cells it covers with `ImageFragment`s in their
+ * @internal The image protocols of the emulator: Kitty graphics (APC G), iTerm2 inline images
+ * (OSC 1337 File=) and Sixel (DCS q). A placement marks the cells it covers with `ImageFragment`s in their
  * styles; the images a program gave ids (Kitty) are kept here, by id, until it deletes them.
  *
  * Kitty, as kitty does it: transmit (`a=t`, in chunks with `m=1` ... `m=0`, PNG `f=100` or raw
@@ -252,19 +254,22 @@ final class Graphics
             // the same image and placement id again: it moves (the old one goes)
             $this->clear(fn(ImageFragment $f) => $f->image === $image && $f->placement === $placement);
         }
-        $this->cells($image, $sx, $sy, $sw, $sh, max(1, $cols), max(1, $rows), $placement, ($keys['C'] ?? '0') !== '1');
+        $this->cells($image, $sx, $sy, $sw, $sh, max(1, $cols), max(1, $rows), $placement, ($keys['C'] ?? '0') === '1' ? 'stay' : 'right');
     }
 
     /**
-     * Mark the cells of a placement at the cursor: row by row, moving down a line (scrolling at
-     * the bottom margin) between rows, then the cursor to the right of its last row, as kitty
-     * does; with $move false, the cursor stays and the rows below the screen are cut.
+     * Mark the cells of a placement at the cursor, row by row, then put the cursor $after it:
+     * `'right'` of its last row as kitty does (at the right edge, column 0 of the next line),
+     * moving down a line between rows and scrolling at the bottom margin; `'below'` it, in the
+     * column it started (Sixel), scrolling the same way; or `'stay'` where it was, the rows
+     * below the screen cut.
      */
-    private function cells(Image $image, int $sx, int $sy, int $sw, int $sh, int $cols, int $rows, int $placement, bool $move): void
+    private function cells(Image $image, int $sx, int $sy, int $sw, int $sh, int $cols, int $rows, int $placement, string $after): void
     {
         $vt = $this->vt;
         $x0 = $vt->x;
         $y0 = $vt->y;
+        $move = $after !== 'stay';
         // (a cell keeps its colours and attributes under the image, as in kitty, where the image
         // is drawn over the cell; its character is covered)
         for ($r = 0; $r < $rows; $r++) {
@@ -293,15 +298,18 @@ final class Graphics
         }
         $vt->wrapPending = false;
         $vt->lastX = $vt->lastY = -1;
-        if (!$move) {
+        if ($after === 'stay') {
             $vt->x = $x0;
             $vt->y = $y0;
-            return;
-        }
-        $vt->x = $x0 + $cols;
-        if ($vt->x >= $vt->cols) {
-            $vt->x = 0;
+        } elseif ($after === 'below') {
+            $vt->x = $x0;
             $vt->lineFeed();
+        } else {
+            $vt->x = $x0 + $cols;
+            if ($vt->x >= $vt->cols) {
+                $vt->x = 0;
+                $vt->lineFeed();
+            }
         }
     }
 
@@ -518,7 +526,7 @@ final class Graphics
         }
         $cols = max(1, (int) ceil($w / $cw - 1e-9));
         $rows = max(1, (int) ceil($h / $ch - 1e-9));
-        $this->cells($image, 0, 0, $pw, $ph, $cols, $rows, 0, true);
+        $this->cells($image, 0, 0, $pw, $ph, $cols, $rows, 0, 'right');
     }
 
     /** An iTerm2 width or height in pixels: N cells, Npx, N% of the screen; null for auto. */
@@ -534,5 +542,56 @@ final class Graphics
             return max(1.0, (float) $spec * $cells * $cell / 100);
         }
         return max(1.0, (float) $spec * $cell);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Sixel
+
+    /**
+     * A Sixel image (DCS $params q $data ST), drawn as a terminal draws it, one pixel to a
+     * pixel: over the cells its size covers at the cell size, the part of the last column and
+     * row it leaves transparent. At the cursor, scrolling as needed, the cursor then below it
+     * in the column it started, or right of its last row with mode 8452 (xterm's "Sixel
+     * scrolling leaves the cursor to the right"); with DECSDM (mode 80) at the top left of the
+     * screen without scrolling, the cursor kept.
+     */
+    public function sixel(string $params, string $data): void
+    {
+        $vt = $this->vt;
+        $decoded = Sixel::decode($params, $data, Color::toRgb($vt->colors[1]) ?? [0, 0, 0]);
+        if ($decoded === null) {
+            return;
+        }
+        [$w, $h, $rgba] = $decoded;
+        [$cw, $ch] = $vt->cellSize;
+        $cols = (int) ceil($w / $cw);
+        $rows = (int) ceil($h / $ch);
+        if ($cols * $cw !== $w || $rows * $ch !== $h) {
+            $rgba = self::pad($rgba, $w, $h, $cols * $cw, $rows * $ch);
+            [$w, $h] = [$cols * $cw, $rows * $ch];
+        }
+        $image = Image::of($rgba, 'rgba', $w, $h);
+        if ($image === null) {
+            return;
+        }
+        if ($vt->modes[80] ?? false) {
+            [$x, $y] = [$vt->x, $vt->y];
+            [$vt->x, $vt->y] = [0, 0];
+            $this->cells($image, 0, 0, $w, $h, $cols, $rows, 0, 'stay');
+            [$vt->x, $vt->y] = [$x, $y];
+            return;
+        }
+        $this->cells($image, 0, 0, $w, $h, $cols, $rows, 0, ($vt->modes[8452] ?? false) ? 'right' : 'below');
+    }
+
+    /** RGBA pixels of $w x $h placed at the top left of $width x $height, the rest transparent. */
+    private static function pad(string $rgba, int $w, int $h, int $width, int $height): string
+    {
+        $tail = str_repeat("\0", 4 * ($width - $w));
+        $out = '';
+        for ($y = 0; $y < $h; $y++) {
+            $out .= substr($rgba, 4 * $w * $y, 4 * $w) . $tail;
+        }
+        return $out . str_repeat("\0", 4 * $width * ($height - $h));
     }
 }

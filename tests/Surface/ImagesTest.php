@@ -328,10 +328,111 @@ describe('iTerm2 inline images', function () {
     });
 });
 
+describe('Sixel', function () {
+    /** The RGBA bytes of pixel ($x, $y) of the image a cell shows. */
+    $pixel = fn(Surface $s, int $cx, int $cy, int $x, int $y): string
+        => bin2hex(substr($s->cell($cx, $cy)->style->image->image->rgba(), 4 * ($y * $s->cell($cx, $cy)->style->image->image->width + $x), 4));
+
+    it('draws a sixel image over the cells its pixels cover, the cursor below it in the column it started', function () use ($pixel) {
+        $s = imaging(10, 5, $replies);
+        // 12x20 pixels (8x16 cells: 2 columns, 2 rows): six columns of colour 1 (red), then of 2 (blue), in
+        // three bands of six rows and one of two ('B': the top two pixels)
+        $band = '#1!6~#2!6~';
+        $s->write("ab\eP0;1q\"1;1;12;20#1;2;100;0;0#2;2;0;0;100$band-$band-$band-#1!6B#2!6B\e\\X");
+        expect(fragments($s))->toBe('. . 0,0 1,0 . . . . . .|. . 0,1 1,1 . . . . . .|. . . . . . . . . .|. . . . . . . . . .|. . . . . . . . . .')
+            ->and($s->line(2))->toBe('  X')
+            ->and($s->cell(2, 0)->style->image->image->width)->toBe(16)->and($s->cell(2, 0)->style->image->image->height)->toBe(32)
+            ->and($pixel($s, 2, 0, 0, 0))->toBe('ff0000ff')->and($pixel($s, 2, 0, 11, 19))->toBe('0000ffff')
+            // (the rest of the last column and row of cells is transparent: the cell shows through, as on a terminal)
+            ->and($pixel($s, 2, 0, 12, 0))->toBe('00000000')->and($pixel($s, 2, 0, 0, 20))->toBe('00000000');
+    });
+
+    it('repeats, returns to the left of the band, moves down a band, and paints what P2 0 leaves in the background colour', function () use ($pixel) {
+        $s = imaging(4, 2, $replies);
+        // '@' is the top pixel only, 'A' the second; '$' paints over the same band; 3 pixels wide
+        $s->write("\ePq#1;2;0;100;0!3@\$#2;2;0;0;100?A-#1N\e\\");
+        $at = fn(int $x, int $y) => $pixel($s, 0, 0, $x, $y);
+        expect($at(0, 0))->toBe('00ff00ff')->and($at(2, 0))->toBe('00ff00ff')->and($at(3, 0))->toBe('00000000')
+            ->and($at(0, 1))->toBe('000000ff')->and($at(1, 1))->toBe('0000ffff')
+            // 'N' (15 = the top four pixels) in the second band
+            ->and($at(0, 6))->toBe('00ff00ff')->and($at(0, 9))->toBe('00ff00ff')->and($at(1, 6))->toBe('000000ff')
+            // (below the 10 rows painted, to the cell's edge: transparent)
+            ->and($at(0, 10))->toBe('00000000')
+            ->and($s->cell(0, 0)->style->image->image->height)->toBe(16);
+    });
+
+    it('defines colours in RGB and in DEC HLS (hue with blue at 0), and starts with the VT340 palette', function () use ($pixel) {
+        $colour = function (string $define) use ($pixel): string {
+            $s = imaging(2, 2, $replies);
+            $s->write("\eP0;1q$define~\e\\");
+            return $pixel($s, 0, 0, 0, 0);
+        };
+        expect($colour('#5;2;100;50;0'))->toBe('ff8000ff')
+            ->and($colour('#5;1;0;50;100'))->toBe('0000ffff')      // blue
+            ->and($colour('#5;1;120;50;100'))->toBe('ff0000ff')    // red
+            ->and($colour('#5;1;240;50;100'))->toBe('00ff00ff')    // green
+            ->and($colour('#5;1;0;100;0'))->toBe('ffffffff')
+            ->and($colour('#2'))->toBe('cc2121ff')                  // the VT340's register 2
+            ->and($colour(''))->toBe('000000ff');                   // register 0 at the start
+    });
+
+    it('leaves the cursor right of the image with mode 8452, and draws at the top left without moving it with DECSDM', function () {
+        $s = imaging(10, 4, $replies);
+        $s->write("\e[?8452h\e[2;3H\ePq\"1;1;16;32!16~-!16~-!16~-!16~-!16~-!16B\e\\");
+        expect(cursorAt($s))->toBe([4, 2])->and($s->cell(2, 1)->style->image?->col)->toBe(0);
+        $s = imaging(10, 4, $replies);
+        $s->write("\e[?80h\e[3;5H\ePq!8~\e\\");
+        expect(cursorAt($s))->toBe([4, 2])->and($s->cell(0, 0)->style->image?->col)->toBe(0)->and($s->cell(4, 2)->style->image)->toBeNull();
+    });
+
+    it('scrolls at the bottom of the screen like text, and cuts what is wider than the screen', function () {
+        $s = imaging(4, 3, $replies);
+        $s->write("top\e[3;1H\ePq\"1;1;48;32!48~-!48~-!48~-!48~-!48~-!48B\e\\");
+        // two rows of cells from the last line: one line up, and the cursor below scrolls another
+        expect(fragments($s))->toBe('0,0 1,0 2,0 3,0|0,1 1,1 2,1 3,1|. . . .')->and(cursorAt($s))->toBe([0, 2])
+            ->and($s->cell(0, 0)->style->image->cols)->toBe(6)->and($s->line(-2))->toBe('top');
+    });
+
+    it('is a DCS in either form, across writes, and nothing when cancelled or not sixel', function () {
+        $s = imaging(4, 2, $replies);
+        $s->write("\u{90}q~~\u{9c}");
+        expect($s->cell(0, 0)->style->image)->not->toBeNull();
+        $s = imaging(4, 2, $replies);
+        $s->write("\ePq#1;2;100;0;0");
+        $s->write('!8~');
+        expect($s->cell(0, 0)->style->image)->toBeNull();
+        $s->write("\e\\");
+        expect($s->cell(0, 0)->style->image)->not->toBeNull();
+        $s = imaging(4, 2, $replies);
+        $s->write("\ePq~~\x18x\eP1\$qm\e\\\eP+q544e\e\\");
+        expect(fragments($s))->toBe('. . . .|. . . .')->and($s->line(0))->toBe('x');
+    });
+
+    it('says it has Sixel in its device attributes, and answers XTSMGRAPHICS', function () {
+        $s = imaging(80, 24, $replies);
+        $s->write("\e[c\e[?1;1S\e[?2;1S\e[?3;1S\e[?1;9S");
+        expect($replies)->toBe("\e[?62;4;22c\e[?1;0;1024S\e[?2;0;640;384S\e[?3;1;0S\e[?1;2;0S");
+    });
+
+    it('takes the output of ImageMagick (convert image.png sixel:-)', function () use ($pixel) {
+        $s = imaging(40, 12, $replies);
+        $s->write(file_get_contents(__DIR__ . '/../fixtures/images/sixel.bytes'));
+        // 120x90 pixels: 15 columns, 6 rows (5.6); the line feed after it from the row below
+        $f = $s->cell(0, 0)->style->image;
+        expect($f?->cols)->toBe(15)->and($f->rows)->toBe(6)->and($s->cell(14, 5)->style->image?->row)->toBe(5)
+            ->and($s->cell(15, 0)->style->image)->toBeNull()->and(cursorAt($s))->toBe([0, 7]);
+        // the gradient: red grows to the right, green downwards, blue 128 (in ImageMagick's palette)
+        [$r0, $g0, $b0] = array_map('hexdec', str_split(substr($pixel($s, 0, 0, 0, 0), 0, 6), 2));
+        [$r1, $g1] = array_map('hexdec', str_split(substr($pixel($s, 0, 0, 119, 89), 0, 4), 2));
+        expect($r0)->toBeLessThan(16)->and($g0)->toBeLessThan(16)->and(abs($b0 - 128))->toBeLessThan(16)
+            ->and(abs($r1 - 238))->toBeLessThan(16)->and(abs($g1 - 178))->toBeLessThan(16);
+    });
+});
+
 describe('Images of hosted programs', function () {
-    it('shows the image a program in a pty sends, by either protocol, in its pane on the host', function () {
+    it('shows the image a program in a pty sends, by any of the protocols, in its pane on the host', function () {
         \fiber\run(function () {
-            foreach (['icat', 'imgcat'] as $name) {
+            foreach (['icat', 'imgcat', 'sixel'] as $name) {
                 $root = new Surface(60, 12);
                 $pane = new Surface(40, 10);
                 $root->host($pane, 5, 1);
