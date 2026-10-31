@@ -27,6 +27,11 @@ ext-phasync (503 tests).
 
 ## Left for later versions (0.0.2)
 
+- SPEC 4.1 **inline mode** (`Tty::inline()`, `FakeTerminal::inline()`, the root's scrollback as
+  the terminal's) was added to the spec while this version was being built (commit 3281ee8)
+  and is not in TODO-0.0.2-beta2; not started. Nothing in this version is in its way: the
+  device layer is unchanged, so it is a second painting mode of TerminalDevice (relative
+  cursor motion, rows scrolled off the root's top written once above the region).
 - Widgets of SPEC 8.6 not in this TODO: `Radio`, `Tabs`, `Tree`, draggable `Split`
   separators, `Terminal` `onOutput`, `Markdown`.
 - Overlays are hosted on the root component, not on "the nearest `Layers` above" (SPEC 8.5):
