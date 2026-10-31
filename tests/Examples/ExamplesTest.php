@@ -153,3 +153,23 @@ it('runs markdown: a document streams in, the view follows it, End and Ctrl-Q wo
         expect($app->pty()->wait(5))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();
     });
 });
+
+it('runs tree: a folder loads its entries with a spinner, keys and type-to-find work, Ctrl-Q quits', function () {
+    $dir = sys_get_temp_dir() . '/tui-tree-' . getmypid();
+    @mkdir("$dir/alpha", 0777, true);
+    touch("$dir/alpha/inner.txt");
+    touch("$dir/zebra.txt");
+    example('tree.php', [$dir], function (FakeTerminal $t, Terminal $app) use ($dir) {
+        expect($t->waitFor('alpha', 10))->toBeTrue()->and($t->text())->toContain('zebra.txt');
+        $t->press('down', 'right');                 // alpha: loading, then its entries
+        expect($t->waitFor('inner.txt', 5))->toBeTrue();
+        $t->type('z');
+        expect($t->waitFor("$dir/zebra.txt  (0 bytes)"))->toBeTrue();
+        $t->press('ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();
+    });
+    @unlink("$dir/alpha/inner.txt");
+    @unlink("$dir/zebra.txt");
+    @rmdir("$dir/alpha");
+    @rmdir($dir);
+});
