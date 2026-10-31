@@ -493,7 +493,8 @@ final class Surface implements \Stringable
             'key' => InputEncoder::key($event, $this),
             'paste' => InputEncoder::paste($event->text, $this),
             'focus' => $this->mode(1004) ? ($event->focused ? "\e[I" : "\e[O") : '',
-            'mouse' => InputEncoder::mouse($event, $this),
+            // (a drag held outside the window is reported at its edge, as a terminal does)
+            'mouse' => InputEncoder::mouse($event->at(max(0, min($this->cols() - 1, $event->x)), max(0, min($this->rows() - 1, $event->y))), $this),
         };
         $this->input->write($bytes);
         return $type !== 'mouse' || $bytes !== '';

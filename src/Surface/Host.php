@@ -510,10 +510,17 @@ final class Host
         if ($this->anchor !== null) {
             return $this->select($view, $m);
         }
-        $pos = $view->toSource($m->x, $m->y, $this->capture !== null);
+        if ($this->capture !== null) {
+            // the window that took the press gets the whole drag, in its coordinates, also
+            // outside it (negative, or past its size); a program's report is clamped when encoded
+            $b = $view->hasBorder() ? 1 : 0;
+            $pos = [$view->left() + $m->x - $view->x() - $b, $view->top() + $m->y - $view->y() - $b];
+        } else {
+            $pos = $view->toSource($m->x, $m->y);
+        }
         if ($pos !== null) {
             $source = $view->source;
-            $local = $m->at($pos[0], max(0, min($source->rows() - 1, $pos[1])));
+            $local = $m->at($pos[0], $this->capture !== null ? $pos[1] : max(0, min($source->rows() - 1, $pos[1])));
             if ($source->dispatch($local)) {
                 if ($m->action === Mouse::PRESS) {
                     $this->capture = $view;

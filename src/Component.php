@@ -714,7 +714,34 @@ abstract class Component extends Element
         if ($c !== $this) {
             $c->surface->focus();
         }
-        $this->surface->focus();
+        if ($this->canFocus()) {
+            $this->surface->takeFocus();    // the component itself, not what it focused inside
+        } else {
+            $this->surface->focus();        // on to the descendant it focused, or its first
+        }
+    }
+
+    /**
+     * Whether the component takes the keys itself when it is focused (`focus()`), rather than
+     * passing them on to the descendant it focused last (or to its first focusable one), as a
+     * container does. By default it does when it has keys of its own: `bindings()` (or keys
+     * given with `bind()`) or an `onKey()`/`onPaste()` of its own class. So a board with key
+     * bindings that focused its filter field takes the focus back with `$board->focus()`, and a
+     * box or a dialog around a text field passes it to the field. Override it to decide.
+     */
+    protected function canFocus(): bool
+    {
+        static $own = [];
+        $class = static::class;
+        if (!isset($own[$class])) {
+            $own[$class] = false;
+            foreach (['onKey', 'onPaste'] as $hook) {
+                if ((new \ReflectionMethod($this, $hook))->getDeclaringClass()->getName() !== self::class) {
+                    $own[$class] = true;
+                }
+            }
+        }
+        return $own[$class] || $this->bindingsInForce() !== [];
     }
 
     /**

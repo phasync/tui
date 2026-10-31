@@ -856,6 +856,7 @@ final class Editor extends Component
     private function at(int $x, int $y): array
     {
         $cols = max(1, $this->surface->cols());
+        $y = max(0, min($this->surface->rows() - 1, $y));      // (a drag held above or below it)
         return $this->fromVisual($this->top + $y, $x + ($this->wrap && $this->maxLines !== 1 ? 0 : $this->left), $cols);
     }
 
