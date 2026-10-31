@@ -232,7 +232,7 @@ phase; the tree is the model a Twig/HTML front-end can target later.
 
 A component is rendered again in the next frame after: an event handler of its ran (key, mouse,
 focus, a child's event); one of its coroutines (`run()`, `go()`) resumed from a wait and returned
-to the scheduler; `$this->set(...)` or an assignment on `$this->state` (a small object the
+to the scheduler; `$this->state->set(...)` or an assignment on `$this->state` (a small object the
 component owns, with typed public properties, whose writes mark the component dirty); a child
 emitted an event it listens to; its props changed (`propsChanged()`). Many changes in a tick are
 one render; renders are batched into the frame as today. Computed values are methods; there are
