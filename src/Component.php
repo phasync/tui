@@ -198,6 +198,8 @@ abstract class Component extends Element
     private array $placed = [];
     /** The next render lays the tree out again, also when it is the same (see relayout()). */
     private bool $relayout = false;
+    /** The latest focus request in its subtree when a render stopped showing it (see pendingRank()). */
+    private ?int $hiddenRank = null;
     /** focus() was called before start(): it takes effect when the component starts. */
     private bool $focusOnStart = false;
     /** @var \WeakMap<Component, true>|null other components that show this one or keep it (see child()) */
@@ -461,7 +463,12 @@ abstract class Component extends Element
                 $this->markDirty();
             }),
             // what render() draws may depend on where the component is: draw again when it moved
-            $s->on('area', fn() => $this->markDirty()),
+            $s->on('area', function (): void {
+                if ($this->rendered && $this->parent !== null && $this->surface->viewport() === null) {
+                    $this->hiddenRank = $this->focusRank();     // (no longer shown: see pendingRank())
+                }
+                $this->markDirty();
+            }),
             $s->on('close', fn() => $this->stop()),
         ];
         $this->guard($this->mount(...));
@@ -1141,11 +1148,11 @@ abstract class Component extends Element
         $bestRank = 0;
         $first = null;
         foreach ($this->children as $child) {
-            if (!$child->mounted || $child->surface->viewport() !== null) {
+            if (!$child->waitsUnshown($this)) {
                 continue;
             }
             $first ??= $child;
-            $rank = $child->focusRank();
+            $rank = $child->pendingRank();
             if ($rank > $bestRank) {
                 $best = $child;
                 $bestRank = $rank;
@@ -1162,11 +1169,30 @@ abstract class Component extends Element
     {
         $rank = $this->surface->latestFocus();
         foreach ($this->children as $child) {
-            if ($child->mounted && $child->surface->viewport() === null) {
-                $rank = max($rank, $child->focusRank());
+            if ($child->waitsUnshown($this)) {
+                $rank = max($rank, $child->pendingRank());
             }
         }
         return $rank;
+    }
+
+    /**
+     * True if this child of $parent is not shown and keys reaching $parent may go on to it
+     * (when it was focused last): not when another component shows it (a `Tabs` it was given
+     * to: the keys go its way through that one), and not when a render stopped showing it after
+     * it was focused (a hidden tab's shell does not keep the keys; a `focus()` after it was
+     * hidden gives them to it again).
+     */
+    private function waitsUnshown(Component $parent): bool
+    {
+        return $this->mounted && $this->surface->viewport() === null && !($this->parent === $parent && $this->isHeld());
+    }
+
+    /** focusRank(), or 0 when this component was hidden by a render after its latest focus request. */
+    private function pendingRank(): int
+    {
+        $rank = $this->focusRank();
+        return $this->hiddenRank !== null && $rank <= $this->hiddenRank ? 0 : $rank;
     }
 
     /** Pass a key or paste on to the focused child not shown yet; false when there is none. */
