@@ -3,11 +3,9 @@
 namespace phasync\Tui\Component;
 
 use phasync\Tui\Ansi;
-use phasync\Tui\Color;
 use phasync\Tui\Component;
 use phasync\Tui\Internal\MarkdownBlocks;
 use phasync\Tui\Mouse;
-use phasync\Tui\Style;
 use phasync\Tui\Text;
 
 /**
@@ -34,21 +32,29 @@ use phasync\Tui\Text;
  * remembered (only the last block, the tail, is drawn anew), and only the screen rows whose
  * contents changed are written to the terminal. `set()` replaces the text.
  *
- * **Scrolling.** Up/Down (k/j), Page Up/Page Down (Space), Home/End and the mouse wheel; the
- * keys go on to the parent when it cannot scroll further. With `tail: true` the view follows
- * the end as text arrives, until the user scrolls up; scrolling back to the end (End) follows
- * again, and so does `follow()`. Event `scroll`: the rows in view or `isFollowing()` changed.
+ * **Scrolling** is `Scrollable`'s, as in `Log`: Up/Down, Page Up/Page Down, Home/End and the
+ * wheel; the keys go on to the parent when it cannot scroll further. With `tail: true` the view
+ * follows the end as text arrives, until the user scrolls up; scrolling back to the end (End)
+ * follows again, and so does `follow()`. Rows are those of the laid-out document (they depend
+ * on the width). Event `scroll`: the rows in view or `isFollowing()` changed. With
+ * `scrollbar: true` the last column shows where the view is (parts `scrollbar`, `scrollbar:thumb`).
+ *
+ * **Links** show their address dimmed after the text, or, with `hyperlinks: true`, the text
+ * alone as an OSC 8 hyperlink the user can click: pass `$device->supportsHyperlinks()`.
  *
  * **Style** parts, each a `Markdown::part` rule in the stylesheet (the default theme sets
  * them): `paragraph`, `h1` to `h6`, `strong`, `emphasis`, `strike`, `code` (a span),
  * `codeblock` (the block and its fill), `keyword`, `string`, `comment`, `number`, `variable`
  * and `key` (highlighting), `link`, `url`, `quote` (the text and the bar), `bullet`, `rule`,
- * `th` and `td` (table cells) and `border` (the lines of a table). Styles of the parts that
- * apply together (`strong` inside `h2`, `link` inside `quote`) are combined, the innermost one
- * winning a colour.
+ * `th` and `td` (table cells) and `border` (the lines of a table). Parts that apply together
+ * (`strong` inside `h2`, `link` inside `quote`) compose (`Component::style()` with a list):
+ * attributes add up, the innermost colour wins. Text outside every part, the fill and what is
+ * cleared are in the Markdown's own style.
  */
 class Markdown extends Component
 {
+    use Scrollable;
+
     private const PUNCT = '!"#$%&\'()*+,-./:;<=>?@[\]^_`{|}~';
 
     private const KEYWORDS = [
@@ -76,35 +82,35 @@ class Markdown extends Component
     private bool $stale = true;
     private int $laidCols = 0;
     private string $laidStyles = '';
-    /** @var array<string, Style> */
-    private array $styles = [];
-    /** @var array<string, string> */
+    /** @var array<string, string> the SGR of each list of parts, by the list */
     private array $sgrs = [];
-    private int $top = 0;
-    private bool $stuck;
+    /** the SGR of the Markdown's own style: what a row returns to after a part */
+    private string $plain = "\e[0m";
     /** @var array<int, string> what is on the screen, by row */
     private array $painted = [];
     /** @var array{int,int}|null */
     private ?array $paintedSize = null;
-    /** @var array{int,int,bool}|null */
-    private ?array $inView = null;
 
     /**
      * @param string $text       the initial text
      * @param bool   $tail       follow the end while text arrives (a prop)
      * @param bool   $hyperlinks show links as OSC 8 hyperlinks (the text only, clickable) instead of the text
-     *                           with its address after it; for terminals that support them (a prop)
+     *                           with its address after it; for terminals that support them,
+     *                           `$device->supportsHyperlinks()` (a prop)
+     * @param bool   $scrollbar  show a scrollbar in the last column (a prop)
      */
-    public function __construct(string $text = '', public bool $tail = false, public bool $hyperlinks = false)
+    public function __construct(string $text = '', public bool $tail = false, public bool $hyperlinks = false, public bool $scrollbar = false)
     {
         $this->text = $text;
-        $this->stuck = $tail;
+        $this->followTail($tail);
     }
 
     protected function propsChanged(): void
     {
         $this->stale = true;
-        $this->stuck = $this->tail && ($this->stuck || $this->top >= $this->maxTop());
+        if ($this->tail !== $this->scrollTail) {
+            $this->followTail($this->tail);
+        }
     }
 
     // ------------------------------------------------------------------------------------------
@@ -141,16 +147,12 @@ class Markdown extends Component
 
     protected function bindings(): array
     {
-        return [
-            'up' => 'lineUp', 'k' => 'lineUp', 'down' => 'lineDown', 'j' => 'lineDown',
-            'pageup' => 'pageUp', 'pagedown' => 'pageDown', 'space' => 'pageDown', 'home' => 'toTop', 'end' => 'toBottom',
-        ];
+        return $this->scrollBindings();
     }
 
-    /** The row of the document at the top of the view. */
-    public function topRow(): int
+    protected function onMouse(Mouse $mouse): bool
     {
-        return $this->top;
+        return $this->scrollWheel($mouse);
     }
 
     /** How many rows the whole document takes at the width it has. */
@@ -160,83 +162,9 @@ class Markdown extends Component
         return \count($this->rows);
     }
 
-    /** True while the view follows the end (`tail` mode, and not scrolled back). */
-    public function isFollowing(): bool
+    protected function contentRows(): int
     {
-        return $this->stuck;
-    }
-
-    /** Follow the end again (does nothing without `tail`). */
-    public function follow(): void
-    {
-        if ($this->tail && !$this->stuck) {
-            $this->stuck = true;
-            $this->requestRender();
-        }
-    }
-
-    /** Show document row $row at the top (clamped). */
-    public function scrollTo(int $row): void
-    {
-        $max = $this->maxTop();
-        $row = max(0, min($row, $max));
-        $this->stuck = $this->tail && $row >= $max;
-        $this->top = $row;
-        $this->requestRender();
-    }
-
-    /** Scroll by $rows (negative: up); false when it could not move. */
-    public function scrollBy(int $rows): bool
-    {
-        $before = $this->top;
-        $this->scrollTo(($this->stuck ? $this->maxTop() : $this->top) + $rows);
-        return $this->top !== $before;
-    }
-
-    public function lineUp(): bool
-    {
-        return $this->scrollBy(-1);
-    }
-
-    public function lineDown(): bool
-    {
-        return $this->scrollBy(1);
-    }
-
-    public function pageUp(): bool
-    {
-        return $this->scrollBy(-max(1, $this->surface->rows() - 1));
-    }
-
-    public function pageDown(): bool
-    {
-        return $this->scrollBy(max(1, $this->surface->rows() - 1));
-    }
-
-    public function toTop(): bool
-    {
-        return $this->scrollBy(-$this->top);
-    }
-
-    public function toBottom(): bool
-    {
-        $moved = $this->scrollBy($this->maxTop() - $this->top);
-        return $moved;
-    }
-
-    protected function onMouse(Mouse $mouse): bool
-    {
-        if ($mouse->action === Mouse::WHEEL_UP || $mouse->action === Mouse::WHEEL_DOWN) {
-            $this->scrollBy($mouse->action === Mouse::WHEEL_UP ? -3 : 3);
-            return true;
-        }
-        return false;
-    }
-
-    private function maxTop(): int
-    {
-        $this->layoutIfStale();
-        return max(0, \count($this->rows) - $this->surface->rows());
+        return $this->rowCount();
     }
 
     // ------------------------------------------------------------------------------------------
@@ -247,48 +175,43 @@ class Markdown extends Component
         $cols = $this->surface->cols();
         $height = $this->surface->rows();
         $this->layoutIfStale();
-        $max = max(0, \count($this->rows) - $height);
-        $this->top = $this->stuck ? $max : max(0, min($this->top, $max));
+        $top = $this->scrollTop();
         $out = '';
-        if ($this->paintedSize !== [$cols, $height]) {
-            $this->paintedSize = [$cols, $height];
+        if ($this->paintedSize !== [$cols, $height, $this->scrollbar]) {
+            $this->paintedSize = [$cols, $height, $this->scrollbar];
             $this->painted = [];
-            $out = "\e[0m\e[2J";
+            $out = $this->plain . "\e[2J";
         }
         for ($y = 0; $y < $height; $y++) {
-            $row = $this->rows[$this->top + $y] ?? '';
+            $row = $this->rows[$top + $y] ?? '';
             if (($this->painted[$y] ?? null) !== $row) {
                 $this->painted[$y] = $row;
-                $out .= Ansi::moveTo(0, $y) . "\e[0m\e[2K" . $row . "\e[0m";
+                $out .= Ansi::moveTo(0, $y) . $this->plain . ($this->scrollbar ? "\e[" . ($cols - 1) . "X" : "\e[K") . $row . $this->plain;
             }
+        }
+        if ($this->scrollbar) {
+            $out .= $this->scrollbar($cols - 1);
         }
         if ($out !== '') {
             $this->surface->write("\e[?7l\e[?25l" . $out . "\e[?7h");
         }
-        $place = [$this->top, $this->top + $height - 1, $this->stuck];
-        if ($place !== $this->inView) {
-            $this->inView = $place;
-            $this->emit('scroll', $this);
-        }
+        $this->scrolled();
         return null;
     }
 
     /** Lay the document out again if the text, the width or the styles changed. */
     private function layoutIfStale(): void
     {
-        $cols = max(1, $this->surface->cols());
-        $this->styles = [];
-        foreach (self::PARTS as $part) {
-            $this->styles[$part] = $this->style($part)->text;
-        }
-        $sig = md5(implode('|', array_map(Ansi::style(...), $this->styles)));
+        $cols = max(1, $this->surface->cols() - ($this->scrollbar ? 1 : 0));
+        $plain = Ansi::style($this->style()->text);
+        $sig = md5($plain . implode('|', array_map(fn($part) => Ansi::style($this->style($part)->text), self::PARTS)));
         if (!$this->stale && $cols === $this->laidCols && $sig === $this->laidStyles) {
             return;
         }
         if ($sig !== $this->laidStyles || $cols !== $this->laidCols) {
             $this->cache = [];
         }
-        [$this->stale, $this->laidCols, $this->laidStyles, $this->sgrs] = [false, $cols, $sig, []];
+        [$this->stale, $this->laidCols, $this->laidStyles, $this->sgrs, $this->plain] = [false, $cols, $sig, [], $plain];
         $rows = [];
         $kept = [];
         foreach (MarkdownBlocks::parse($this->text) as $k => $block) {
@@ -317,12 +240,12 @@ class Markdown extends Component
             case 'para':
                 return $this->wrapped($this->inline($b['text'], [...$base, 'paragraph']), $w);
             case 'rule':
-                return [$this->sgr([...$base, 'rule']) . str_repeat('─', $w) . "\e[0m"];
+                return [$this->sgr([...$base, 'rule']) . str_repeat('─', $w) . $this->plain];
             case 'code':
                 return $this->codeBlock($b['info'], $b['lines'], $w);
             case 'quote':
                 $inner = $this->blocks($b['children'], $w - 2, [...$base, 'quote'], $depth, true);
-                $bar = $this->sgr([...$base, 'quote']) . '│ ' . "\e[0m";
+                $bar = $this->sgr([...$base, 'quote']) . '│ ' . $this->plain;
                 return array_map(fn($r) => $bar . $r, $inner ?: ['']);
             case 'list':
                 return $this->listRows($b, $w, $base, $depth);
@@ -367,7 +290,7 @@ class Markdown extends Component
             $pad = str_repeat(' ', Text::width($marker));
             $inner = $this->blocks($item, $w - Text::width($marker), $base, $depth + 1, $b['loose']) ?: [''];
             foreach ($inner as $r => $row) {
-                $rows[] = ($r === 0 ? $this->sgr([...$base, 'bullet']) . $marker . "\e[0m" : $pad) . $row;
+                $rows[] = ($r === 0 ? $this->sgr([...$base, 'bullet']) . $marker . $this->plain : $pad) . $row;
             }
         }
         return $rows;
@@ -401,8 +324,8 @@ class Markdown extends Component
             }
             $widths[$widest]--;
         }
-        $line = fn(string $l, string $m, string $r): string => $this->sgr([...$base, 'border']) . $l . implode($m, array_map(fn($x) => str_repeat('─', $x + 2), $widths)) . $r . "\e[0m";
-        $bar = $this->sgr([...$base, 'border']) . '│' . "\e[0m";
+        $line = fn(string $l, string $m, string $r): string => $this->sgr([...$base, 'border']) . $l . implode($m, array_map(fn($x) => str_repeat('─', $x + 2), $widths)) . $r . $this->plain;
+        $bar = $this->sgr([...$base, 'border']) . '│' . $this->plain;
         $rows = [$line('┌', '┬', '┐')];
         foreach ($grid as $r => $row) {
             $cells = [];
@@ -412,7 +335,7 @@ class Markdown extends Component
             for ($y = 0; $y < max(array_map('count', $cells)); $y++) {
                 $text = $bar;
                 foreach ($cells as $i => $lines) {
-                    $text .= ' ' . Text::pad($lines[$y] ?? '', $widths[$i], $b['align'][$i]) . "\e[0m " . $bar;
+                    $text .= ' ' . Text::pad($lines[$y] ?? '', $widths[$i], $b['align'][$i]) . $this->plain . ' ' . $bar;
                 }
                 $rows[] = $text;
             }
@@ -438,10 +361,10 @@ class Markdown extends Component
         $rows = [];
         foreach (self::carry(explode("\n", $styled)) as $line) {
             foreach (self::carry(Text::wrap($line, $inner)) as $row) {
-                $rows[] = $fill . ' ' . $row . $fill . str_repeat(' ', max(0, $inner - Text::width($row)) + 1) . "\e[0m";
+                $rows[] = $fill . ' ' . $row . $fill . str_repeat(' ', max(0, $inner - Text::width($row)) + 1) . $this->plain;
             }
         }
-        return $rows ?: [$fill . str_repeat(' ', $w) . "\e[0m"];
+        return $rows ?: [$fill . str_repeat(' ', $w) . $this->plain];
     }
 
     /** $code with the tokens of $language in the styles of their parts, "\n" kept. */
@@ -476,24 +399,10 @@ class Markdown extends Component
     // ------------------------------------------------------------------------------------------
     // Inline text
 
-    /** @param list<string> $parts @return string the SGR sequence that sets the combined style of $parts */
+    /** @param list<string> $parts @return string the SGR sequence that sets the style of $parts composed */
     private function sgr(array $parts): string
     {
-        return $this->sgrs[$key = implode(' ', $parts)] ??= $this->combine($parts);
-    }
-
-    /** @param list<string> $parts */
-    private function combine(array $parts): string
-    {
-        $fg = $bg = Color::DEFAULT;
-        $attrs = 0;
-        foreach ($parts as $part) {
-            $s = $this->styles[$part] ?? Style::plain();
-            $fg = $s->fg !== Color::DEFAULT ? $s->fg : $fg;
-            $bg = $s->bg !== Color::DEFAULT ? $s->bg : $bg;
-            $attrs |= $s->attrs;
-        }
-        return Ansi::style(Style::of($fg, $bg, $attrs));
+        return $this->sgrs[implode(' ', $parts)] ??= Ansi::style($this->style($parts)->text);
     }
 
     /**
@@ -615,7 +524,7 @@ class Markdown extends Component
             return $styled;
         }
         if ($this->hyperlinks) {
-            return "\e]8;;" . $url . "\e\\" . $styled . "\e]8;;\e\\";
+            return Ansi::link($url) . $styled . Ansi::link();
         }
         return $text === $url ? $styled : $styled . $this->sgr([...$parts, 'url']) . ' (' . $url . ')';
     }

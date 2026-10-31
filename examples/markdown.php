@@ -6,9 +6,10 @@
  *
  *     php examples/markdown.php [file.md]
  *
- * Up/Down (k/j), Page Up/Page Down, Home/End and the mouse wheel scroll; End follows the stream
- * again. Ctrl-R streams the document again, Ctrl-Q quits. With a file argument that file is
- * shown instead of the built-in sample.
+ * Up/Down, Page Up/Page Down, Home/End and the mouse wheel scroll; End follows the stream again,
+ * and the scrollbar shows where you are. Links are clickable where the terminal supports
+ * hyperlinks. Ctrl-R streams the document again, Ctrl-Q quits. With a file argument that file
+ * is shown instead of the built-in sample.
  */
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -22,7 +23,7 @@ use phasync\Tui\Tty;
 
 final class Viewer extends Component
 {
-    public function __construct(private readonly string $document)
+    public function __construct(private readonly string $document, private readonly bool $hyperlinks)
     {
     }
 
@@ -36,7 +37,7 @@ final class Viewer extends Component
 
     private function view(): Markdown
     {
-        return $this->child('view', fn() => new Markdown(tail: true));
+        return $this->child('view', fn() => new Markdown(tail: true, hyperlinks: $this->hyperlinks, scrollbar: true));
     }
 
     protected function render(): Element
@@ -126,4 +127,4 @@ if (!$tty->isTerminal()) {
     fwrite(STDERR, "markdown needs a terminal\n");
     exit(1);
 }
-fiber\run(fn() => (new Viewer(isset($argv[1]) ? file_get_contents($argv[1]) : $sample))->start($tty));
+fiber\run(fn() => (new Viewer(isset($argv[1]) ? file_get_contents($argv[1]) : $sample, $tty->supportsHyperlinks()))->start($tty));

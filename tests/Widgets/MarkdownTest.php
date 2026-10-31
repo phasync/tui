@@ -8,6 +8,7 @@
 
 use phasync\Tui\Component\Markdown;
 use phasync\Tui\FakeTerminal;
+use phasync\Tui\Style;
 use phasync\Tui\Stylesheet;
 
 const MD_DOC = <<<'MD'
@@ -101,9 +102,14 @@ it('shows a link with its address dimmed after the text', function () {
 });
 
 it('can show links as OSC 8 hyperlinks instead: the text alone is on the screen', function () {
-    // (the Surface drops OSC 8 today, so the address does not reach the host terminal yet)
     md(new Markdown('See [the docs](https://x.org/a) now, a long one: [wrapping link text here](https://x.org/b).', hyperlinks: true), 30, 3, function (FakeTerminal $t) {
-        expect(mdRows($t))->toBe(['See the docs now, a long one:', 'wrapping link text here.', '']) ;
+        expect(mdRows($t))->toBe(['See the docs now, a long one:', 'wrapping link text here.', ''])
+            ->and($t->surface->cell(4, 0)->style->link)->toBe('https://x.org/a')
+            ->and($t->surface->cell(13, 0)->style->link)->toBe('')
+            ->and($t->surface->cell(0, 1)->style->link)->toBe('https://x.org/b')       // the link goes on after the wrap
+            ->and($t->surface->cell(22, 1)->style->link)->toBe('https://x.org/b')
+            ->and($t->surface->cell(23, 1)->style->link)->toBe('')
+            ->and($t->output())->toContain("\e]8;;https://x.org/a\e\\the docs");
     });
 });
 
@@ -205,22 +211,40 @@ it('scrolls with the keys and the wheel, and lets a key go on at the edges', fun
         expect(mdRows($t)[0])->toBe('para 1')->and($md->rowCount())->toBe(39)->and($md->lineUp())->toBeFalse();
         $t->press('down', 'down');
         frame();
-        expect(mdRows($t)[0])->toBe('para 2')->and($md->topRow())->toBe(2);
+        expect(mdRows($t)[0])->toBe('para 2')->and($md->scrollTop())->toBe(2);
         $t->press('pagedown');
         frame();
-        expect($md->topRow())->toBe(6)->and(mdRows($t)[0])->toBe('para 4');
+        expect($md->scrollTop())->toBe(6)->and(mdRows($t)[0])->toBe('para 4');
         $t->press('end');
         frame();
         expect(mdRows($t)[4])->toBe('para 20')->and($md->lineDown())->toBeFalse();
         $t->scroll(3, 2, -2);
         frame();
-        expect($md->topRow())->toBe(34 - 6);
+        expect($md->scrollTop())->toBe(34 - 6);
         $t->scroll(3, 2, 1);
         $t->press('home');
         frame();
-        expect($md->topRow())->toBe(0)->and(mdRows($t)[0])->toBe('para 1');
-        $t->press('j', 'k', 'k');
-        expect($md->topRow())->toBe(0);
+        expect($md->scrollTop())->toBe(0)->and(mdRows($t)[0])->toBe('para 1');
+        $md->bind(['j' => 'lineDown', 'k' => 'lineUp']);           // the keys of less, if you want them
+        $t->press('j');
+        expect($md->scrollTop())->toBe(1);
+        $t->press('k', 'k');
+        expect($md->scrollTop())->toBe(0);
+    });
+});
+
+it('shows a scrollbar in its last column, the text laid out beside it', function () {
+    $doc = implode("\n\n", array_map(fn($i) => "para $i", range(1, 10)));
+    md(new Markdown($doc, scrollbar: true), 12, 4, function (FakeTerminal $t, Markdown $md) {
+        expect(array_map(fn($r) => mb_substr($r, -1), mdRows($t)))->toBe(['┃', '│', '│', '│'])
+            ->and(mdRows($t)[0])->toStartWith('para 1');
+        $md->toBottom();
+        frame();
+        expect(array_map(fn($r) => mb_substr($r, -1), mdRows($t)))->toBe(['│', '│', '│', '┃'])
+            ->and(rtrim(mdRows($t)[3], '┃ '))->toBe('para 10');
+        $md->set('short');
+        frame();
+        expect(mdRows($t))->toBe(['short', '', '', '']);
     });
 });
 
@@ -328,5 +352,17 @@ it('replaces all text with set() and reads it back', function () {
         $md->set('new *text*');
         frame();
         expect(mdRows($t)[0])->toBe('new text')->and($md->text())->toBe('new *text*');
+    });
+});
+
+it('draws in its own style: text outside every part, the fill and the cleared rows', function () {
+    $md = new Markdown("plain **bold**\n\n- item");
+    $md->setStylesheet(Stylesheet::default()->with(['Markdown' => ['background' => 'blue', 'color' => 'white']]));
+    md($md, 20, 4, function (FakeTerminal $t) {
+        $t->refresh();
+        foreach ([[0, 0], [7, 0], [19, 0], [19, 1], [5, 3]] as [$x, $y]) {
+            expect($t->surface->cell($x, $y)->style->bg)->toBe(4);
+        }
+        expect($t->surface->cell(0, 0)->style->fg)->toBe(7)->and($t->surface->cell(6, 0)->style->attrs & Style::BOLD)->toBe(Style::BOLD);
     });
 });

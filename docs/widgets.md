@@ -374,13 +374,14 @@ foreach ($tokens as $chunk) {
 
 | | |
 |---|---|
-| `new Markdown(string $text = '', bool $tail = false, bool $hyperlinks = false, ...attributes)` | The initial text. `$tail` and `$hyperlinks` are props. With `$tail` the view follows the end as text arrives, until the user scrolls back. With `$hyperlinks` a link is its text as an OSC 8 hyperlink; else the text with its address dimmed after it. |
+| `new Markdown(string $text = '', bool $tail = false, bool $hyperlinks = false, bool $scrollbar = false, ...attributes)` | The initial text. `$tail`, `$hyperlinks` and `$scrollbar` are props. With `$tail` the view follows the end as text arrives, until the user scrolls back. With `$hyperlinks` a link is its text as an OSC 8 hyperlink the user can click; else the text with its address dimmed after it. Pass `$device->supportsHyperlinks()` (see [the terminal](terminal.md)). With `$scrollbar` the last column shows where the view is. |
 | `set(string $text)`, `append(string $chunk)`, `text(): string` | Replace, add to, and read back the Markdown text. |
-| `scrollTo(int $row)`, `scrollBy(int $rows): bool`, `topRow(): int`, `rowCount(): int` | Rows of the laid-out document (they depend on the width). `scrollBy` is false when it could not move. |
+| `scrollTo(int $row): bool`, `scrollBy(int $rows): bool`, `scrollTop(): int`, `rowCount(): int` | Rows of the laid-out document (they depend on the width), 0 the first. False when the view did not move. |
 | `follow()`, `isFollowing(): bool` | Follow the end again (with `tail`); whether the view is following. |
-| `lineUp`, `lineDown`, `pageUp`, `pageDown`, `toTop`, `toBottom` | The actions of Up/k, Down/j, Page Up, Page Down/Space, Home, End; a key the view can not use goes on to the parent. The wheel scrolls three rows. End follows the stream again. |
+| `lineUp`, `lineDown`, `pageUp`, `pageDown`, `toTop`, `toBottom` | The actions of Up, Down, Page Up, Page Down, Home, End; a key the view can not use goes on to the parent. The wheel scrolls three rows. End follows the stream again. Other keys with `bind()`: `$md->bind(['j' => 'lineDown', 'k' => 'lineUp', 'space' => 'pageDown'])`. |
 
-Event `scroll` (with the Markdown): the rows in view or `isFollowing()` changed.
+It scrolls with [`Scrollable`](components.md#scrolling-in-a-widget-that-draws-itself-scrollable),
+as `Log` does. Event `scroll` (with the Markdown): the rows in view or `isFollowing()` changed.
 
 **Supported**: headings (ATX and setext), paragraphs wrapped between words (hard breaks with two
 trailing spaces or a backslash), `*emphasis*`, `**strong**`, `~~strike~~`, `` `code` ``,
@@ -406,8 +407,11 @@ whole gives.
 **Style**: one part per kind, `Markdown::h1` to `Markdown::h6`, `paragraph`, `strong`, `emphasis`,
 `strike`, `code` (a span), `codeblock` (the block and its background), `keyword`, `string`,
 `comment`, `number`, `variable`, `key` (the highlighter), `link`, `url`, `quote` (text and bar),
-`bullet`, `rule`, `th`, `td` and `border` (tables). Parts that apply together combine (`strong`
-in `h2`, `link` in `quote`): attributes add up and the innermost colour wins.
+`bullet`, `rule`, `th`, `td` and `border` (tables), `scrollbar` and `scrollbar:thumb`. Parts
+that apply together compose (`strong` in `h2`, `link` in `quote`): attributes add up and the
+innermost colour wins. Text outside every part, the fill and the cleared rows are in the
+`Markdown` style itself, so `'Markdown' => ['background' => '$panel']` gives the whole view
+a background.
 
 ```php
 $app->setStylesheet(Stylesheet::default()->with([
