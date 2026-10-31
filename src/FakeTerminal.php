@@ -36,6 +36,11 @@ use function fiber\sleep;
  *
  * `paste()`, `mouse()`, `click()`, `drag()`, `scroll()` and `focus()` send the other events.
  *
+ * **Inline mode**: `FakeTerminal::inline(80, 24)` shows the root as a live region at the bottom
+ * of the normal screen (see `TerminalDevice`), under whatever was written into `$surface`
+ * before (a shell prompt, for a test); `frozen()` is the text above the region, scrollback
+ * included, and `region()` the region's.
+ *
  * **Reading the screen after input**: renders come in the next frame, so call `settle()` after
  * the input and before `text()`. Never `usleep()` in a coroutine: it blocks the loop, so nothing
  * renders while it sleeps. Wrap a test in `run()`, which detaches the terminal afterwards also
@@ -52,15 +57,70 @@ final class FakeTerminal extends TerminalDevice
     private string $copied = '';
     private Signal $idle;
 
-    /** A terminal of $cols x $rows (resize it later with `resize()`). */
-    public function __construct(int $cols = 80, int $rows = 24)
+    /**
+     * A terminal of $cols x $rows (resize it later with `resize()`); with $hyperlinks false,
+     * one that does not show hyperlinks (the device then writes the text of links alone).
+     */
+    public function __construct(int $cols = 80, int $rows = 24, bool $hyperlinks = true)
     {
-        $this->surface = new Surface($cols, $rows, 0);
+        $this->hyperlinks = $hyperlinks;
+        $this->surface = new Surface($cols, $rows);
         $this->idle = new Signal();
         $this->surface->input->pipe(fn(string $bytes) => $this->receive($bytes, true));
         $this->surface->on('clipboard', function (string $text): void {
             $this->copied = $text;
         });
+    }
+
+    /**
+     * A terminal of $cols x $rows that shows its root inline: a live region at the bottom of
+     * its normal screen, the root's scrollback going into its own (see `TerminalDevice`). With
+     * $keep false, detaching erases the region instead of leaving the last frame.
+     */
+    public static function inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true): self
+    {
+        $terminal = new self($cols, $rows, $hyperlinks);
+        $terminal->useInline($keep);
+        return $terminal;
+    }
+
+    /**
+     * Inline mode: the text above the live region, the terminal's scrollback first, a line per
+     * row (trailing blanks cut), joined with "\n"; everything the terminal shows when the
+     * region is gone (detached). The lines written above the region as the root scrolled, and
+     * by `println()`, are here as they were then.
+     */
+    public function frozen(): string
+    {
+        $this->refresh();
+        $s = $this->surface;
+        $place = $this->regionPlace();
+        $top = $place === null ? $s->rows() : max(0, $s->cursor()->y - $place[0]);
+        $lines = [];
+        for ($y = -$s->scrollbackSize(); $y < $top; $y++) {
+            $lines[] = $s->line($y);
+        }
+        while ($lines !== [] && end($lines) === '') {
+            array_pop($lines);
+        }
+        return implode("\n", $lines);
+    }
+
+    /** Inline mode: the text of the live region, a line per row, joined with "\n"; '' when not attached inline. */
+    public function region(): string
+    {
+        $this->refresh();
+        $place = $this->regionPlace();
+        if ($place === null) {
+            return '';
+        }
+        $s = $this->surface;
+        $top = $s->cursor()->y - $place[0];
+        $lines = [];
+        for ($y = $top; $y < $top + $place[1]; $y++) {
+            $lines[] = $s->line($y);
+        }
+        return implode("\n", $lines);
     }
 
     protected function open(string $restore): void

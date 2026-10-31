@@ -51,6 +51,48 @@ final class Tty extends TerminalDevice
     {
         $this->in = $in ?? \STDIN;
         $this->out = $out ?? \STDOUT;
+        $this->hyperlinks = self::hyperlinksFromEnvironment(getenv());
+    }
+
+    /**
+     * The terminal in inline mode: the root shows as a live region at the bottom of the
+     * terminal's normal screen, under what it shows already, and its scrollback goes into the
+     * terminal's (see `TerminalDevice`). For progress lines and status displays that should not
+     * take the screen over. With $keep false, detaching erases the region instead of leaving
+     * the last frame standing.
+     *
+     *     $app->start(Tty::inline());        // the same component as with new Tty()
+     *
+     * @param resource|null $in
+     * @param resource|null $out
+     */
+    public static function inline($in = null, $out = null, bool $keep = true): self
+    {
+        $tty = new self($in, $out);
+        $tty->useInline($keep);
+        return $tty;
+    }
+
+    /**
+     * @internal Whether the environment says the terminal shows OSC 8 hyperlinks: true for
+     * terminals known to, false inside tmux or screen (which may not pass them on) and on the
+     * Linux console, null when it does not say (the terminal's XTVERSION answer decides).
+     *
+     * @param array<string, string> $env
+     */
+    public static function hyperlinksFromEnvironment(array $env): ?bool
+    {
+        $term = $env['TERM'] ?? '';
+        if (isset($env['TMUX']) || isset($env['STY']) || str_starts_with($term, 'screen') || str_starts_with($term, 'tmux') || $term === 'linux' || $term === 'dumb') {
+            return false;
+        }
+        if (\in_array($env['TERM_PROGRAM'] ?? '', ['iTerm.app', 'WezTerm', 'vscode', 'ghostty', 'Tabby'], true)
+            || isset($env['KITTY_WINDOW_ID']) || isset($env['WT_SESSION']) || isset($env['WEZTERM_EXECUTABLE'])
+            || (int) ($env['VTE_VERSION'] ?? 0) >= 5000
+            || \in_array($term, ['xterm-kitty', 'foot', 'foot-extra', 'wezterm', 'xterm-ghostty', 'alacritty'], true)) {
+            return true;
+        }
+        return null;
     }
 
     /** True if both streams are terminals (false when input or output is redirected). */

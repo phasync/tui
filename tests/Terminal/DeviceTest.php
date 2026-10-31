@@ -332,3 +332,69 @@ it('settles: the screen shows what the input made the program draw', function ()
         });
     });
 });
+
+describe('hyperlinks', function () {
+    it('writes the cells\' hyperlinks to a terminal that supports them, and a replay keeps them', function () {
+        run(function () {
+            $root = new Surface();
+            $t = new FakeTerminal(30, 3);
+            $t->attach($root);
+            $root->write('see ' . Ansi::hyperlink('the docs', 'https://example.com/docs', 'd') . ' or ' . Ansi::hyperlink('home', 'https://example.com') . "\r\nplain");
+            $t->refresh();
+            $replay = new Surface(30, 3);
+            $replay->write($t->output());
+            foreach ([$t->surface, $replay] as $s) {
+                expect($s->line(0))->toBe('see the docs or home')
+                    ->and([$s->cell(4, 0)->style->link, $s->cell(11, 0)->style->linkId])->toBe(['https://example.com/docs', 'd'])
+                    ->and($s->cell(12, 0)->style->link)->toBe('')
+                    ->and($s->cell(16, 0)->style->link)->toBe('https://example.com')
+                    ->and($s->cell(0, 1)->style->link)->toBe('');
+            }
+            $t->detach();
+        });
+    });
+
+    it('writes the text alone to a terminal without hyperlinks', function () {
+        run(function () {
+            $root = new Surface();
+            $t = new FakeTerminal(30, 2, hyperlinks: false);
+            $t->attach($root);
+            $root->write('a ' . Ansi::hyperlink('link', 'https://example.com') . ' b');
+            $t->refresh();
+            expect($t->supportsHyperlinks())->toBeFalse()->and($t->text())->toStartWith('a link b')
+                ->and($t->output())->not->toContain("\e]8;")->and($t->surface->cell(2, 0)->style->link)->toBe('');
+            $t->detach();
+        });
+    });
+
+    it('shows the links a program in a Terminal pane prints, clickable or as text by the device', function () {
+        foreach ([true, false] as $supported) {
+            run(function () use ($supported) {
+                $t = new FakeTerminal(40, 4, hyperlinks: $supported);
+                $term = (new phasync\Tui\Component\Terminal(['printf', '\033]8;;https://example.org\033\\\\click\033]8;;\007 done']))->start($t);
+                $t->run(function (FakeTerminal $t) use ($supported) {
+                    expect($t->waitFor('click done'))->toBeTrue()
+                        ->and($t->surface->cell(0, 0)->style->link)->toBe($supported ? 'https://example.org' : '')
+                        ->and($t->surface->cell(6, 0)->style->link)->toBe('');
+                });
+            });
+        }
+    });
+
+    it('knows from the terminal\'s name or the environment whether hyperlinks show', function () {
+        run(function () {
+            $t = new FakeTerminal(10, 2);
+            $t->attach(new Surface());
+            expect($t->terminalName())->toStartWith('phasync-tui');
+            $t->detach();
+        });
+        $env = fn(array $vars) => phasync\Tui\Tty::hyperlinksFromEnvironment($vars);
+        expect($env(['TERM' => 'xterm-kitty']))->toBeTrue()
+            ->and($env(['TERM' => 'xterm-256color', 'VTE_VERSION' => '7200']))->toBeTrue()
+            ->and($env(['TERM' => 'xterm-256color', 'TERM_PROGRAM' => 'WezTerm']))->toBeTrue()
+            ->and($env(['TERM' => 'xterm-256color', 'VTE_VERSION' => '7200', 'TMUX' => '/tmp/tmux-1/default,1,0']))->toBeFalse()
+            ->and($env(['TERM' => 'screen-256color']))->toBeFalse()
+            ->and($env(['TERM' => 'linux']))->toBeFalse()
+            ->and($env(['TERM' => 'xterm-256color']))->toBeNull();
+    });
+});

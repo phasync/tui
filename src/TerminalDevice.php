@@ -39,7 +39,28 @@ use function fiber\sleep;
  * - keeps the terminal in raw mode on the alternate screen with mouse reporting (button events,
  *   SGR encoding; motion without a button too while a program in the tree asks for it with
  *   mode 1003), bracketed paste and focus reporting on, and the kitty keyboard protocol
- *   (disambiguated keys) pushed when the terminal answers its query; `detach()` undoes all of it.
+ *   (disambiguated keys) pushed when the terminal answers its query; `detach()` undoes all of it;
+ * - writes the hyperlinks of the cells (OSC 8) when the terminal supports them
+ *   (`supportsHyperlinks()`), else the text alone.
+ *
+ * **Inline mode** (`Tty::inline()`, `FakeTerminal::inline()`): instead of taking the screen
+ * over, the root shows as a live region at the bottom of the terminal's normal screen, under
+ * what the terminal shows already. The region is as tall as the root's content (its rows down
+ * to the last one with something in it, or with the cursor shown), at most the root's height,
+ * which is the terminal's less one row: the line under the region, where the cursor waits
+ * (and the shell's prompt appears after the program). The root's scrollback is the terminal's: a row
+ * that scrolls off the root's top is written once more above the region, as it was then, and
+ * never touched again; `println()` puts lines there too. Only relative cursor motion is used
+ * (the region moves whenever the terminal scrolls), the damage is drawn against the previous
+ * frame as in full-screen mode, and the cursor waits on the line under the region (or where the
+ * root shows it, inside the region). No alternate screen, and no mouse reporting unless a
+ * surface in the tree asks for it (mode 1000, 1002 or 1003, as a program in a terminal does),
+ * so the terminal's own selection and scrolling keep working. Detaching leaves the last frame
+ * standing with the cursor under it (or erases the region, with `keep: false`). A width change
+ * of the terminal repaints the region; terminals that rewrap their lines on a width change may
+ * leave a copy of its rows above it. While the region is live, keys come through the library,
+ * not `fgets(STDIN)`. The region starts on the line the cursor is on: print a newline first if
+ * that line has text.
  *
  * **Ending.** `detach()` gives the terminal back and closes the root (`Surface::close()`), which
  * disposes a component on it, and so the whole component tree and the programs of its
@@ -55,6 +76,12 @@ abstract class TerminalDevice
     private const TAKEOVER = "\e[?1049h\e[?25l\e[?1000h\e[?1002h\e[?1006h\e[?2004h\e[?1004h";
     /** What `detach()` sends to undo it (`Tty` also sends it when the program dies). */
     private const RESTORE = "\e[0m\e[<u\e[?1004l\e[?2004l\e[?1006l\e[?1003l\e[?1002l\e[?1000l\e[0 q\e[?25h\e[?1049l";
+    /** Inline mode: the normal screen, no mouse reporting until a surface asks for it. */
+    private const INLINE_TAKEOVER = "\e[?25l\e[?2004h\e[?1004h";
+    /** Inline mode's restore: as RESTORE, without leaving an alternate screen it never entered. */
+    private const INLINE_RESTORE = "\e[0m\e[<u\e[?1004l\e[?2004l\e[?1006l\e[?1003l\e[?1002l\e[?1000l\e[0 q\e[?25h";
+    /** Terminals that answer XTVERSION and write OSC 8 hyperlinks. */
+    private const HYPERLINK_TERMINALS = '/^(kitty|WezTerm|foot|ghostty|iTerm2|contour|phasync-tui)\b/i';
 
     private ?Surface $root = null;
     private InputDecoder $decoder;
@@ -76,6 +103,34 @@ abstract class TerminalDevice
     private bool $kitty = false;
     /** Mouse motion without a button is reported (mode 1003 on the terminal). */
     private bool $motion = false;
+    /** Inline mode: mouse reporting is on, because a surface in the tree asked for it. */
+    private bool $mouse = false;
+    /** The terminal's name from its XTVERSION answer, '' when it did not answer. */
+    private string $terminalName = '';
+    /** The hyperlink the terminal writes in: [URI, id]. */
+    private array $link = ['', ''];
+    /**
+     * Whether the terminal writes OSC 8 hyperlinks: true or false as the device (or its
+     * environment) knows it, null to decide from the terminal's XTVERSION answer.
+     */
+    protected ?bool $hyperlinks = null;
+    /** Inline mode (see the class description), and whether detaching leaves the last frame. */
+    private bool $inline = false;
+    private bool $keep = true;
+    /** Inline: the rows the region has on the terminal now. */
+    private int $region = 0;
+    /** Inline: where the terminal's cursor is, relative to the region's top-left (x -1: column not known). */
+    private array $at = [-1, 0];
+    /** Inline: the lowest row (relative to the region's top) known to exist on the terminal. */
+    private int $reach = 0;
+    /** Inline: the root's linesScrolled() at the previous frame. */
+    private int $scrolledOff = 0;
+    /** @var list<array{list<string>, list<Style>}> inline: rows to write above the region at the next frame */
+    private array $printed = [];
+    /** Inline: detaching; the last frame leaves the cursor out of the region. */
+    private bool $ending = false;
+    /** @var list<string> lines given to println() while attached full screen, printed after detach */
+    private array $held = [];
 
     /** Prepare the terminal (raw mode); $restore is to be sent when it is restored, even on a crash. */
     abstract protected function open(string $restore): void;
@@ -97,8 +152,36 @@ abstract class TerminalDevice
     abstract public function size(): array;
 
     /**
+     * Make this device show its root in inline mode (see the class description), for the
+     * subclasses' `inline()` constructors.
+     */
+    protected function useInline(bool $keep): void
+    {
+        $this->inline = true;
+        $this->keep = $keep;
+    }
+
+    /**
+     * Inline mode, for subclasses that show the terminal: the rows from the region's top down
+     * to the terminal's cursor, and the region's height; null when not attached inline.
+     *
+     * @return array{int,int}|null
+     */
+    protected function regionPlace(): ?array
+    {
+        return $this->inline && $this->root !== null ? [$this->at[1], $this->region] : null;
+    }
+
+    /** True if this device shows its root inline, as a live region in the normal screen (see the class description). */
+    public function isInline(): bool
+    {
+        return $this->inline;
+    }
+
+    /**
      * Show $root on this terminal and send it the terminal's input, until `detach()`. The root is
-     * resized to the terminal's size at once and whenever the terminal is resized.
+     * resized to the terminal's size at once and whenever the terminal is resized (in inline
+     * mode too: the region is the part of it with content).
      *
      * @throws \LogicException when already attached
      */
@@ -118,10 +201,18 @@ abstract class TerminalDevice
         $this->shown = null;
         $this->kitty = false;
         $this->motion = false;
-        $this->open(self::RESTORE);
+        $this->mouse = false;
+        $this->terminalName = '';
+        $this->link = ['', ''];
+        $this->region = 0;
+        $this->at = $this->inline ? [-1, 0] : [-1, -1];   // (inline: on the region's top row, the column not known)
+        $this->reach = 0;
+        $this->printed = [];
+        $this->open($this->inline ? self::INLINE_RESTORE : self::RESTORE);
         $this->root = $root;
         [$cols, $rows] = $this->size();
-        $root->resize($cols, $rows);
+        $root->resize($cols, $this->inline ? max(1, $rows - 1) : $rows);
+        $this->scrolledOff = $root->linesScrolled();
         $this->offs = [
             $root->on('change', function (): void {
                 if (!$this->drawing) {
@@ -133,10 +224,11 @@ abstract class TerminalDevice
             $root->on('clipboard', fn(string $text) => $this->clipboard($text)),
             $root->on('close', fn() => $this->release(false)),
         ];
-        // ask for the kitty keyboard protocol; the answer to primary device attributes ends the probe
+        // ask for the kitty keyboard protocol and the terminal's name; the answer to primary
+        // device attributes (which every terminal answers) ends the probe
         $this->probing = microtime(true);
         $this->probe = '';
-        $this->send(self::TAKEOVER . ($root->title() !== '' ? Ansi::title($root->title()) : '') . "\e[?u\e[c");
+        $this->send(($this->inline ? self::INLINE_TAKEOVER : self::TAKEOVER) . ($root->title() !== '' ? Ansi::title($root->title()) : '') . "\e[?u\e[>0q\e[c");
         go($this->frames(...));
         go($this->inputs(...));
     }
@@ -162,13 +254,70 @@ abstract class TerminalDevice
             $off();
         }
         $this->offs = [];
+        if ($this->inline) {
+            // the last frame, then the cursor under it (or the region erased)
+            $this->ending = true;
+            $this->refresh();
+            $this->ending = false;
+            $this->send($this->link() . "\e[0m" . ($this->keep ? $this->move(0, $this->region) : $this->move(0, 0) . "\e[J"));
+        }
         $this->root = null;
         $this->wake?->notify();
         $this->close();
+        foreach ($this->held as $line) {
+            $this->send($line);
+        }
+        $this->held = [];
         $this->detached?->notify();
         if ($closeRoot) {
             $root->close();
         }
+    }
+
+    /**
+     * Print $text (lines, with escape sequences if you like) as plain output of the program. In
+     * inline mode it goes above the live region, into the terminal's scrollback, at the next
+     * frame, and the region is drawn again under it. Not attached, it is written to the terminal
+     * at once; attached full screen (where the alternate screen would hide it), after `detach()`.
+     * A line break ends each call.
+     */
+    public function println(string $text = ''): void
+    {
+        $text = str_replace(["\r\n", "\n"], ["\n", "\r\n"], $text) . "\r\n";
+        if ($this->root === null) {
+            $this->send($text);
+            return;
+        }
+        if (!$this->inline) {
+            $this->held[] = $text;
+            return;
+        }
+        // laid out as the terminal will show it: through a surface as wide as the root
+        $page = new Surface($this->root->cols(), 1, 1 << 20);
+        $page->write("\e[?25l" . $text);
+        for ($y = -$page->scrollbackSize(); $y < 0; $y++) {
+            $this->printed[] = $page->rowData($y);
+        }
+        $this->damage();
+    }
+
+    /**
+     * True if the terminal shows OSC 8 hyperlinks, so the device writes the cells' links to it;
+     * else it writes their text alone. `Tty` knows it from the environment (`TERM_PROGRAM`,
+     * `VTE_VERSION`, `TERM` and the like) or from the name the terminal answers when attached,
+     * conservatively: false for a terminal it does not know to support them, and inside tmux or
+     * screen. `FakeTerminal` is told (default true). A widget that would show a link's address
+     * as text otherwise asks this (`Markdown`'s `hyperlinks:`).
+     */
+    public function supportsHyperlinks(): bool
+    {
+        return $this->hyperlinks ?? preg_match(self::HYPERLINK_TERMINALS, $this->terminalName) === 1;
+    }
+
+    /** The name the terminal gave when asked (XTVERSION) at `attach()`, such as `kitty(0.36.4)`; '' when it did not answer. */
+    public function terminalName(): string
+    {
+        return $this->terminalName;
     }
 
     /** True between `attach()` and `detach()`. */
@@ -212,31 +361,21 @@ abstract class TerminalDevice
             $root->compose();
             // the version first: changes made while the rows are read are drawn next frame
             $version = $root->version();
-            $out = '';
-            if ($this->redraw) {
-                $this->redraw = false;
-                $this->frame = [];
-                $this->pen = Style::plain();
-                $out .= "\e[0m\e[H\e[2J";
-                $damaged = range(0, $root->rows() - 1);
-            } else {
-                $damaged = $root->damagedSince($this->drawnVersion);
-            }
+            $out = $this->inline ? $this->drawInline($root) : $this->drawFull($root);
             $this->drawnVersion = $version;
-            $at = [-1, -1];
-            foreach ($damaged as $y) {
-                $out .= $this->drawRow($y, $root, $at);
-            }
-            $motion = $root->mode(1003) || self::wantsMotion($root);
-            if ($motion !== $this->motion) {
-                // a program below asked for (or gave up) motion reports without a button held
-                $this->motion = $motion;
-                // (the mouse modes are one setting: leaving 1003 goes back to button events, 1002)
-                $out .= $motion ? "\e[?1003h" : "\e[?1003l\e[?1002h";
-            }
+            $out .= $this->link() . $this->mouseModes($root);
             $cursor = $root->activeCursor();
+            if ($this->inline) {
+                // shown where the root shows it inside the region, else waiting on the line under it
+                $cursor = $cursor->visible && $cursor->y < $this->region
+                    ? $cursor
+                    : new Cursor(0, $this->region, false, $cursor->shape, $cursor->blinking);
+            }
             $shown = $this->shown;
-            if ($out === '' && $shown == $cursor) {
+            // (inline, the cursor may have to move although nothing was drawn: rows that left
+            // the top moved the region down, and line feeds make its rows)
+            $move = $this->move($cursor->x, $cursor->y);
+            if ($out === '' && $move === '' && $shown == $cursor) {
                 return;
             }
             // the cursor is hidden while drawing, so it does not flicker over the screen
@@ -246,7 +385,7 @@ abstract class TerminalDevice
                 $frame .= "\e[?25l";
                 $visible = false;
             }
-            $frame .= $out . Ansi::moveTo($cursor->x, $cursor->y);
+            $frame .= $out . $move;
             if ($shown === null || $shown->shape !== $cursor->shape || $shown->blinking !== $cursor->blinking) {
                 $frame .= "\e[" . (['block' => 1, 'underline' => 3, 'bar' => 5][$cursor->shape] + ($cursor->blinking ? 0 : 1)) . ' q';
             }
@@ -262,11 +401,171 @@ abstract class TerminalDevice
         }
     }
 
-    /** True if a surface in the tree below $surface has mouse mode 1003 (any motion) on. */
-    private static function wantsMotion(Surface $surface): bool
+    /** Full screen: the damaged rows of the root, against the previous frame (all of them after a resize). */
+    private function drawFull(Surface $root): string
+    {
+        $out = '';
+        if ($this->redraw) {
+            $this->redraw = false;
+            $this->frame = [];
+            $this->pen = Style::plain();
+            $this->at = [0, 0];
+            $out .= "\e[0m\e[H\e[2J";
+            $damaged = range(0, $root->rows() - 1);
+        } else {
+            $damaged = $root->damagedSince($this->drawnVersion);
+        }
+        foreach ($damaged as $y) {
+            [$chars, $styles] = $root->rowData($y);
+            $out .= $this->drawRow($y, $chars, $styles);
+        }
+        return $out;
+    }
+
+    /**
+     * Inline: the rows that left the root's top and the printed lines, once, above the region;
+     * then the region, as tall as the root's content, against the previous frame.
+     */
+    private function drawInline(Surface $root): string
+    {
+        $out = '';
+        if ($this->redraw) {
+            // (the first frame, or a width change: what the region showed is erased, drawn anew)
+            $this->redraw = false;
+            if ($this->frame !== []) {
+                $out .= $this->move(0, 0) . $this->link() . "\e[0m\e[J";
+                $this->pen = Style::plain();
+            }
+            $this->frame = [];
+            $this->region = 0;
+        }
+        $scrolled = $root->linesScrolled() - $this->scrolledOff;
+        $this->scrolledOff = $root->linesScrolled();
+        $above = [];
+        for ($y = -min($scrolled, $root->scrollbackSize()); $y < 0; $y++) {
+            $above[] = $root->rowData($y);
+        }
+        array_push($above, ...$this->printed);
+        $this->printed = [];
+        if ($above !== []) {
+            // written over the top of the region, which moves down under them
+            foreach ($above as $y => [$chars, $styles]) {
+                $out .= $this->drawRow($y, $chars, $styles);
+            }
+            $n = \count($above);
+            $this->frame = \array_slice($this->frame, $n);
+            $this->at[1] -= $n;
+            $this->reach -= $n;
+            $this->region = max(0, $this->region - $n);
+        }
+        $height = $this->contentRows($root);
+        if ($height < $this->region) {
+            $out .= $this->move(0, $height) . $this->link() . "\e[0m\e[J";
+            $this->pen = Style::plain();
+            $this->frame = \array_slice($this->frame, 0, $height);
+        }
+        $this->region = $height;
+        for ($y = 0; $y < $height; $y++) {
+            [$chars, $styles] = $root->rowData($y);
+            $out .= $this->drawRow($y, $chars, $styles);
+        }
+        return $out;
+    }
+
+    /**
+     * Inline: how many rows of the root the region shows: down to the last row with anything in
+     * it (a character, or a colour), or to the cursor when it is shown.
+     */
+    private function contentRows(Surface $root): int
+    {
+        $cursor = $root->activeCursor();
+        $min = $cursor->visible && !$this->ending ? min($root->rows(), $cursor->y + 1) : 0;
+        $plain = Style::plain();
+        for ($y = $root->rows() - 1; $y >= $min; $y--) {
+            [$chars, $styles] = $root->rowData($y);
+            foreach ($chars as $i => $ch) {
+                if ($ch !== ' ' || $styles[$i] !== $plain) {
+                    return $y + 1;
+                }
+            }
+        }
+        return $min;
+    }
+
+    /**
+     * The cursor to column $x, row $y: absolute (CUP) full screen; relative to where it is in
+     * inline mode, where row $y counts from the region's top, and rows below the lowest one
+     * known to exist are made with line feeds (scrolling the terminal when at its bottom).
+     */
+    private function move(int $x, int $y): string
+    {
+        [$ax, $ay] = $this->at;
+        if ($ax === $x && $ay === $y) {
+            return '';
+        }
+        $this->at = [$x, $y];
+        if (!$this->inline) {
+            return Ansi::moveTo($x, $y);
+        }
+        $out = '';
+        if ($y > $this->reach) {
+            $out .= self::vertical($ay, $this->reach) . str_repeat("\n", $y - $this->reach);
+            $this->reach = $y;
+            $ax = -1;       // (a line feed after the last column leaves the column there)
+        } else {
+            $out .= self::vertical($ay, $y);
+        }
+        if ($ax !== $x) {
+            $out .= $x === 0 ? "\r" : "\e[" . ($x + 1) . 'G';
+        }
+        return $out;
+    }
+
+    private static function vertical(int $from, int $to): string
+    {
+        return $to > $from ? "\e[" . ($to - $from) . 'B' : ($to < $from ? "\e[" . ($from - $to) . 'A' : '');
+    }
+
+    /** OSC 8 ending the hyperlink the terminal writes in, if one is open. */
+    private function link(): string
+    {
+        if ($this->link[0] === '') {
+            return '';
+        }
+        $this->link = ['', ''];
+        return Ansi::link();
+    }
+
+    /** The mouse modes that changed: motion reports for 1003 below; in inline mode, any reporting only when asked for. */
+    private function mouseModes(Surface $root): string
+    {
+        $out = '';
+        if ($this->inline) {
+            $mouse = $root->wantsMouse() || self::below($root, fn(Surface $s) => $s->wantsMouse());
+            if ($mouse !== $this->mouse) {
+                $this->mouse = $mouse;
+                $out .= $mouse ? "\e[?1000h\e[?1002h\e[?1006h" : "\e[?1003l\e[?1002l\e[?1000l\e[?1006l";
+                $this->motion = false;
+            }
+            if (!$mouse) {
+                return $out;
+            }
+        }
+        $motion = $root->mode(1003) || self::below($root, fn(Surface $s) => $s->mode(1003));
+        if ($motion !== $this->motion) {
+            // a program below asked for (or gave up) motion reports without a button held
+            $this->motion = $motion;
+            // (the mouse modes are one setting: leaving 1003 goes back to button events, 1002)
+            $out .= $motion ? "\e[?1003h" : "\e[?1003l\e[?1002h";
+        }
+        return $out;
+    }
+
+    /** True if $test holds for a surface in the tree below $surface. */
+    private static function below(Surface $surface, \Closure $test): bool
     {
         foreach ($surface->viewports() as $v) {
-            if ($v->source->mode(1003) || self::wantsMotion($v->source)) {
+            if ($test($v->source) || self::below($v->source, $test)) {
                 return true;
             }
         }
@@ -274,15 +573,17 @@ abstract class TerminalDevice
     }
 
     /**
-     * The escape sequences that turn row $y of the previous frame into the root's row $y.
+     * The escape sequences that turn row $y of the previous frame into these cells (row $y of
+     * the root, or in inline mode a row written above the region).
      *
-     * @param array{int,int} $at where the terminal's cursor is, [-1,-1] when unknown
+     * @param list<string> $chars
+     * @param list<Style>  $styles
      */
-    private function drawRow(int $y, Surface $root, array &$at): string
+    private function drawRow(int $y, array $chars, array $styles): string
     {
-        [$chars, $styles] = $root->rowData($y);
-        $cols = $root->cols();
+        $cols = \count($chars);
         $plain = Style::plain();
+        $links = $this->supportsHyperlinks();
         [$oldChars, $oldStyles] = $this->frame[$y] ?? [[], []];
         $this->frame[$y] = [$chars, $styles];
         $same = static fn(int $i): bool => ($chars[$i] ?? ' ') === ($oldChars[$i] ?? ' ')
@@ -308,9 +609,7 @@ abstract class TerminalDevice
             if (($chars[$end + 1] ?? null) === '') {
                 $end++;     // include the second half of a wide character
             }
-            if ($at !== [$start, $y]) {
-                $out .= Ansi::moveTo($start, $y);
-            }
+            $out .= $this->move($start, $y);
             for ($i = $start; $i <= $end; $i++) {
                 $ch = $chars[$i] ?? ' ';
                 if ($ch === '') {
@@ -320,12 +619,17 @@ abstract class TerminalDevice
                 if ($style !== $this->pen) {
                     $out .= Ansi::style($style);
                     $this->pen = $style;
+                    if ($links && [$style->link, $style->linkId] !== $this->link) {
+                        $this->link = [$style->link, $style->linkId];
+                        $out .= Ansi::link($style->link, $style->linkId);
+                    }
                 }
                 $out .= $ch;
             }
             $x = $end + 1;
-            // after the last column the cursor waits to wrap: its position is not known
-            $at = $x >= $cols ? [-1, -1] : [$x, $y];
+            // after the last column the cursor waits to wrap: its column is not known (full
+            // screen: nor its row; inline, the row is, and moving up or down cancels the wrap)
+            $this->at = $x >= $cols ? [-1, $this->inline ? $y : -1] : [$x, $y];
         }
         return $out;
     }
@@ -360,7 +664,10 @@ abstract class TerminalDevice
 
     private function endProbe(bool $kitty): void
     {
-        $bytes = (string) preg_replace('/\e\[\?[\d;]*[uc]/', '', $this->probe);
+        if (preg_match('/\eP>\|([^\e\x07]*)(?:\e\\\\|\x07)/', $this->probe, $m)) {
+            $this->terminalName = $m[1];
+        }
+        $bytes = (string) preg_replace(['/\e\[\?[\d;]*[uc]/', '/\eP>\|[^\e\x07]*(?:\e\\\\|\x07)/'], '', $this->probe);
         $this->probing = null;
         $this->probe = '';
         if ($kitty && $this->root !== null) {
@@ -388,11 +695,33 @@ abstract class TerminalDevice
             return;
         }
         [$cols, $rows] = $this->size();
-        if ($cols !== $root->cols() || $rows !== $root->rows()) {
+        if ($cols === $root->cols() && ($this->inline ? max(1, $rows - 1) : $rows) === $root->rows()) {
+            return;
+        }
+        if (!$this->inline) {
             $root->resize($cols, $rows);
             $this->redraw = true;
             $this->damage();
+            return;
         }
+        // inline: a terminal made lower keeps the cursor's line (under the region) and pushes
+        // the rows above it into its scrollback; the root, made lower too, pushes as many rows
+        // off its top. Those rows stay as they were drawn (they are not written again): the
+        // region starts below them.
+        $lost = max(0, $this->at[1] - ($rows - 1));
+        $before = $root->linesScrolled();
+        $oldCols = $root->cols();
+        $root->resize($cols, max(1, $rows - 1));
+        $shift = max($lost, $root->linesScrolled() - $before);
+        $this->scrolledOff = $root->linesScrolled();
+        $this->frame = \array_slice($this->frame, $shift);
+        $this->at[1] -= $shift;
+        $this->reach = max(0, $this->at[1]);      // (rows below the cursor's may be gone; line feeds make them again)
+        $this->region = max(0, $this->region - $shift);
+        if ($cols !== $oldCols) {
+            $this->redraw = true;      // a width change: the region is drawn anew
+        }
+        $this->damage();
     }
 
     private function damage(): void

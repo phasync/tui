@@ -37,6 +37,8 @@ fiber\run(function () use ($tty) {
   `Surface::dispatch()` on the root. A lone ESC is the Escape key after 50 ms.
 - **Follows the size**, resizing the root, which re-lays its windows down to the ptys.
 - **Passes up** the root's title (OSC 2), bell and clipboard requests (OSC 52).
+- **Writes hyperlinks** (OSC 8) of the root's cells when the terminal supports them
+  (`supportsHyperlinks()`); to one that does not, the text alone.
 - **Takes the terminal over**: raw mode, the alternate screen, mouse reporting (button events,
   SGR encoding, and motion without a button while a program anywhere in the tree asks for it
   with mode 1003), bracketed paste and focus reporting, and the kitty keyboard protocol
@@ -52,6 +54,80 @@ fiber\run(function () use ($tty) {
 | `refresh()` | Draw what changed now instead of at the next frame. |
 | `size(): array` | The terminal's size as `[cols, rows]`. |
 | `hasKittyKeyboard(): bool` | True once the terminal answered the kitty keyboard query. |
+| `supportsHyperlinks(): bool` | True if the terminal shows OSC 8 hyperlinks, so the device writes the cells' links (see below). |
+| `terminalName(): string` | The name the terminal gave when asked (XTVERSION) at `attach()`, such as `kitty(0.36.4)`; `''` when it did not answer. |
+| `isInline(): bool` | True for a device made with `inline()` (see below). |
+| `println(string $text = '')` | Plain output of the program: in inline mode above the live region, at the next frame; not attached, to the terminal at once; attached full screen, after `detach()` (the alternate screen would hide it). Escape sequences in it work; a line break ends each call. |
+
+**Hyperlinks.** A cell's style carries the hyperlink it is in (see [surface](surface.md)); the
+device writes OSC 8 around such cells only when `supportsHyperlinks()` is true, so a program
+can print links and they are clickable where the terminal allows and plain text elsewhere.
+`Tty` decides conservatively: from the environment (`TERM_PROGRAM` iTerm, WezTerm, VS Code,
+ghostty; kitty; Windows Terminal; VTE 0.50 and later; `TERM` foot, alacritty and the like) and
+else from the terminal's XTVERSION answer (kitty, WezTerm, foot, ghostty, iTerm2, contour, and
+this library's own emulator, so a nested instance in a `Terminal` pane has them); never inside
+tmux or screen, which may not pass them on. `FakeTerminal` is told: `new FakeTerminal(80, 24,
+hyperlinks: false)`; true by default, since its surface keeps them.
+
+## Inline mode: a live region in the terminal's normal screen
+
+A program that shows a few progress bars, or a line per process it runs, should not take the
+terminal over. `Tty::inline()` (and `FakeTerminal::inline()` for tests) is a device that shows
+the root **in the terminal's normal screen**, as a live region under what the terminal already
+shows. Nothing else changes: the same root, the same component tree, attached with
+`attach()` or `$app->start($device)`.
+
+```php
+fiber
+un(function () {
+    $root = new Surface();
+    $tty = Tty::inline();
+    $tty->attach($root);
+    foreach ($jobs as $i => $job) {
+        $root->write("\e[?25l{$job->name}: starting\r\n");   // a line per job; the cursor waits under them
+    }
+    // ... update a job's line with cursor moves; finished lines are pushed up by newer ones
+    $tty->println('all done');
+    $tty->detach();                                          // the last frame stays, the prompt comes under it
+});
+```
+
+- **The region** is the root's rows down to the last one with something in it (a character or
+  a colour; the row of the cursor too, while the root shows its cursor). The root is as wide as
+  the terminal and one row lower: the line under the region is where the terminal's cursor
+  waits (unless the root shows its cursor inside the region), and where the shell's prompt
+  appears after the program.
+- **The root's scrollback is the terminal's.** A row that scrolls off the root's top (a program
+  printing more lines than fit) is written once more above the region, as it was at that moment,
+  and is never touched again: a progress line that went from 1% to 100% stays live while it is
+  in the region and freezes at what it showed when newer lines pushed it out, exactly as if the
+  program had printed it. `println()` puts lines there too, between frames, and the region is
+  drawn again under them.
+- **Drawing** uses relative cursor motion only (the region moves whenever the terminal scrolls);
+  the damage is drawn against the previous frame as in full-screen mode.
+- **No alternate screen, no mouse reporting** unless a surface in the tree asks for it (by
+  setting mode 1000, 1002 or 1003, as a program does: `$root->write("\e[?1002h")`), so the
+  terminal's own selection and scrolling keep working. Raw mode only while attached.
+- **Ending**: `detach()` (or quitting the component tree) leaves the last frame standing with
+  the cursor under it; `Tty::inline(keep: false)` erases the region instead. The terminal is
+  restored as in full-screen mode, also on a crash or a signal.
+- **Resizes**: a width change repaints the region (terminals that rewrap their lines on a width
+  change may leave a copy of its rows above it); a terminal made lower than the region pushes
+  the region's top rows into its scrollback, as the content growing does.
+- **Limits**: while the region is live, keys come through the library (`on('key')`, bindings),
+  not `fgets(STDIN)`. A full-screen program (vim) in a `Terminal` inside an inline region works
+  but is pointless. The region starts on the line the cursor is on: print a newline first if
+  that line has text.
+
+`examples/inline-progress.php` runs a few jobs with a progress bar each and a total, as a
+component tree; the same tree runs full screen with `new Tty()`.
+
+| Method | What it does |
+|---|---|
+| `Tty::inline($in = STDIN, $out = STDOUT, bool $keep = true)` | The terminal in inline mode. |
+| `FakeTerminal::inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true)` | An in-memory terminal in inline mode, for tests. |
+| `FakeTerminal::frozen(): string` | The text above the region (the terminal's scrollback first): the lines written above it as the root scrolled and by `println()`, as they were then, and what the terminal showed before. |
+| `FakeTerminal::region(): string` | The text of the live region (`''` when not attached). |
 
 ## How a program ends
 
@@ -153,7 +229,7 @@ fiber\run(function () {
 
 | Method | What it does |
 |---|---|
-| `new FakeTerminal(int $cols = 80, int $rows = 24)` | |
+| `new FakeTerminal(int $cols = 80, int $rows = 24, bool $hyperlinks = true)` | A terminal of that size; with `$hyperlinks` false, one that does not show OSC 8 links. `FakeTerminal::inline()` for inline mode (see above). |
 | `run(Closure $code): mixed` | Run `$code($terminal)` and detach afterwards, also when it throws (then the exception goes on to `fiber\run()`). Returns what `$code` returned. |
 | `settle(float $timeout = 1.0)` | Wait until the renders the input so far asked for have run and the screen is up to date (cooperatively, `$timeout` at most). |
 | `text(): string`, `dump(): string` | What the terminal shows (see `Surface::text()`/`dump()`), after drawing what is pending. |
