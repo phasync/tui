@@ -52,32 +52,33 @@ kitty or WezTerm window, so examples and `--headless` output matter.
 
 ## 3. `Canvas` with the browser's 2D context (SPEC 10.1)
 
-`new Canvas(draw: fn(Context $c) => ..., marker: 'auto')`, an element like any other (size from
-the layout, `class:` utilities apply). The context API as SPEC 10.1 lists it: paths (`beginPath`,
-`moveTo`, `lineTo`, `arc`, `arcTo`, `bezierCurveTo`, `quadraticCurveTo`, `rect`, `closePath`,
-`stroke`, `fill`, `fillRect`, `strokeRect`, `clearRect`), state (`fillStyle`/`strokeStyle`
-colours — gradients come in beta2 —, `lineWidth`, `globalAlpha`, `save`/`restore`, `translate`/
-`scale`/`rotate`/`transform`, `clip`), `fillText` (real glyphs at the nearest cell, one cell
-high), `drawImage` (a `GdImage`, an `Imagick`, a path, or PNG bytes, with the destination
-rectangle), `getImageData`/`putImageData` on the raster. Coordinates are floats in the canvas's
-own units (cells with fractions by default; `scale()` for anything else), identical on every
-backend. `$c->resolution()` tells dots or pixels per cell. Markers: `braille` (2x4 dots per cell;
-a cell's dots share one foreground: the last drawn colour wins), `quarter`, `half`, `block`,
-`pixels`, and `auto` = `pixels` when the device has images, else `braille`; `pixels` on a device
-without images degrades to `quarter` without the program changing. The glyph backends rasterise
-into a dot bitmap in pure PHP (Bresenham lines, scanline fills, midpoint arcs; no anti-aliasing,
-`lineWidth` quantised to dots). The `pixels` backend rasterises into a `GdImage` when `ext-gd` is
-loaded (the context methods map onto GD's drawing; `imagepng` out) and into a pure-PHP RGBA
-buffer with a built-in PNG encoder (zlib + CRC) otherwise; the canvas writes the result as one
-Kitty or iTerm2 placement through `write()`, like every producer. A canvas whose `draw:` closure
-reads a `State` redraws when it changes, and one whose drawing did not change paints nothing.
-Pointer: a canvas with `onMouse:` asks for any-motion tracking; its events carry `x`, `y` in
-canvas units (cell centre; SGR-Pixels 1016 comes in beta2).
+The drawing API is **not** implemented here: it is the separate library **phasync/canvas**
+(`/home/frode/dev/phasync/canvas`, require it as a path repository with `symlink: true` and
+`"phasync/canvas": "*"`; read its README first). It gives `new Canvas($w, $h)->getContext()` with
+the browser's `CanvasRenderingContext2D` methods over GD or Imagick, and outputs `toPng()`,
+`toPixels()` and `toDots($w, $h)` (a downscaled dot bitmap with per-dot RGB). This library adds
+only the terminal half:
 
-Tests: each context method on `braille` against recorded dot grids; the same drawing on
-`braille` and `pixels` (FakeTerminal `images: kitty`) covering the same cells; `auto` picking per
-device; a State-driven redraw count; `drawImage` of a small PNG on both backends; the blit
-property test with a canvas inside nested windows.
+`new Canvas(draw: fn(Context $c) => ..., marker: 'auto')`, an element like any other (size from
+the layout, `class:` utilities apply). The closure receives phasync/canvas's context; coordinates
+are floats in the canvas's own units (cells with fractions by default; the element sets a
+`scale()` so one unit is one cell on every backend). `$c->resolution()` is added on the element
+side (dots or pixels per cell). Markers: `braille` (2x4 dots per cell; a cell's dots share one
+foreground: the dominant dot colour), `quarter`, `half`, `block`: the element asks the library for
+`toDots()` at the marker's resolution and writes the glyphs and SGR runs; `pixels`: the element
+asks for `toPng()` and writes one Kitty or iTerm2 placement through `write()`, like every
+producer; `auto` = `pixels` when the device has images, else `braille`; `pixels` on a device
+without images degrades to `quarter` without the program changing. A canvas whose `draw:` closure
+reads a `State` redraws when it changes, and one whose drawing did not change paints nothing
+(compare the PNG bytes or the dot bitmap). Pointer: a canvas with `onMouse:` asks for any-motion
+tracking; its events carry `x`, `y` in canvas units (cell centre; SGR-Pixels 1016 comes in beta2).
+If phasync/canvas lacks something the element needs, say exactly what in DEVNOTES (and in the
+report's `runtimeLimits`) instead of working around it here.
+
+Tests: a drawing on `braille` against recorded dot grids; the same drawing on `braille` and
+`pixels` (FakeTerminal `images: kitty`) covering the same cells; `auto` picking per device; a
+State-driven redraw count; `drawImage` of a small PNG on both backends; the blit property test
+with a canvas inside nested windows.
 
 ## 4. The acceptance example
 
