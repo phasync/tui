@@ -4,8 +4,9 @@ A `Surface` is a terminal emulator without a screen: a grid of cells (`cols` x `
 cursor, scrollback, modes and an input channel. Everything that shows on screen in this library
 is a Surface, and the only way to put anything on one is the way a terminal allows: writing
 bytes (text, control characters, escape sequences) with `write()`. There is no cell-drawing
-API; widgets, borders and the compositor write escape sequences too, so the emulator is tested
-by everything the library draws.
+API; widgets write escape sequences too, so the emulator is tested by everything the library
+draws. Cells that are on a Surface can be copied to another one (`copyArea()`, `drawArea()`):
+that is how a host shows the surfaces it hosts (see [hosting](hosting.md)).
 
 ```php
 use phasync\Tui\Surface;
@@ -87,7 +88,9 @@ queries (OSC 4), DECRQSS, and reflow on resize.
 | `runs(int $y): list<Run>` | Row `$y` as runs of cells sharing a style, covering the full width. `Run` has `x`, `text`, `width`, `style`. Use it to render a row elsewhere or check colours. |
 | `isWrapped(int $y): bool` | True if row `$y` continues on the next row because the text wrapped there. |
 | `text(): string` / `(string) $surface` | The visible screen: every row without trailing blanks, joined with `"\n"`. |
-| `dump(): string` | The visible screen with styles marked up, for tests: `[bold fg=1]error[/] in line 3`; a literal `[` is doubled. |
+| `dump(bool $looks = false): string` | The visible screen with styles marked up, for tests: `[bold fg=1]error[/] in line 3`; a literal `[` is doubled. With `$looks`, what a person sees: a blank (which shows a background, but no foreground, bold or italic: `Style::blank()`) is shown in the style of the text next to it when it looks the same in that, so two screens that look the same give the same dump however they were drawn (`FakeTerminal::dump()` is this). |
+| `copyArea(int $x, int $y, int $width, int $height): Area` | The cells of a rectangle as the surface shows them (its windows included; negative rows: scrollback; outside it: blanks), to put somewhere else. `Area` has `width`, `height`, `chars` and `styles` (rows of graphemes, `''` for the second half of a wide character, and their styles), `text()`, and `shaded(int $color = Color::DEFAULT)`: the same cells dimmed, as under a shadow. A wide character cut by the edge is a blank in it. |
+| `drawArea(Area $area, int $x, int $y)` | Put an `Area` (of this or another surface) on this surface at column `$x`, row `$y`, as its own cells, as if its producer had written them; what falls outside is left out, and the cursor and pen stay as they are (as with a terminal's rectangular copy). |
 | `cursor(): Cursor` | The cursor: `x`, `y`, `visible`, `shape` (`Cursor::BLOCK`, `UNDERLINE`, `BAR`), `blinking`. |
 | `title(): string` | The window title last set by the program (OSC 0 or 2). |
 | `scrollbackSize(): int` | How many lines the scrollback holds (rows -1 down to -size). |
@@ -179,7 +182,11 @@ int $bg = Color::DEFAULT, int $attrs = 0, string $link = '', string $linkId = ''
 `withLink($uri, $id = '')`, and `__toString()` (`"bold fg=1 link=https://example.com"`, `''` for
 plain). Attributes are bit flags: `Style::BOLD`, `DIM`, `ITALIC`, `UNDERLINE`, `BLINK`,
 `INVERSE`, `HIDDEN`, `STRIKE`. `link` is the URI of the hyperlink the cell is in (`''` for
-none), `linkId` its id.
+none), `linkId` its id. `blank()` is the style a space in this style looks the same as: its
+background and link alone (a space shows no foreground, bold or italic), or the style itself
+when it inverts, underlines or strikes through; two blanks look the same exactly when their
+`blank()` styles are `===`. A terminal device compares frames by what cells look like, so a
+space that only changed an invisible colour costs nothing.
 
 A colour is an int: `Color::DEFAULT` (-1), 0-15 for the named colours (`Color::RED`,
 `Color::BRIGHT_BLUE`, ...), 16-255 for the 256-colour palette, or a truecolor from
@@ -224,14 +231,17 @@ Measured on PHP 8.5 without JIT, FakeTerminal 120x60, phasync adapter
 | The same tree rendered again unchanged (the render returns an equal tree) | the `render()` call and a comparison of the trees: the layout, the windows and the paint stand |
 | One `Text` changes in that tree | one surface painted; nothing measured again but the row it is in (a component in an unchanged row is not measured: its answer stands until it renders) |
 | A row that is a component of its own changes its state | that row renders, measures and paints; the parent does not render (the row's size did not change) |
-| A changed row of a `ProgressBar`, two `Text`s and two `Button`s, 3 levels of surfaces up to the screen | about 0.6 ms alone in a frame, about 0.4 ms each when many rows change in one frame (the writes and their parsing at each level, the row's layout) |
+| A changed row of a `ProgressBar`, two `Text`s and two `Button`s, 3 levels of surfaces up to the screen | about 0.6 ms alone in a frame, about 0.4 ms each when many rows change in one frame (the row's layout, its writes and their parsing) |
 | Such a row rendered again unchanged (a step of its coroutine that changed nothing) | about 35 µs |
 | 50 such rows, each with its coroutine ticking at 10 Hz (500 steps a second), one row in twenty changing per tick | about 12-15% of a core (about 8% with the garbage collector off); every row changing on every tick: about 50-57% |
 | The same 50 coroutines sleeping with `fiber\sleep()` and drawing nothing | about 6.5% of a core: the runtime's part of the above (about 2.5% with the garbage collector off; the rest is phasync's idle garbage collection, which runs whenever the loop idles, up to 5% of the time) |
 | A key to the frame that shows it, with those 50 rows ticking | median 0.2 ms, at most about 2 ms |
-| A program without classes of 50 `Row([Text, ProgressBar, Button, Button])` with `onKey:` and `onFocus:`, the bars moved by 50 `Tui::go()` coroutines at 10 Hz: `press('tab')` and `settle()` | median about 2.5 ms with the CPU clocked down between keys: the closure does not run for a Tab (the rows the focus left and entered are laid out again from its last tree, and only when their look changes with the focus); a Tab that coincides with a tick of the bars pays that frame too (about 28 ms here, when all fifty bars move: the closure builds its 250 elements again and every bar is painted and composited) |
-| A Tab in rows of a `Text` and two `Button`s at 160x50, `press('tab')` and `settle()` | about 1.2 ms with 2 rows, 1.8 ms with 200: the Tab walk looks from the focused stop on, a focus request settles only the hosts above it |
-| Switching to a tab whose content fills the pane (a `Markdown`) | about what switching to a `Text` tab costs: the content is laid out once, at its size, and the windows shown again write only the cells that differ |
+| Composing a frame of 160x50, a tree of surfaces ten levels deep with three leaves beside each level (`tests/Benchmark/BlitCostTest.php`) | about 0.25 ms when a cell changed at the bottom, 1 ms when every surface changed, 0.04 ms when a row of the root's own cells changed; a frame that looks as the last one costs no byte on the terminal |
+| Composing a frame of 200 windows (50 rows of four) in which one changed | about 0.1 ms (only the row it is on is made again), about 1.2 ms when all of them changed |
+| A program without classes of 50 `Row([Text, ProgressBar, Button, Button])` with `onKey:` and `onFocus:`, the bars moved by 50 `Tui::go()` coroutines at 10 Hz: `press('tab')` and `settle()` | median about 2.8 ms with the CPU clocked down between keys (about 1.1 ms back to back, of which composing is 0.1 ms): the closure does not run for a Tab (the rows the focus left and entered are laid out again from its last tree, and only when their look changes with the focus); a Tab that coincides with a tick of the bars pays that frame too (below) |
+| The frame of that program in which all fifty bars move (`tools/monitor-bench.php bars`) | about 29 ms with the CPU clocked down between frames, 11.5 ms back to back (0.0.3-beta7: 37 and 15.5 ms): the closure builds its 250 elements again (about 3 ms), the bars render and write (3 ms), the rest of the frame's component work (3 ms), composing (1.3 ms), the device's diff and, headless, the fake terminal's parsing of it (1.5 ms) |
+| A Tab in rows of a `Text` and two `Button`s in a `ScrollView`, 160x50, `press('tab')` and `settle()` | about 3 ms with 2 rows, 5.5 ms with 200, with the CPU clocked down between keys (1.2 and 2.1 ms back to back): the Tab walk looks from the focused stop on, a focus request settles only the hosts above it, and only the two rows the focus moved between are composed again |
+| Switching to a tab whose content fills the pane (a `Markdown`), 120x40 | about 8.7 ms with the CPU clocked down (0.0.3-beta7: 14.3 ms), about what switching to a `Text` tab costs: the content is laid out once, at its size, and only the cells that look different are written |
 
 A frame renders everything asked for since the last one (see "Frames" in
 [components.md](components.md#state-rendering-by-itself)), and `sleep()` ends on ticks of the
@@ -244,11 +254,12 @@ time with 40 ms of idle between them as back to back. Compare the cost of a fram
 first rows do) rather than a percentage when you tune a tree. In the repository,
 `php tools/monitor-bench.php [some|all|bare]` runs the monitor of the table, and
 `php tools/monitor-bench.php keys` the program without classes and its keys (`press()` and
-`settle()`, as a test or a program measures it).
+`settle()`, as a test or a program measures it); `bars`, `scroll [rows]` and `tabs` the other
+rows.
 
 **Budget.** A few hundred elements of which a few change make a frame of one or two
-milliseconds. What costs is what changed, times the levels of surfaces it is composited
-through: a frame is cheap when little in it changed, whatever the size of the tree.
+milliseconds. What costs is what changed: rendering and laying out the components that
+changed, and composing the rows they are on, whatever the size and depth of the tree.
 
 **When a tree is big:**
 

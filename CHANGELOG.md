@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.0.3-beta8 (2026-11-01)
+
+Hosted surfaces are composited by copying cells instead of writing escape sequences, the
+terminal gets one diff at the end, a `Tui::quit()` from a `Tui::go()` job no longer kills a
+headless program, and `Confirm` answers to y and n. Everything from 0.0.3-beta7 works as
+before, except where an entry says what changed. Times are `press()` + `settle()` (or a frame's
+`settle()`) around `hrtime()` under `Tui::headless()`, one every 50 ms (the CPU clocks down in
+between), with `tools/monitor-bench.php`; "back to back" is without the pause.
+
+**Compositing is blitting**
+
+- A host showed its windows by writing their cells to itself as escape sequences, each level
+  of a tree again, with per-window frames, damage passed up level by level, and blanking where
+  a window left. Now what a host shows (its frame) is its own cells with every window copied
+  over them in z-order, to any depth, clipped by every window on the way down, with borders,
+  titles, selections and shadows; only the rows something changed on are made again, found to
+  any depth (a cell changed ten levels down is the one row it is on); and the terminal device
+  makes one diff of the root's frame at the end.
+- What it costs: at 160x50, ten levels deep, about 0.25 ms for a frame in which a cell at the
+  bottom changed and about 1 ms when every surface changed; 200 windows of which one changed,
+  0.1 ms.
+- What you notice, against 0.0.3-beta7:
+  - Switching to a full `Markdown` tab at 120x40: 8.7 ms (was 14.3 ms).
+  - The frame in which all fifty bars of `ProgressBar` rows move (`monitor-bench.php bars`):
+    29 ms (was 37 ms); 11.5 ms back to back (was 15.5 ms).
+  - A Tab in a `ScrollView`: 3 ms at 2 rows and 5.5 ms at 200 (were 3.7 and 6 ms); back to
+    back 1.2 and 2.1 ms (were 1.5 and 2.4 ms).
+  - A Tab in the program of 50 rows whose bars move (`monitor-bench.php keys`): about the
+    same median, 2.6-3 ms; a Tab is 1.1 ms back to back, of which composing is now 0.1 ms. The
+    rest of that program's frames is the work of its components (see "What a frame of
+    components costs" in docs/surface.md).
+- What the producer of a host writes under a window stays there: it shows again when the
+  window moves away or is unhosted (it used to be blanked), and composing never touches the
+  host's cursor, pen, modes or character sets.
+- A selection in a window shows in inverse over everything the window shows, the windows
+  inside it included (it used to invert only the window's own cells).
+- A window that came under another's shadow by a `raise()` was sometimes left unshaded until
+  it was drawn again; a shadow now always shades exactly the windows below the one that casts
+  it.
+- A frame that looks the same as the last one sends nothing to the terminal, however it was
+  drawn; a blank is written without a foreground colour (it shows none), so the bytes a frame
+  sends differ from 0.0.3-beta7 where blanks are concerned. `FakeTerminal::dump()` shows what
+  the terminal looks like (`Surface::dump(looks: true)`: a blank in the style of the text next
+  to it when it looks the same in that), so a test that compared it with a surface's `dump()`
+  compares with `dump(true)` now.
+- New: `Surface::copyArea(x, y, width, height): Area` (the cells as the surface shows them,
+  windows included) and `Surface::drawArea(Area, x, y)` (put them on another surface as its own
+  cells); `Area` (`width`, `height`, `chars`, `styles`, `text()`, `shaded()`);
+  `Style::blank()` (the style a space looks the same as); `Surface::dump(bool $looks = false)`.
+- `Surface::needsCompose()` is also true while a window holds back a synchronized update
+  (mode 2026), so a device keeps making frames until the hold ends or times out.
+- A moving `ProgressBar` finds the cells it changes from the edges of its fill instead of
+  checking every cell, and writes only those.
+
+**`Tui::quit()` from a job**
+
+- Under `Tui::headless()`, `Tui::quit()` from a `Tui::go()` job ended the program with
+  "Uncaught phasync\Tui\Quit: The program has ended" from a `Tui::sleep()`. That `Quit` came
+  from the `Tui::sleep()` in the `fiber\run()` closure itself (outside a job a `Tui::sleep()`
+  threw `Quit` when the program ended). Now `Tui::sleep()` throws `Quit` only in a `Tui::go()`
+  job (which then ends quietly, as before); anywhere else it returns early when the program
+  ends, so the code after it (`$t->detach()`) runs. Headless, headless inline and
+  `Tui::inline()` on a pty all end.
+
+**Small things**
+
+- `Confirm::ask()` answers to `y` and `n` (and `Y`, `N`) as well as Enter and Escape; with
+  labels of its own, to their first letters (`Keep`/`Delete`: `k` and `d`), unless the two start
+  with the same letter.
+- The cookbook has a recipe "Rows that keep their widgets": per-row component instances kept
+  across renders with `??=`, and `key:` on the rows, so a row keeps its widgets when the rows
+  are reordered.
+- The fiber-interop version warning was already one line, once per process, on stderr; it
+  stays until fiber-interop/api 0.3.2 and fiber-interop/phasync 0.4.2 can be required. They are
+  not on Packagist yet, so the dev pins stay and `Tui::sleep()` still ends jobs with `Quit`
+  rather than `fiber\cancel()`.
+
 ## 0.0.3-beta7 (2026-11-01)
 
 A Tab inside a `ScrollView` of 200 rows costs what it costs at 2, a tab switch in a full

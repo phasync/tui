@@ -196,13 +196,14 @@ One primitive, one structure:
 1. **Surface** ([docs](docs/surface.md)): a terminal emulator in memory, xterm-compatible.
    Bytes in with `write()`, cells out with `cell()`, `line()`, `text()`. ANSI escape sequences
    are the only way anything gets onto a Surface; there is no cell-drawing API, and the library
-   draws its own windows, borders and widgets with escape sequences too.
+   draws its own widgets with escape sequences too (cells written once can be copied between
+   surfaces with `copyArea()` and `drawArea()`).
 2. **Producers** ([docs](docs/producers.md)): what writes into a Surface. A program in a `Pty`,
    a PHP closure with `Surface::run()` (whose `echo` is captured with ext-phasync), or your own
    code with the `Ansi` helper. Input goes back through `$surface->input`.
 3. **Hosting** ([docs](docs/hosting.md)): a Surface hosts other Surfaces through `Viewport`s, to
-   any depth. The host repaints its windows into itself by writing escape sequences to itself;
-   input events go down the focus path and are encoded for each program's modes. The screen of
+   any depth. What a host shows is its own cells with its windows copied over them, to any
+   depth, made again only on the rows something changed on; input events go down the focus path and are encoded for each program's modes. The screen of
    your program is a root Surface; a pane running another multiplexer is the same structure one
    level down.
 4. **Terminal device** ([docs](docs/terminal.md)): `Tty` attaches the real terminal to a root

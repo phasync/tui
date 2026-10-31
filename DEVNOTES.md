@@ -12,8 +12,28 @@ README.md and docs/.
       validated against the beta7 compositor on 150 seeds before the switch; it found that
       beta7 did not repaint a shadow that came with raise() etc.)
 - [x] 1c. one diff at the end by visible identity (Style::blank()), Surface::dump(looks)
-- [ ] 1d. cost: tests for compose 160x50 ten levels deep, bench modes, the 50-bar frame
-- [ ] 1e. docs/surface.md Performance, docs/hosting.md, CHANGELOG
+- [x] 1d. cost: per-window draw cache, occlusion of a host's own cells, rows made again only
+      where something changed (Host::damage(), to any depth); tests/Benchmark/BlitCostTest.php
+      (160x50 ten deep: one cell 0.25 ms, every surface 1 ms, own row 0.04 ms; 200 windows of
+      which one changed 0.1 ms); bench modes against beta7 (paced): tabs 14.3 -> 8.7 ms,
+      scroll 2 3.7 -> 3.0, scroll 200 6.0 -> 5.5, bars 37 -> 29, keys 2.6-3.6 -> 2.8-2.9 (equal
+      within noise)
+- [ ] 1d'. NOT MET: the 50-bar frame under 8 ms (29 ms paced, 11.5 ms back to back) and a
+      clear improvement of `keys` (its median is the Tab, 1.1 ms back to back of which compose
+      0.1 ms, or a Tab that coincides with a bar tick and pays that frame). What is left is the
+      component layer, flat in profiles of the bars frame (back to back): the closure's Tree::build
+      of 250 elements ~3 ms (itemNow, Element::attribute, Stylesheet::compute, Component::states,
+      kept, ...), the 50 ProgressBar renders ~3 ms (style() twice, look(), the write: ~6 us of fixed
+      cost per Surface::write plus ~2.5 us per item in the generated parser, whose Item* loop
+      tries every alternative once more at the end of each write), the rest of the frame's
+      component work ~3 ms (show/place/measure/area), compose 1.3 ms, the device diff and the
+      FakeTerminal's parse ~1.5 ms. The paced numbers are ~2.6x the back-to-back ones (CPU
+      governor). Reaching 8 ms paced needs ~3 ms back to back: a restructuring of the element
+      build (rows whose elements equal the last build's kept without a visit) and of the write
+      path (fixed cost per write; a first-character dispatch in the generated parser), not
+      compositing.
+- [x] 1e. docs/surface.md Performance, docs/hosting.md ("Compositing is blitting"), README
+      model, CHANGELOG
 - [x] 2. Quit from a Tui::go() job under headless: the fatal came from the Tui::sleep(0.5) of
       the fiber\run() closure itself (not a job), which threw Quit by the beta5 rule
       "elsewhere: Quit". Now Tui::sleep() throws Quit only in a Tui::go() coroutine (where
@@ -1297,8 +1317,7 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
 - `fiber\Deferred` is `@internal` in fiber-interop/api 0.3.0 but SPEC names it; used for
   `Component::stopped()` and in `Internal\Signal`. Any then-able would do.
 - charm/parsing is required as `dev-master` (no tagged release on Packagist yet).
-- Compositing cost grows with nesting (each level re-parses its windows' rows); fine for
-  normal sizes, measure before optimising.
+- (0.0.3-beta8: compositing no longer grows with nesting; it costs the damaged rows.)
 
 ## Surface / emulator
 
@@ -1337,27 +1356,50 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
 - One viewport per hosted surface per host (`host()` returns the existing one). Viewports are
   created only by `Surface::host()`; geometry is set by the caller or a layout, presentation
   (border, title, scroll, selection) lives on the viewport.
-- Compositing is lazy: a child's `change` marks the host dirty and the host emits `change` (so
-  the root's device schedules a frame); the host composes when its cells/damage/version are
-  read or `compose()` is called. Compose = children first, then for each viewport in z-order
-  the rows damaged in it, the host rows its own producer changed, and rows repainted by an
-  overlapping window below; written to itself as `ESC 7 ESC[?6l SI ESC(B [ESC[4l] ... ESC[0m
-  [ESC[4h] ESC 8` so the host's producer keeps cursor, pen, charsets, origin and insert mode.
-- Always a diff (spec 1e086d7): each Viewport keeps `frame` = the cells it last painted per host
-  row (outer width). paint() diffs the rows to consider (source damage, all rows when the paint
-  key changed) against it and writes only changed cells in runs (`diffAnsi`), skipping cells
-  under windows above (`$covers`), so windows below never force a repaint above (the old
-  "repaint rows painted below" pass is gone). The frame is reset on move/resize/raise
-  (`invalidate`); rows the host's own producer wrote (incl. blanking) are forgotten
-  (`forgetRows`) and rewritten whole. A property test checks incremental == fresh compose.
+- Compositing is blitting (0.0.3-beta8, SPEC 3): a child's `change` marks the host dirty and
+  the host emits `change` up to the root (every time; `markDirty()` also bumps the host's
+  `vt->version`, which is the surface's `changeCount()`, so a window showing it is drawn anew).
+  The host's frame (`Host::$frame`, list<Line>, with its own `rowVersion`) is made when read:
+  its own cells (`vt->lines`, never written to by compositing) with every window blitted in
+  z-order to any depth (`blitAll`/`blit`/`draw`, `Area::cut()`/`put()`), clipped by each
+  window's inner rect and its source's bounds; borders and titles drawn, the selection inverted
+  over the window's whole content (nested windows included), shadows shading the windows below
+  the casting one at the same level, wide characters cut at an edge made blanks, a wide
+  character shown in the style of its first half.
+- Only damaged rows are made again: `Host::damage()` walks the tree with a per-host WeakMap
+  `$seen` (Viewport => [key, look, top, bottom, inner]); a window whose key (`place()`: source
+  changeCount + frame rect + clip + `lookKey()` + shades) is unchanged is skipped with its
+  subtree (any change below bumps the changeCount); one whose look part changed (or new, gone,
+  or its source's window list changed) damages all its rows old and new and is walked in
+  "record" mode; one whose changeCount alone changed is looked into: its source's own rows by
+  rowVersion (scrollback rows always), its windows recursively. The memo is per composing host,
+  because the same viewport is drawn by its own host's frame and by every ancestor's in other
+  coordinates. Then each band of damaged rows is composed from the own lines with every window
+  on it (`place()` skips windows outside the band before computing a key).
+- Per-window draw cache `Viewport::$drawn = [key, rows, styles]`: kept only after the key stayed
+  the same for a frame (no copy for a window that changes every frame), never while a window
+  inside holds back a synchronized update, and only when it was drawn whole (not in part, for a
+  band). A host's own cells are copied only where its windows do not cover them
+  (`uncovered()`).
+- One diff at the end: the device compares the root's frame with what it showed by visible
+  identity (`Style::blank()`: a space looks like its bg and link alone, unless INVERSE,
+  UNDERLINE or STRIKE), so equal-looking frames cost no byte; the blank pen: keep the current
+  pen if the blank looks the same in it, else the next non-blank's style in the run if that
+  looks the same, else the blank's own `blank()` style (so a blank sets no foreground).
+  `Surface::dump(looks: true)` normalises blanks the same way (each joins the run before it,
+  else the one after, else its own look; trailing plain-looking blanks are plain);
+  `FakeTerminal::dump()` uses it.
+- Mode 2026: `Emulator::$synced` snapshots the screen rows when synchronized output starts; a
+  host shows them (`Surface::heldLines()`) for at most 0.5 s; while it does, `Host::holding()`
+  makes `needsCompose()` true (the device re-frames) and the next frame is made whole.
+- tests/Support/AnsiComposite.php is the pre-beta8 compositor as a reference (writing ANSI to a
+  fresh surface, with twins for hosts' own cells); tests/Hosting/BlitTest.php compares it with
+  the blitter on random trees (moves, raises, scrolls, borders, shadows, selection, unhost,
+  writes; hosts below composed on their own between steps).
 - PCRE2 < 10.43 `\X` joins consecutive pictographs ("👍👍" one cluster): `Text::graphemes()`
   splits again before each Extended_Pictographic not after ZWJ; the emulator uses it.
-- Moving/removing a window blanks its old rect at once (ECH, same wrapper); the host's own
-  writes count as damage under windows, so what was below repaints at the next compose.
-  Layouts draw separators after placing windows, so blanking cannot erase them.
-- Mode 2026 on a hosted surface: the host skips that window (keeps it dirty) up to 0.5 s.
-- Title: the host writes the focused child's title to itself (OSC 2) on change and on focus
-  change; bell and OSC 52 are written up unconditionally. So they reach the root by writing.
+- Title: the host relays the focused child's title (`Surface::relay()`, which sets its own
+  title) on change and on focus change; bell and OSC 52 are relayed up unconditionally.
 - Cursor: not written up (it would break the host producer's cursor); `activeCursor()` walks
   the focus path. The device shows the root's activeCursor.
 - Input: `dispatch()` = listeners (`on('key')` ... returning true consumes), then Host::route

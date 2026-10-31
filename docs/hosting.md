@@ -15,41 +15,55 @@ $log->write("hello\r\n");
 echo $root->text();                                // the log shows in its window, framed
 ```
 
-## Compositing is writing
+## Compositing is blitting
 
-When a hosted surface changes, its host repaints the changed cells of its window into its own
-cells **by writing escape sequences to itself**, through the same `write()` every producer
-uses. Damage then propagates: the host has changed where it repainted, so its own host repaints,
-up to the root. The host's own producer keeps its state: the compositor saves and restores its
-cursor, pen and character sets around the drawing (DECSC/DECRC) and steps around origin and
-insert mode.
+What a host shows (its **frame**) is its own cells with every window it hosts copied over
+them, in hosting order (later ones on top), and the windows those surfaces host copied in turn,
+to any depth: cells are copied, not written again as escape sequences. Each window is clipped
+by its own inner area, by its source's edges and by every window it is inside of; a border and
+a title are drawn around it, a selection shows in inverse over all the window shows (the
+windows inside it too), and a shadow (`setShadow()`) shades the windows below the one that
+casts it. The root's frame is what the terminal device shows; a host lower down has a frame of
+its own too, made when it is read.
+
+The host's own cells are never touched by compositing: what its producer writes under a window
+stays there, and shows again where the window moves away or is unhosted. Neither are its
+cursor, pen, modes or character sets (nothing is written to it).
 
 Compositing is lazy. A change marks the host (and every host above it) as needing to compose,
-and they emit `change`; the work happens when the host's cells, damage or version are read,
+and they emit `change`; the frame is made when the host's cells, damage or version are read,
 when `compose()` is called, or when a terminal device draws a frame. While a hosted program is
-in the middle of a synchronized update (mode 2026), its window keeps showing the previous frame,
-for at most half a second, so its redraws never show half done.
+in the middle of a synchronized update (mode 2026), its window keeps showing the cells it had
+when the update began, for at most half a second, so its redraws never show half done.
 
-**Always a diff, never a full re-render.** Every level works from damage. A Surface records
-which rows changed; a window remembers the cells it last put on its host and writes only those
-that differ, coalesced into runs of the same style per row, and never the cells a window above
-covers (so a change below never repaints a window above). The terminal device in turn writes
-only the root's cells that differ from its previous frame. A window is repainted in full only
-when it is newly shown, moved, resized or raised, or when what covered it moved away. A pane
-printing continuously costs its changed cells per frame, whatever the byte volume (a spinner
-writing 40 kB between two frames costs a few dozen bytes on the terminal); an idle pane costs
-nothing.
+**What a frame costs is what changed.** A frame is made again only on the rows something
+changed on: the rows of the host's own cells that changed, and the rows of every window that
+shows something else than in the last frame, found to any depth (a window whose source
+changed is looked into: a cell changed ten levels down is the one row it is on). A window that
+moved, changed size, look, title, scroll position or shadow, or that was hosted, unhosted or
+raised, changed on all its rows, where it was and where it is. A window that shows the same as
+in the last frame is copied from its last drawing. A frame with a few changes costs those rows
+whatever the size and depth of the tree; at 160x50, ten levels deep, a frame costs about
+0.25 ms for a cell changed at the bottom and about 1 ms with every surface changed.
 
-Windows are painted in hosting order (later ones on top). When a window moves or is unhosted,
-the host blanks the area it left, and what was beneath is repainted. What the host's own
-producer writes under a window is painted over by the window.
+**One diff, at the end.** Rows of a frame that differ from the previous frame get a new
+version (`damagedSince()`), and the terminal device writes only the cells of the root's frame
+that look different from what it showed: coalesced into runs of the same style per row, a
+blank written without a foreground colour (it shows none). A pane printing continuously costs
+its changed cells per frame, whatever the byte volume (a spinner writing 40 kB between two
+frames costs a few dozen bytes on the terminal); an idle pane costs nothing; two frames that
+look the same cost nothing, however they were made.
+
+Cells can be copied between surfaces by a program as well: `copyArea()` gives an `Area` of a
+surface's cells as it shows them (windows included), and `drawArea()` puts one on another
+surface as its own cells (see [surface](surface.md#reading)).
 
 ## Hosting methods on Surface
 
 | Method | What it does |
 |---|---|
 | `host(Surface $child, ?int $x = null, ?int $y = null, ?int $width = null, ?int $height = null): Viewport` | Show `$child` and return its viewport. Without geometry it shows at the top-left at its own size. Hosting it again returns the same viewport (moved and resized if geometry is given). Of its windows, the host focuses the one focused most recently (also by a `focus()` made before it was shown), or the first one when none was ever focused (see Focus). Throws if `$child` is this surface or hosts it. |
-| `unhost(Surface $child)` | Stop showing it; its area is blanked. |
+| `unhost(Surface $child)` | Stop showing it; what was beneath it (the host's own cells, windows below) shows again. |
 | `raise(Surface $child)` | Bring its window to the top. |
 | `viewport(?Surface $child = null): ?Viewport` | The viewport of a hosted surface, or null. Without an argument: the viewport this surface shows through on its host. |
 | `viewports(): list<Viewport>` | All windows, bottom first. |
@@ -57,8 +71,8 @@ producer writes under a window is painted over by the window.
 | `root(): Surface` | The top of the tree (this surface when it is not hosted). |
 | `area(): Rect` | Where this surface shows on the root: the rectangle its visible part covers, clipped by every window on the way up (empty when out of view). The `area` event (`on('area', fn(Rect $a) => ...)`) tells when it changes. |
 | `setLayout(?Layout $layout)`, `layout()` | Let a layout place the windows, now and on every resize (see [layout](layout.md)). |
-| `compose()` | Repaint what changed in hosted surfaces now (normally automatic). |
-| `needsCompose(): bool` | True while a hosted surface changed and the cells have not caught up. |
+| `compose()` | Make the frame now, on the rows something changed on (normally automatic: reading the surface does it). |
+| `needsCompose(): bool` | True while something the frame shows changed and the frame has not caught up, and while a window holds back a synchronized update (its frame is made again when the hold ends or times out). |
 | `activeCursor(): Cursor` | The cursor a terminal showing this surface should display: the focused window's, down the focus path, mapped to this surface (hidden when outside its window); the own `cursor()` when this surface keeps the focus. |
 
 The focused window's title is written up to its host (so the root's title is the title of what
