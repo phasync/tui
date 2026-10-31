@@ -19,7 +19,7 @@ use phasync\Tui\Text;
  *
  *     new Canvas(draw: function (CanvasContext $c) use ($s) {
  *         $c->strokeStyle = '#38bdf8';
- *         $c->lineWidth = 4;
+ *         $c->lineWidth = 0.25;          // (in cells: one Braille dot)
  *         $c->beginPath();
  *         foreach ($s->samples as $i => $v) {
  *             $c->lineTo($i * $c->width() / 100, $c->height() * (1 - $v));

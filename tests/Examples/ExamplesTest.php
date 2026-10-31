@@ -15,7 +15,8 @@ use function fiber\run;
 function example(string $name, array $args, Closure $test, array $php = []): void
 {
     run(function () use ($name, $args, $test, $php) {
-        $env = ['SHELL' => '/bin/sh', 'PS1' => '$ ', 'ENV' => ''];
+        // (not inside the screen or tmux this may run in: the program's terminal is the FakeTerminal)
+        $env = ['SHELL' => '/bin/sh', 'PS1' => '$ ', 'ENV' => '', 'STY' => '', 'TMUX' => ''];
         $app = (new Terminal(['php', ...$php, __DIR__ . "/../../examples/$name", ...$args], env: $env))->start();
         $t = new FakeTerminal(100, 30);
         $t->attach($app->surface);
@@ -117,14 +118,36 @@ it('runs coroutine-pane: a shell and a printing coroutine', function () {
     }
 });
 
-it('runs the graphs: bar charts drawn with escape sequences from coroutines', function () {
+it('runs the graphs: canvases in pixels inside a terminal that has Kitty graphics, in Braille with --marker=braille, the graph alone inline', function () {
+    // (the program runs in a Terminal, a surface of this library, which answers Kitty's query:
+    // it draws pixels; this FakeTerminal has no images, so it shows them as quarter blocks)
     example('graphs.php', [], function (FakeTerminal $t, Terminal $app) {
-        expect($t->waitFor('random walk', 10))->toBeTrue()
-            ->and($t->waitFor(fn() => preg_match('/[▁▂▃▄▅▆▇█]/u', $t->text()) === 1, 5))->toBeTrue()
-            ->and($t->waitFor('samples', 5))->toBeTrue();
-        $t->press('q');
+        expect($t->waitFor('cpu and net', 10))->toBeTrue()
+            ->and($t->waitFor(fn() => substr_count($app->surface->dump(), 'img=') > 100, 5))->toBeTrue()
+            ->and($t->waitFor(fn() => preg_match('/[▘▝▀▖▌▞▛▗▚▐▜▄▙▟█]/u', $t->text()) === 1, 5))->toBeTrue()
+            ->and($t->text())->toContain('ctrl+q quit')->toContain('100%');
+        $t->press('ctrl+q');
         expect($app->pty()->wait(5))->toBe(0);
     });
+    example('graphs.php', ['--marker=braille'], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor(fn() => preg_match('/[\x{2801}-\x{28ff}]/u', $t->text()) === 1, 10))->toBeTrue()
+            ->and($t->text())->toContain('marker: braille')->toContain('logo')
+            ->and(substr_count($app->surface->dump(), 'img='))->toBe(0);
+        $t->press('ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0);
+    });
+    example('graphs.php', ['--inline', '--marker=braille'], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('cpu and net', 10))->toBeTrue()->and($t->text())->not->toContain('logo');
+        $t->press('ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0);
+    });
+});
+
+it('prints the Braille graphs with --headless', function () {
+    exec('php ' . escapeshellarg(__DIR__ . '/../../examples/graphs.php') . ' --headless=90x24 2>&1', $out, $status);
+    $text = implode("\n", $out);
+    expect($status)->toBe(0)->and($text)->toContain('cpu and net')->toContain('photo')
+        ->and(preg_match('/[\x{2801}-\x{28ff}]/u', $text))->toBe(1);
 });
 
 it('runs the dashboard in a terminal, full screen and inline, and quits with Ctrl-Q', function () {

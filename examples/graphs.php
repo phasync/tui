@@ -1,133 +1,137 @@
 <?php
 
 /**
- * Graphs: bar charts and boxes drawn with escape sequences from coroutines, by components
- * written as classes (for the sixty-line program without one, see dashboard.php).
+ * Graphics: a live line graph of two series, a filled area under one of them, axes and labels,
+ * a logo drawn with paths and a photo, all on `Canvas` elements with the browser's 2D context.
  *
- *     php examples/graphs.php
+ *     php examples/graphs.php                       # pixels where the terminal shows images, else Braille
+ *     php examples/graphs.php --marker=braille      # or quarter, half, block, pixels
+ *     php examples/graphs.php --inline              # the graph only, under the shell's output
+ *     php examples/graphs.php --theme=light         # dark, light, mono
+ *     php examples/graphs.php --headless=100x30     # the Braille version, printed
  *
- * Each graph is a component whose coroutine samples a value a few times a second and redraws
- * a bar chart with `Ansi` (block characters, colors by level). The boxes are `Box` components,
- * the event list a `Log`, the header a `StatusBar`. q or Ctrl-C quits.
+ * In kitty, WezTerm, Ghostty, Konsole (Kitty graphics), iTerm2 and VS Code's terminal (iTerm2
+ * images) the canvases are real pixels; everywhere else they are Braille dots, and nothing in
+ * the program changes. Two coroutines sample the series; the canvases draw from the `State`.
+ * Ctrl-Q quits.
  */
 
 require __DIR__ . '/../vendor/autoload.php';
 
-use phasync\Tui\Ansi;
-use phasync\Tui\Color;
-use phasync\Tui\Component;
-use phasync\Tui\Component\Box;
-use phasync\Tui\Component\Log;
-use phasync\Tui\Component\StatusBar;
-use phasync\Tui\Key;
-use phasync\Tui\Layout;
-use phasync\Tui\Split;
-use phasync\Tui\Style;
-use phasync\Tui\Text;
-use phasync\Tui\Tty;
+use phasync\Tui\Component\{Canvas, CanvasContext};
+use phasync\Tui\Element\{Box, Column, Help, Row, Text};
+use phasync\Tui\{State, Tui};
 
-/** A bar chart of the last values of a sampled number. */
-final class Graph extends Component
-{
-    private const BLOCKS = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    /** @var list<float> */
-    private array $values = [];
+$marker = ($m = preg_grep('/^--marker=/', $argv)) ? substr(reset($m), 9) : 'auto';
+$theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
+$s = new State(['cpu' => [], 'net' => []]);
+$photo = imagecreatefrompng(__DIR__ . '/assets/photo.png');
 
-    /** @param \Closure(): float $sample a value between 0 and $max */
-    public function __construct(private readonly \Closure $sample, private readonly float $max, private readonly string $unit, private readonly float $interval = 0.25)
-    {
+// the graph: 0-100 % over the last 60 samples, the network as a filled area, the cpu as a line
+$graph = function (CanvasContext $c) use ($s) {
+    [$w, $h] = [$c->width(), $c->height()];
+    [$left, $bottom] = [6, $h - 1.5];
+    $x = fn(int $i) => $left + ($w - $left - 1) * $i / 59;
+    $y = fn(float $v) => $bottom - ($bottom - 0.5) * $v / 100;
+    $c->strokeStyle = '#64748b';
+    $c->lineWidth = 0.25;               // (in cells: one Braille dot wide)
+    $c->beginPath();
+    $c->moveTo($left, 0.5);
+    $c->lineTo($left, $bottom);
+    $c->lineTo($w - 1, $bottom);
+    $c->stroke();
+    $c->fillStyle = '#94a3b8';
+    $c->textAlign = 'end';
+    $c->textBaseline = 'middle';
+    foreach ([100, 50, 0] as $v) {
+        $c->fillText("$v%", $left - 1, $y($v));
     }
-
-    protected function run(): void
-    {
-        do {
-            $this->values[] = ($this->sample)();
-            $this->values = array_slice($this->values, -500);
-            $this->requestRender();
-        } while ($this->sleep($this->interval));
-    }
-
-    protected function render(): ?Layout
-    {
-        $cols = $this->surface->cols();
-        $rows = $this->surface->rows();
-        $values = array_slice($this->values, -$cols);
-        $values = array_pad($values, -$cols, null);
-        $out = "\e[?25l\e[0m\e[H";
-        for ($y = 0; $y < $rows; $y++) {
-            $out .= Ansi::moveTo(0, $y);
-            $pen = null;
-            foreach ($values as $v) {
-                if ($v === null) {
-                    $out .= ' ';
-                    continue;
-                }
-                $level = max(0.0, min(1.0, $v / $this->max));
-                $eighths = (int) round($level * $rows * 8) - ($rows - 1 - $y) * 8;
-                $color = $level > 0.8 ? Color::RED : ($level > 0.5 ? Color::YELLOW : Color::GREEN);
-                if ($pen !== $color) {
-                    $out .= Ansi::fg($color);
-                    $pen = $color;
-                }
-                $out .= self::BLOCKS[max(0, min(8, $eighths))];
-            }
-            $out .= "\e[0m";
+    $c->textAlign = 'center';
+    $c->textBaseline = 'top';
+    $c->fillText('-60 s', $x(0), $bottom + 0.5);
+    $c->fillText('now', $x(59) - 1, $bottom + 0.5);
+    if ($s->net !== []) {
+        $c->fillStyle = 'rgba(52, 211, 153, 0.45)';
+        $c->beginPath();
+        $c->moveTo($x(0), $bottom);
+        foreach ($s->net as $i => $v) {
+            $c->lineTo($x($i), $y($v));
         }
-        $last = end($this->values);
-        $label = $last === false ? '' : sprintf(' %.2f %s ', $last, $this->unit);
-        $out .= Ansi::moveTo(max(0, $cols - Text::width($label)), 0) . Ansi::styled($label, Style::of(attrs: Style::INVERSE));
-        $this->surface->write($out);
-        return null;
+        $c->lineTo($x(count($s->net) - 1), $bottom);
+        $c->closePath();
+        $c->fill();
     }
-}
-
-final class Dashboard extends Component
-{
-    private ?Log $events = null;
-    private int $samples = 0;
-
-    protected function render(): Layout
-    {
-        $style = Style::of(Color::BLUE);
-        $box = fn(string $key, string $title, \Closure $create) => $this->child($key, fn() => new Box($create(), $title, $style));
-        $load = $box('load', 'load average', fn() => new Graph(fn() => (float) explode(' ', (string) @file_get_contents('/proc/loadavg'))[0], max(1, (int) shell_exec('nproc')), 'load'));
-        $memory = $box('memory', 'memory used', fn() => new Graph(function (): float {
-            preg_match_all('/^(MemTotal|MemAvailable):\s+(\d+)/m', (string) @file_get_contents('/proc/meminfo'), $m);
-            $kb = array_combine($m[1], $m[2]) + ['MemTotal' => 1, 'MemAvailable' => 1];
-            return 100 * (1 - $kb['MemAvailable'] / max(1, $kb['MemTotal']));
-        }, 100, '%'));
-        $walk = 50.0;
-        $random = $box('random', 'random walk', fn() => new Graph(function () use (&$walk): float {
-            $this->samples++;
-            return $walk = max(0, min(100, $walk + mt_rand(-80, 80) / 10));
-        }, 100, 'pts', 0.1));
-        $events = $box('events', 'events', fn() => new Log(wordWrap: true));
-        $this->events = $events->content();
-        $header = $this->child('header', fn() => new StatusBar(' dashboard', 'q: quit '));
-        $graphs = Split::horizontal()->add($load->surface)->add($memory->surface)->add($random->surface);
-        return Split::vertical()->add($header->surface, 1)->add($graphs, '60%')->add($events->surface);
+    $c->strokeStyle = '#38bdf8';
+    $c->lineWidth = 0.4;
+    $c->beginPath();
+    foreach ($s->cpu as $i => $v) {
+        $i === 0 ? $c->moveTo($x($i), $y($v)) : $c->lineTo($x($i), $y($v));
     }
+    $c->stroke();
+    $c->textAlign = 'start';
+    $c->fillStyle = '#38bdf8';
+    $c->fillText('cpu', $left + 1, 0.5);
+    $c->fillStyle = '#34d399';
+    $c->fillText('net', $left + 6, 0.5);
+};
 
-    protected function run(): void
-    {
-        while ($this->sleep(1)) {
-            $this->events?->append(sprintf("\e[90m%s\e[0m  %d samples, peak memory %s\n", date('H:i:s'), $this->samples, number_format(memory_get_peak_usage() / 1048576, 1) . ' MB'));
+// a logo of paths: a hexagon with a lightning bolt in it
+$logo = function (CanvasContext $c) {
+    [$cx, $cy] = [$c->width() / 2, $c->height() / 2];
+    $r = min($c->width() / 2, $c->height()) - 0.5;
+    $gradient = $c->createLinearGradient($cx - $r, 0, $cx + $r, 0);
+    $gradient->addColorStop(0, '#6366f1');
+    $gradient->addColorStop(1, '#ec4899');
+    $c->fillStyle = $gradient;
+    $c->beginPath();
+    for ($k = 0; $k < 6; $k++) {
+        $a = M_PI / 3 * $k + M_PI / 6;
+        $c->lineTo($cx + $r * cos($a), $cy + $r / 2 * sin($a));     // (a cell is twice as tall as wide)
+    }
+    $c->closePath();
+    $c->fill();
+    $c->fillStyle = '#fde047';
+    $c->beginPath();
+    foreach ([[0.1, -0.8], [-0.35, 0.1], [0, 0.1], [-0.1, 0.8], [0.35, -0.1], [0, -0.1]] as [$dx, $dy]) {
+        $c->lineTo($cx + $dx * $r, $cy + $dy * $r / 2);
+    }
+    $c->closePath();
+    $c->fill();
+};
+
+$picture = fn(CanvasContext $c) => $c->drawImage($photo, 0, 0, $c->width(), $c->height());
+
+$graphBox = fn() => new Box(new Canvas(draw: $graph, marker: $marker), '<b>cpu</b> and <b>net</b>', class: 'grow');
+$screen = fn() => new Column([
+    new Row([new Text('<b>graphs</b>'), new Text(fn() => 'marker: ' . $marker . (count($s->cpu) ? sprintf('   cpu %d%%', end($s->cpu)) : ''), class: 'grow text-right text-muted')], class: 'px-1'),
+    new Row([
+        $graphBox(),
+        new Column([
+            new Box(new Canvas(draw: $logo, marker: $marker), 'logo', class: 'h-9'),
+            new Box(new Canvas(draw: $picture, marker: $marker), 'photo', class: 'grow'),
+        ], class: 'w-26'),
+    ], class: 'grow flex-col md:flex-row'),
+    new Help(class: 'px-1'),
+]);
+
+\fiber\run(function () use ($s, $screen, $graphBox, $theme, $argv) {
+    // two series sampled by coroutines: a noisy cpu load and a bursty network
+    Tui::go(function () use ($s) {
+        $v = 40.0;
+        while (true) {
+            $v = max(2, min(98, $v + mt_rand(-120, 120) / 10));
+            $s->cpu = [...array_slice($s->cpu, -59), $v];
+            Tui::sleep(0.2);
         }
-    }
-
-    protected function onKey(Key $key): bool
-    {
-        if ($key->is('q') || $key->is('ctrl+c')) {
-            $this->dispose();       // quit: the terminal is given back
-            return true;
+    });
+    Tui::go(function () use ($s) {
+        while (true) {
+            $burst = mt_rand(0, 9) === 0 ? mt_rand(40, 90) : mt_rand(5, 25);
+            $s->net = [...array_slice($s->net, -59), (float) $burst];
+            Tui::sleep(0.3);
         }
-        return false;
-    }
-}
-
-$tty = new Tty();
-if (!$tty->isTerminal()) {
-    fwrite(STDERR, "graphs needs a terminal\n");
-    exit(1);
-}
-fiber\run(fn() => (new Dashboard())->start($tty));
+    });
+    in_array('--inline', $argv, true)
+        ? Tui::inline(fn() => $graphBox()->with(height: 12), theme: $theme, fps: 30)
+        : Tui::run($screen, theme: $theme, fps: 30);
+});

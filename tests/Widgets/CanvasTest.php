@@ -33,7 +33,12 @@ function canvasGap(string $operation): ?string
                     $c->lineTo(3, 3);
                     $c->stroke();
                 })(),
-                'drawImage' => $c->drawImage(Image::encodePng(str_repeat("\xff\x00\x00", 4), 2, 2, false), 1, 1, 2, 2),
+                'drawImage' => (function () use ($c) {
+                    $gd = imagecreatetruecolor(2, 2);
+                    imagefill($gd, 0, 0, imagecolorallocate($gd, 255, 0, 0));
+                    $c->drawImage($gd, 1, 1, 2, 2);
+                    $c->drawImage(Image::encodePng(str_repeat("\xff\x00\x00", 4), 2, 2, false), 1, 1, 2, 2);
+                })(),
             };
         } catch (\Throwable $e) {
             return "phasync/canvas: $operation fails (" . $e->getMessage() . ')';
@@ -197,25 +202,25 @@ it('draws again when a State its closure read changes, and writes nothing when t
     });
 });
 
-it('draws an image with drawImage on braille and on pixels', function () {
+it('draws an image with drawImage on braille and on pixels, in the canvas\'s units', function () {
+    if (($gap = canvasGap('drawImage')) !== null) {
+        $this->markTestSkipped($gap);
+    }
     $gd = imagecreatetruecolor(16, 16);
     imagefill($gd, 0, 0, imagecolorallocate($gd, 0, 0, 255));
-    $draw = fn(CanvasContext $c) => $c->drawImage($gd, 0, 0, 16, 16);
-    canvasOn($draw, 'braille', 10, 4, 'none', function (FakeTerminal $t) {
-        // 16x16 pixels of 8x16-pixel cells: two cells, full of dots, in blue
-        expect($t->surface->line(0))->toBe('⣿⣿')->and($t->surface->cell(1, 0)->style->fg)->toBe(\phasync\Tui\Color::rgb(0, 0, 255));
-    });
-    canvasOn($draw, 'pixels', 10, 4, 'kitty', function (FakeTerminal $t) {
-        $f = $t->surface->cell(0, 0)->style->image;
-        expect($f)->not->toBeNull()->and(imagecolorat($f->image->gd(), 4, 4) & 0xffffff)->toBe(0x0000ff);
-    });
-    if (($gap = canvasGap('drawImage')) !== null) {
-        $this->markTestSkipped("drawImage of PNG bytes: $gap");
+    $png = Image::encodePng(str_repeat("\x00\x00\xff", 16 * 16), 16, 16, false);
+    foreach (['a GdImage' => $gd, 'PNG bytes' => $png] as $what => $source) {
+        $draw = fn(CanvasContext $c) => $c->drawImage($source, 0, 0, 2, 1);
+        canvasOn($draw, 'braille', 10, 4, 'none', function (FakeTerminal $t) use ($what) {
+            // two cells wide, one high, full of dots, in blue
+            expect($t->surface->line(0))->toBe('⣿⣿', $what)->and($t->surface->line(1))->toBe('', $what)
+                ->and($t->surface->cell(1, 0)->style->fg)->toBe(\phasync\Tui\Color::rgb(0, 0, 255));
+        });
+        canvasOn($draw, 'pixels', 10, 4, 'kitty', function (FakeTerminal $t) use ($what) {
+            $f = $t->surface->cell(0, 0)->style->image;
+            expect($f)->not->toBeNull($what)->and(imagecolorat($f->image->gd(), 4, 4) & 0xffffff)->toBe(0x0000ff);
+        });
     }
-    $png = Image::encodePng(str_repeat("\xff\x00\x00", 16 * 16), 16, 16, false);
-    canvasOn(fn(CanvasContext $c) => $c->drawImage($png, 0, 0, 2, 1), 'braille', 10, 4, 'none', function (FakeTerminal $t) {
-        expect($t->surface->line(0))->toBe('⣿⣿');
-    });
 });
 
 it('strokes paths in the canvas\'s units', function () {
@@ -223,13 +228,14 @@ it('strokes paths in the canvas\'s units', function () {
         $this->markTestSkipped($gap);
     }
     canvasOn(function (CanvasContext $c) {
-        $c->lineWidth = 4;
+        $c->lineWidth = 0.25;
         $c->beginPath();
-        $c->moveTo(0, 2);
-        $c->lineTo(10, 2);
+        $c->moveTo(0, 2.1);
+        $c->lineTo(10, 2.1);
         $c->stroke();
     }, 'braille', 12, 4, 'none', function (FakeTerminal $t) {
-        expect(trim($t->surface->line(1) . $t->surface->line(2)))->not->toBe('');
+        // a line one dot high along row 2, ten cells long
+        expect(mb_strlen(trim($t->surface->line(2))))->toBe(10)->and(trim($t->surface->line(0) . $t->surface->line(1) . $t->surface->line(3)))->toBe('');
     });
 });
 

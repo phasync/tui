@@ -131,7 +131,7 @@ final class Tty extends TerminalDevice
     public static function imagesFromEnvironment(array $env): ?string
     {
         $term = $env['TERM'] ?? '';
-        if (isset($env['TMUX']) || isset($env['STY']) || str_starts_with($term, 'screen') || str_starts_with($term, 'tmux') || $term === 'linux' || $term === 'dumb') {
+        if (($env['TMUX'] ?? '') !== '' || ($env['STY'] ?? '') !== '' || str_starts_with($term, 'screen') || str_starts_with($term, 'tmux') || $term === 'linux' || $term === 'dumb') {
             return 'none';
         }
         if (\in_array($env['TERM_PROGRAM'] ?? '', ['iTerm.app', 'vscode'], true) || ($env['LC_TERMINAL'] ?? '') === 'iTerm2') {

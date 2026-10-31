@@ -26,8 +26,8 @@ use phasync\Tui\Text;
  *   nearest the point, one cell high, in the `fillStyle` colour (as a terminal can show text
  *   on every marker, axis labels stay readable); `textAlign` and `textBaseline` place them as
  *   in a browser. `measureText()` gives their width in cells.
- * - `lineWidth` is in pixels of the raster the canvas draws on (a cell is `cellSize()` pixels,
- *   8x16 by default; one Braille dot is 4x4 of them), as phasync/canvas draws it.
+ * - `lineWidth` is in the canvas's units too, as in a browser: `0.25` is a line one Braille
+ *   dot wide (a dot is a quarter of a cell's width), `1` a cell wide.
  */
 final class CanvasContext extends Context
 {
