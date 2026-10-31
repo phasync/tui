@@ -299,9 +299,10 @@ clipping: a dropdown's list, autocomplete under an `Editor`, a context menu, a t
 palette, and `Dialog` itself. One primitive, on the component:
 `$this->overlay($element, anchor: Rect|null, place: 'below'|'above'|'center'|Rect, modal: bool)`
 returns an `Overlay` handle (`close()`, `closed()` awaitable, `result`). The library hosts the
-element on the nearest `Layers` above the component (the root always has one) at absolute
-coordinates from the anchor, and orders later overlays above earlier ones, keeping the order across
-renders. **The root's rectangle is a hard boundary**: nothing of an overlay is ever placed outside
+element on the root component (in a nested instance, the inner root) at absolute coordinates from
+the anchor, and orders later overlays above earlier ones, keeping the order across renders. An
+overlay's desired size is measured again every frame: when its content grows or shrinks it is
+placed again and the cells it no longer covers are repainted by what is under them. **The root's rectangle is a hard boundary**: nothing of an overlay is ever placed outside
 it (in a nested instance the inner root's pane is that boundary, as in tmux). Placement, in
 order: the preferred side of the anchor if the overlay fits there; else the opposite side if it
 fits; else the side with more room, with the overlay **shrunk to that room** and its content
