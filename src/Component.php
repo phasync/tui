@@ -2316,6 +2316,16 @@ abstract class Component extends Element
     }
 
     /**
+     * @internal The counters of what styles and layouts depend on, as one string: the styles'
+     * own (stylesMayChange()), the focus's, the geometry's and the component tree's. What was
+     * computed from them stands while the string is the same.
+     */
+    public static function styleCounters(): string
+    {
+        return self::$styleVersion . ',' . Surface::focusVersion() . ',' . Surface::geometryVersion() . ',' . self::$treeVersion;
+    }
+
+    /**
      * $text with its markup (`<b>`, `<fg=red>`, `<span class="...">`, see `Markup`) turned into
      * escape sequences, for text drawn in the style of this component, or of its $part in
      * $states: how a widget shows labels that take markup. The text ends in that style again.

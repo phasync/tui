@@ -77,6 +77,8 @@ namespace phasync\Tui;
 abstract class Element
 {
     /** @var array{key: ?string, id: ?string, class: list<string>, style: array<string, mixed>, width: int|string|null, height: int|string|null, disabled: bool, state: list<string>, onFocus: ?\Closure, onBlur: ?\Closure, onKey: \Closure|array|null, onMouse: ?\Closure, focused: bool} */
+    /** An element tree laid it out (see seal()). */
+    private bool $sealed = false;
     private array $elementAttributes = ['key' => null, 'id' => null, 'class' => [], 'style' => [], 'width' => null, 'height' => null,
         'disabled' => false, 'state' => [], 'onFocus' => null, 'onBlur' => null, 'onKey' => null, 'onMouse' => null, 'focused' => false];
 
@@ -133,9 +135,13 @@ abstract class Element
         if ($class !== null) {
             $this->elementAttributes['class'] = \is_array($class) ? array_values($class) : preg_split('/\s+/', trim($class), -1, \PREG_SPLIT_NO_EMPTY);
         }
-        if ($this instanceof Component && $this->elementAttributes !== $before) {
-            Component::stylesMayChange();
-            $this->markDirty();     // (its look may depend on them)
+        if ($this->elementAttributes !== $before) {
+            if ($this->sealed || $this instanceof Component) {
+                Component::stylesMayChange();   // (a tree laid it out: it is laid out again)
+            }
+            if ($this instanceof Component) {
+                $this->markDirty();     // (its look may depend on them)
+            }
         }
         return $this;
     }
@@ -200,6 +206,16 @@ abstract class Element
             $cache[$class] = $names;
         }
         return $cache[$class];
+    }
+
+    /**
+     * @internal An element tree laid this element out: a change of its attributes from now on
+     * (`with()` on an element the program keeps from render to render) is a change of what was
+     * laid out (see Component::stylesMayChange()).
+     */
+    final public function seal(): void
+    {
+        $this->sealed = true;
     }
 
     /** @internal True if $other has the same attributes. */

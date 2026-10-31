@@ -83,6 +83,8 @@ final class Tree
     private array $focusRequests = [];
     /** A measure that placed things ran after the last build (its items are not that build's). */
     private bool $measuredSince = false;
+    /** @var array{Stylesheet, ComputedStyle, string, bool}|null what the last build laid out in besides its elements: sheet, base style, Component::styleCounters(), inline (see unchanged()) */
+    private ?array $builtFrom = null;
     /** The layout the last build returned, and the style of its root container. */
     private ?Layout $builtLayout = null;
     private ?ComputedStyle $rootStyle = null;
@@ -312,14 +314,19 @@ final class Tree
     public function build(Element $root, Stylesheet $sheet, ComputedStyle $base): Layout
     {
         $restyle = $this->toward !== null;
+        // a root shown inline is as tall as its content (the region is), not the terminal
+        $inline = $this->owner->surface->viewport() === null && (TerminalDevice::of($this->owner->surface)?->isInline() ?? false);
         if ($restyle) {
             // (what is not visited stands as the last build left it)
             $this->focusing = $this->focused;
             $this->wanting = $this->wanted;
         } else {
-            $this->wanting = [];
             $this->present = [];
             $this->claim($root);
+            if ($this->unchanged($root, $sheet, $base, $inline)) {
+                return $this->builtLayout;
+            }
+            $this->wanting = [];
             $this->seen = [];
             $this->showsHelp = false;
             $this->hovers = [];
@@ -329,8 +336,6 @@ final class Tree
         }
         $this->measuredSince = false;
         $style = null;
-        // a root shown inline is as tall as its content (the region is), not the terminal
-        $inline = $this->owner->surface->viewport() === null && (TerminalDevice::of($this->owner->surface)?->isInline() ?? false);
         if ($inline) {
             $item = $this->item($root, 'r', $sheet, $base);
             $layout = $this->single(ElementLayout::COLUMN, $item === null ? [] : [$item], $base);
@@ -394,8 +399,10 @@ final class Tree
         $this->focused = $this->focusing;
         $this->wanted = $this->wanting;
         if ($restyle) {
+            $this->builtFrom = null;     // (the next build looks at everything again)
             return $layout;
         }
+        $this->builtFrom = [$sheet, $base, Component::styleCounters(), $inline];
         foreach ($this->surfaces as $path => $surface) {
             if (!isset($this->seen[$path])) {
                 unset($this->surfaces[$path], $this->painted[$path], $this->wrapped[$path], $this->items[$path], $this->layouts[$path], self::$shows[$surface]);
@@ -408,6 +415,168 @@ final class Tree
             }
         }
         return $layout;
+    }
+
+    /**
+     * True if $root lays out as the elements of the last build did, so that build's items and
+     * layout stand: the same elements in the same places with the same attributes and text
+     * (handlers may be other closures; component elements may bring other props), laid out in
+     * the same stylesheet and style while nothing a style depends on changed (the focus, the
+     * mouse, the geometry, a component's style or attributes, the tree of components; see
+     * Component::styleCounters()). Then only what a build does besides laying out is done: the
+     * elements become the ones handlers and the focus callbacks are found on, and component
+     * elements are placed (their components get the new props). A screen whose closure makes
+     * fifty rows anew because a bar moved in each costs the walk of its elements, not a layout.
+     */
+    private function unchanged(Element $root, Stylesheet $sheet, ComputedStyle $base, bool $inline): bool
+    {
+        $from = $this->builtFrom;
+        $last = $this->builtFor;
+        if ($from === null || $last === null || $this->measuredSince || $this->stale !== [] || $this->showsHelp || $this->dry
+            || $from[0] !== $sheet || $from[1] !== $base || $from[3] !== $inline || $from[2] !== Component::styleCounters()
+            || !self::sameShape($root, $last)) {
+            return false;
+        }
+        $container = !$inline && ($root instanceof Column || $root instanceof Row || $root instanceof Layers);
+        if ($container ? !$this->reuseChildren($root, 'r') : !$this->reuse($root, 'r')) {
+            $this->builtFrom = null;
+            return false;       // (a component element found another instance: built as usual)
+        }
+        if ($container) {
+            $this->renode('r', $root);
+        }
+        $this->builtFor = $root;
+        $this->builtFrom[2] = Component::styleCounters();
+        return true;
+    }
+
+    /** The element at $path of the last build is $node now: handlers and focus callbacks are its. */
+    private function renode(string $path, Element $node): void
+    {
+        if (isset($this->nodes[$path])) {
+            $this->nodes[$path] = $node;
+        }
+        if (isset($this->focused[$path])) {
+            $this->focused[$path][1] = $node;
+            $this->focusing[$path][1] = $node;
+        }
+    }
+
+    /** What a build does at $path besides laying out (see unchanged()); false when a component element found another component. */
+    private function reuse(Element $node, string $path): bool
+    {
+        if (!\array_key_exists($path, $this->made) || $this->made[$path] === null) {
+            return true;    // (not shown by the last build: inside or itself hidden)
+        }
+        if (($node instanceof Text && $node->content instanceof \Closure) || ($node instanceof Box && $node->title instanceof \Closure)) {
+            $key = $node->attribute('key');
+            $live = ($this->place)($key !== null ? "\0k:" . $key : "\0p:" . $path, new Live($node), true);
+            $at = $live === null ? null : (self::$placedAt[$live] ?? null);
+            return $at !== null && $at[0] === $this && $at[1] === $path;
+        }
+        if ($node instanceof Component) {
+            $key = $node->attribute('key');
+            $component = ($this->place)($key !== null ? "\0k:" . $key : "\0p:" . $path, $node, true);
+            return $component !== null && $component === ($this->nodes[$path] ?? null);
+        }
+        $this->renode($path, $node instanceof Span ? new Text([$node]) : $node);
+        if ($node instanceof Box) {
+            return $this->reuse($node->child, $path . '/' . self::segment($node->child, 0));
+        }
+        return !($node instanceof Column || $node instanceof Row || $node instanceof Layers) || $this->reuseChildren($node, $path);
+    }
+
+    private function reuseChildren(Column|Row|Layers $node, string $path): bool
+    {
+        foreach ($node->children as $i => $child) {
+            if (!$this->reuse($child, $path . '/' . self::segment($child, $i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True if $a lays out as $b did (see unchanged()): the same kind of element with the same
+     * attributes (any closure for a closure) and the same content, to the bottom; a component
+     * element of the same class (a started one: the same instance), whatever its props. A
+     * `Help` never does (it follows the focus and the bindings).
+     */
+    private static function sameShape(Element $a, Element $b): bool
+    {
+        if ($a::class !== $b::class || $a instanceof Help) {
+            return false;
+        }
+        if ($a instanceof Component) {
+            return $a === $b || (!$a->isMounted() && !$b->isMounted() && self::sameAttributes($a->attributes(), $b->attributes()));
+        }
+        if ($a !== $b && !self::sameAttributes($a->attributes(), $b->attributes())) {
+            return false;
+        }
+        if ($a instanceof Text) {
+            if ($a->wrap !== $b->wrap || $a->isRaw() !== $b->isRaw()) {
+                return false;
+            }
+            if ($a->content instanceof \Closure || $b->content instanceof \Closure) {
+                return $a->content instanceof \Closure && $b->content instanceof \Closure;
+            }
+            if (\count($a->content) !== \count($b->content)) {
+                return false;
+            }
+            foreach ($a->content as $i => $run) {
+                $was = $b->content[$i];
+                if (\is_string($run) ? $run !== $was : !$was instanceof Span || $run->text !== $was->text || $run->attributes() !== $was->attributes()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if ($a instanceof Span) {
+            return $a->text === $b->text;
+        }
+        if ($a instanceof Box) {
+            if ($a->title instanceof \Closure || $b->title instanceof \Closure) {
+                return $a->title instanceof \Closure && $b->title instanceof \Closure;     // (its own component lays it out)
+            }
+            return $a->title === $b->title && self::sameShape($a->child, $b->child);
+        }
+        if ($a instanceof Column || $a instanceof Row || $a instanceof Layers) {
+            if (($a instanceof Layers ? 0 : $a->gap) !== ($b instanceof Layers ? 0 : $b->gap) || \count($a->children) !== \count($b->children)) {
+                return false;
+            }
+            foreach ($a->children as $i => $child) {
+                if (!self::sameShape($child, $b->children[$i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * True if attributes $a and $b are the same but for which closures they hold (a handler
+     * made anew by every render is the same handler for the layout).
+     *
+     * @param array<mixed> $a
+     * @param array<mixed> $b
+     */
+    private static function sameAttributes(array $a, array $b): bool
+    {
+        if ($a === $b) {
+            return true;
+        }
+        if (array_keys($a) !== array_keys($b)) {
+            return false;
+        }
+        foreach ($a as $name => $v) {
+            $w = $b[$name];
+            if ($v === $w || ($v instanceof \Closure && $w instanceof \Closure) || (\is_array($v) && \is_array($w) && self::sameAttributes($v, $w))) {
+                continue;
+            }
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -464,6 +633,7 @@ final class Tree
      */
     private function claim(Element $node, ?Element $parent = null): void
     {
+        $node->seal();
         if ($node instanceof Component) {
             if ($node->isMounted()) {
                 $this->present[spl_object_id($node)] = true;
@@ -476,6 +646,12 @@ final class Tree
             }
         } elseif ($node instanceof Box && !$node->title instanceof \Closure) {
             $this->claim($node->child, $node);
+        } elseif ($node instanceof Text && \is_array($node->content)) {
+            foreach ($node->content as $run) {
+                if ($run instanceof Span) {
+                    $run->seal();
+                }
+            }
         }
     }
 
