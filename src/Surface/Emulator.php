@@ -179,8 +179,22 @@ final class Emulator
 
     /** @var array<string, int> the width of each grapheme cluster printed so far */
     private static array $widths = [];
+    /** @var array<string, list<string>> the grapheme clusters of short texts printed so far (a bar's runs of blocks, a border) */
+    private static array $clusterMemo = [];
     /** @var array<string, array{int, int, int, Style}> SGR parameter strings that start with a reset: the colours and attributes they set (and that style without a hyperlink) */
     private static array $resetSgr = [];
+
+    /** Text::graphemes() of $text, remembered for short texts (the same runs come again in every frame). */
+    private static function clusters(string $text): array
+    {
+        if (\strlen($text) > 512) {
+            return Text::graphemes($text);
+        }
+        if (!isset(self::$clusterMemo[$text]) && \count(self::$clusterMemo) >= 4096) {
+            self::$clusterMemo = [];
+        }
+        return self::$clusterMemo[$text] ??= Text::graphemes($text);
+    }
 
     /** Print a run of printable characters at the cursor. */
     public function print(string $text): void
@@ -194,7 +208,7 @@ final class Emulator
         }
         // grapheme clusters by Unicode rules (\X): combining marks, ZWJ sequences, variation
         // selectors, flags and Hangul syllables each become one cell or two
-        $clusters = Text::graphemes($text);
+        $clusters = self::clusters($text);
         if ($this->extendsLast($clusters[0])) {
             array_shift($clusters);
         }
@@ -368,7 +382,7 @@ final class Emulator
         $width = ($line->chars[$x + 1] ?? null) === '' ? 2 : 1;
         $after = $x + $width;
         $adjacent = $this->wrapPending ? $after === $this->cols && $this->x === $this->cols - 1 : $this->x === $after;
-        if (!$adjacent || \count(Text::graphemes($prev . $g)) !== 1) {
+        if (!$adjacent || \count(self::clusters($prev . $g)) !== 1) {
             return false;
         }
         $line->chars[$x] = $prev . $g;

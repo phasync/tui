@@ -3,6 +3,7 @@
 namespace phasync\Tui\Component;
 
 use phasync\Tui\Ansi;
+use phasync\Tui\ComputedStyle;
 use phasync\Tui\Component;
 use phasync\Tui\Markup;
 use phasync\Tui\Text;
@@ -41,6 +42,8 @@ class ProgressBar extends Component
     private bool $animating = false;
     /** What it drew last: its look in short (drawn()), so a value that draws the same costs no drawing. */
     private string $drawn = '';
+    /** @var array{int, int, int, string, string, string, string}|null what was drawn last: cols, bar width, filled from, filled cells, label, styles (see drawing()) */
+    private ?array $cells = null;
 
     /**
      * @param float|(\Closure(): ?float)|null $value from 0 to 1 (clamped), null for indeterminate, or a closure giving it
@@ -102,10 +105,11 @@ class ProgressBar extends Component
     {
         $value = $this->value();
         $this->animate($value);       // (every value it gets, by props or setValue(), comes with a render)
-        $look = $this->look($value);
+        $styles = [$this->style(), $this->style('bar')];
+        $look = $this->look($value, $styles);
         if ($look !== $this->drawn) {
             $this->drawn = $look;
-            $this->surface->write($this->drawing($value));
+            $this->surface->write($this->drawing($value, $styles));
         }
         return null;
     }
@@ -118,11 +122,12 @@ class ProgressBar extends Component
     }
 
     /**
-     * What the bar shows for $value, in short: its width, the label (with the percentage), the
+     * What the bar shows for $value (in $styles, see drawing()), in short: its width, the label (with the percentage), the
      * cells filled and the styles. Equal for two values that draw the same.
      */
-    private function look(float|\Closure|null $value): string
+    private function look(float|\Closure|null $value, ?array $styles = null): string
     {
+        $styles ??= [$this->style(), $this->style('bar')];
         if ($value instanceof \Closure) {
             $value = $this->value();
         }
@@ -132,11 +137,16 @@ class ProgressBar extends Component
         $shown = $room < 1 || $label === '' ? 0 : min($room, Text::width(Markup::plain($label)));
         $width = max(0, $cols - ($shown === 0 ? 0 : $shown + 1));
         $cells = $value === null ? 't' . $this->tick : (int) round(max(0, min(1, $value)) * $width);
-        return $cols . "\0" . $cells . "\0" . spl_object_id($this->style()) . "\0" . spl_object_id($this->style('bar')) . "\0" . $label;
+        return $cols . "\0" . $cells . "\0" . spl_object_id($styles[0]) . "\0" . spl_object_id($styles[1]) . "\0" . $label;
     }
 
-    /** What the bar writes for $value at its size now. */
-    private function drawing(float|\Closure|null $value): string
+    /**
+     * What the bar writes for $value at its size now, in $styles (its own and its `bar` part's):
+     * everything, or only the cells and the label that changed since the last drawing.
+     *
+     * @param array{ComputedStyle, ComputedStyle} $styles
+     */
+    private function drawing(float|\Closure|null $value, array $styles): string
     {
         if ($value instanceof \Closure) {
             $value = $this->value();
@@ -157,8 +167,33 @@ class ProgressBar extends Component
         }
         [$from, $n] = $cells;
         $n = min($n, $width - $from);
-        $base = Ansi::style($this->style()->text);
-        $bar = Ansi::style($this->style('bar')->text);
+        $base = Ansi::style($styles[0]->text);
+        $bar = Ansi::style($styles[1]->text);
+        $was = $this->cells;
+        $this->cells = [$cols, $width, $from, $n, $label, $base, $bar];
+        if ($was !== null && [$was[0], $was[1], $was[5], $was[6]] === [$cols, $width, $base, $bar]) {
+            // the same bar at the same size: only the cells whose fill changed, and the label
+            // (a bar that moves by a cell writes a cell, not the whole row)
+            $out = '';
+            [, , $oldFrom, $oldN, $oldLabel] = $was;
+            for ($x = 0; $x < $width; $x++) {
+                $filled = $x >= $from && $x < $from + $n;
+                if ($filled === ($x >= $oldFrom && $x < $oldFrom + $oldN)) {
+                    continue;
+                }
+                $run = 1;
+                while ($x + $run < $width && ($x + $run >= $from && $x + $run < $from + $n) === $filled
+                    && ($x + $run >= $oldFrom && $x + $run < $oldFrom + $oldN) !== $filled) {
+                    $run++;
+                }
+                $out .= "\e[1;" . ($x + 1) . 'H' . ($filled ? $bar . str_repeat('█', $run) : $base . str_repeat('░', $run));
+                $x += $run - 1;
+            }
+            if ($label !== $oldLabel) {
+                $out .= "\e[1;" . ($width + 1) . 'H' . $base . "\e[K" . ($label === '' ? '' : ' ' . $label);
+            }
+            return "\e[?7;25l" . $out;
+        }
         // (no autowrap: nothing goes past the last column, whatever the label holds)
         return "\e[?7;25l" . $base . "\e[2J\e[H" . str_repeat('░', $from) . $bar . str_repeat('█', $n) . $base . str_repeat('░', max(0, $width - $from - $n))
             . ($label === '' ? '' : ' ' . $label);

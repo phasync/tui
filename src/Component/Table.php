@@ -67,6 +67,14 @@ class Table extends Component
     private ?array $widest = null;
     /** How many cells were measured for 'auto' widths (for tests: once per change of the rows). */
     private int $measuredCells = 0;
+    /** @var array|null what the rows drawn last were drawn for (size, columns, styles): another means drawing all */
+    private ?array $paintedFor = null;
+    /** @var array<int, string> the escape sequences of each row drawn last, by row */
+    private array $paintedRows = [];
+    /** @var array<string, string> cells as drawn (markup, cut, padded, in the row's style), by row style, width, alignment and text */
+    private array $cells = [];
+    /** How many rows the last render wrote (for tests: the rows a key changed). */
+    private int $rowsWritten = 0;
 
     /**
      * @param array<string, int|string|array{width?: int|string, align?: string, sortable?: bool}> $columns by title, in order
@@ -489,7 +497,7 @@ class Table extends Component
         $spec = $this->spec();
         $widths = $this->widths($cols);
         $base = $this->style();
-        $out = "\e[0m\e[?7l\e[?25l" . Ansi::style($base->text) . "\e[2J";
+        $sheet = $this->stylesheet();
         // the columns in view
         $this->drawn = [];
         $x = 0;
@@ -497,6 +505,17 @@ class Table extends Component
             $this->drawn[$i] = [$x, min($widths[$i], $cols - $x)];
             $x += $widths[$i] + 1;
         }
+        // only the rows that changed are written (a key that moves the current row writes two),
+        // unless the size, the columns or the styles are others: then everything
+        $for = [$cols, $this->surface->rows(), $body, $this->drawn, array_column($spec, 2), $base->text, $sheet];
+        $out = '';
+        if ($for !== $this->paintedFor) {
+            $this->paintedFor = $for;
+            $this->paintedRows = [];
+            $this->cells = [];
+            $out = Ansi::style($base->text) . "\e[2J";
+        }
+        $lines = [];
         $y = 0;
         if ($this->header) {
             $cells = [];
@@ -506,21 +525,53 @@ class Table extends Component
                 $style = $this->style('header', ...$states)->text;
                 $cells[$i] = [Text::pad(Text::truncate($title, $w), $w, $spec[$i][2]), $style];
             }
-            $out .= $this->line(0, $cells, $this->style('header')->text, $cols);
+            $lines[0] = $this->line(0, $cells, $this->style('header')->text, $cols);
             $y = 1;
         }
-        for ($r = 0; $r < $body && $this->top + $r < \count($keys); $r++) {
+        $rowStyles = [];
+        for ($r = 0; $r < $body; $r++) {
+            if ($this->top + $r >= \count($keys)) {
+                $lines[$y + $r] = Ansi::moveTo(0, $y + $r) . Ansi::style($base->text) . "\e[2K";
+                continue;
+            }
             $key = $keys[$this->top + $r];
             $row = array_values($this->rows[$key]);
             $states = $this->rowStates($key, $key === $current);
-            $style = $this->style('row', ...$states)->text;
-            $cells = [];
-            foreach ($this->drawn as $i => [, $w]) {
-                $cells[$i] = [Text::pad(Text::truncate($this->markup((string) ($row[$i] ?? ''), 'row', ...$states), $w), $w, $spec[$i][2]), $style];
+            $style = $rowStyles[implode(':', $states)] ??= $this->style('row', ...$states);
+            $line = Ansi::moveTo(0, $y + $r) . Ansi::style($style->text) . str_repeat(' ', $cols);
+            foreach ($this->drawn as $i => [$cx, $w]) {
+                $text = (string) ($row[$i] ?? '');
+                $cell = spl_object_id($style->text) . ':' . $w . $spec[$i][2] . ':' . $text;
+                if (!isset($this->cells[$cell])) {
+                    if (\count($this->cells) >= 4096) {
+                        $this->cells = [];
+                    }
+                    $this->cells[$cell] = self::inRowStyle(Text::pad(Text::truncate(str_contains($text, '<') ? Markup::toAnsi($text, $style, $sheet) : $text, $w), $w, $spec[$i][2]), $style->text);
+                }
+                $line .= Ansi::moveTo($cx, $y + $r) . $this->cells[$cell];
             }
-            $out .= $this->line($y + $r, $cells, $style, $cols);
+            $lines[$y + $r] = $line . "\e[0m";
         }
-        $this->surface->write($out . $this->footer($y + $body) . "\e[0m\e[?7h");
+        $this->rowsWritten = 0;
+        foreach ($lines as $at => $line) {
+            if (($this->paintedRows[$at] ?? null) !== $line) {
+                $this->paintedRows[$at] = $line;
+                $out .= $line;
+                $this->rowsWritten++;
+            }
+        }
+        $footer = $this->footer($y + $body);
+        if ($footer !== '') {
+            // (what a subclass draws under the body, a filter line, is drawn whole every time)
+            $clear = '';
+            for ($at = $y + $body; $at < $this->surface->rows(); $at++) {
+                $clear .= Ansi::moveTo(0, $at) . Ansi::style($base->text) . "\e[2K";
+            }
+            $footer = $clear . $footer;
+        }
+        if ($out !== '' || $footer !== '') {
+            $this->surface->write("\e[0m\e[?7l\e[?25l" . $out . $footer . "\e[0m\e[?7h");
+        }
         if ([$this->topIndex(), $this->bottomIndex()] !== $this->inView) {
             $this->inView = [$this->topIndex(), $this->bottomIndex()];
             $this->emit('scroll', $this);
@@ -544,12 +595,25 @@ class Table extends Component
     {
         $out = Ansi::moveTo(0, $y) . Ansi::style($rowStyle) . str_repeat(' ', $cols) . Ansi::moveTo(0, $y);
         foreach ($cells as $i => [$text, $style]) {
-            $set = Ansi::style($style);
-            // the row's style over the cell's own colours: again after each of its SGRs
-            $add = preg_replace('/^\e\[0;?/', "\e[", $set);
-            $text = preg_replace('/\e\[[0-9;:]*m/', '$0' . ($add === "\e[m" ? '' : $add), $text);
-            $out .= Ansi::moveTo($this->drawn[$i][0], $y) . $set . $text;
+            $out .= Ansi::moveTo($this->drawn[$i][0], $y) . self::inRowStyle($text, $style);
         }
         return $out . "\e[0m";
+    }
+
+    /** A cell's text in $style, the style set again after each SGR of the text's own (the row's colours over the cell's). */
+    private static function inRowStyle(string $text, Style $style): string
+    {
+        $set = Ansi::style($style);
+        if (!str_contains($text, "\e[")) {
+            return $set . $text;
+        }
+        $add = preg_replace('/^\e\[0;?/', "\e[", $set);
+        return $set . preg_replace('/\e\[[0-9;:]*m/', '$0' . ($add === "\e[m" ? '' : $add), $text);
+    }
+
+    /** @internal How many rows the last render wrote: a key that moves the current row writes the two it changes. */
+    public function rowsWritten(): int
+    {
+        return $this->rowsWritten;
     }
 }

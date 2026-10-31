@@ -1275,6 +1275,21 @@ abstract class Component extends Element
         return $this->ownKeys();
     }
 
+    /**
+     * True for a component that takes every key while it has the focus, as a program does: the
+     * keys its own bindings and `onKey()` do not take go to its surface's program, not to the
+     * bindings of the components around it (their plain ones, their elements' `onKey:`, and
+     * `anywhere` ones); only their bindings marked `first` (which see the key on its way down)
+     * or `always` (an application's quit key) and the runner's quit key (Ctrl-Q of `Tui::run()`)
+     * come before it. A `Terminal` says so, so a shell gets Ctrl-D, Ctrl-R, Escape and the
+     * arrows whatever its parents bind. Override it for a widget that wants the same (a game,
+     * a raw key pad).
+     */
+    protected function takesEveryKey(): bool
+    {
+        return false;
+    }
+
     /** True if the component has keys of its own: bindings, or an `onKey()`/`onPaste()` of its class. */
     private function ownKeys(): bool
     {
@@ -2496,23 +2511,26 @@ abstract class Component extends Element
         if ($mine && ($this->elementKeys($key) || $this->runBinding($key) || $this->handle(fn() => $this->onKey($key)))) {
             return true;
         }
+        // (a component that takes every key, a Terminal: of its parents only the bindings marked
+        // `always` come before its program)
+        $every = $mine && $this->takesEveryKey();
         foreach ([$this, ...$this->bubbling()] as $c) {
             // (a parent the key passed on its way down had its `first` bindings asked then;
             // the elements of its tree around this component are inside it: they come first)
-            if ($c !== $this && !$c->attribute('disabled') && ((!$c->suspended() && $c->elementKeys($key))
-                || $c->runBinding($key, $c->suspended(), $this->isShownIn($c->surface) ? false : null))) {
+            if ($c !== $this && !$c->attribute('disabled') && ((!$every && !$c->suspended() && $c->elementKeys($key))
+                || $c->runBinding($key, $every || $c->suspended(), $this->isShownIn($c->surface) ? false : null))) {
                 return true;
             }
             if ($c === $this && $this->suspended() && $this->runBinding($key, true)) {
                 return true;
             }
-            if ($c->overlaid !== null && !$c->overlaid->modal && (string) $key === 'escape') {
+            if ($c->overlaid !== null && !$c->overlaid->modal && (string) $key === 'escape' && ($c === $this || !$every)) {
                 $c->overlaid->cancel();
                 return true;
             }
         }
         $modal = array_filter($this->rootComponent()->floating, fn(Overlay $o) => $o->modal) !== [];
-        if ($mine && !$modal && ($c = self::anywhere($this->surface->root(), (string) $key)) !== null && $c !== $this && !\in_array($c, $this->bubbling(), true)) {
+        if ($mine && !$every && !$modal && ($c = self::anywhere($this->surface->root(), (string) $key)) !== null && $c !== $this && !\in_array($c, $this->bubbling(), true)) {
             return $c->runBinding($key);    // (a key bound `anywhere` by one component on the screen)
         }
         $root = $this->rootComponent();

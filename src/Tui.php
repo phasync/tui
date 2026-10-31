@@ -52,9 +52,10 @@ use phasync\Tui\Internal\Live;
  * (`$this->dispose()` in the root, `$root->dispose()` from anywhere) or when Ctrl-Q reaches it
  * and no component on the way binds Ctrl-Q (a `Help` element lists it as "quit").
  * **Theme**: `theme:` is `'dark'`, `'light'` or `'mono'` (see `Stylesheet::theme()`); without it the
- * program is drawn in the theme for the terminal's background (it is asked when the program
- * starts: `light` on a light terminal, `dark` on a dark one and when it does not say). A
- * stylesheet of the program's (`$root->setStylesheet(Stylesheet::default()->with([...]))`)
+ * program is drawn in the theme the person running it asked for with `--theme=NAME` or
+ * `TUI_THEME=NAME` (`run()` and `inline()`, with or without `--headless`), else in the theme for
+ * the terminal's background (it is asked when the program starts: `light` on a light terminal,
+ * `dark` on a dark one and when it does not say). A stylesheet of the program's (`$root->setStylesheet(Stylesheet::default()->with([...]))`)
  * refines the theme in force.
  * **Failing**: an exception anywhere in the program that no error boundary contains (the
  * root's hooks, handlers or coroutines, the closure given as the root, the handlers given with
@@ -224,13 +225,13 @@ final class Tui
      * ended.
      *
      * @param Element|(\Closure(): ?Element) $root
-     * @param string|null $theme `'dark'`, `'light'`, `'mono'`; null: the one for the terminal's background
+     * @param string|null $theme `'dark'`, `'light'`, `'mono'`; null: the one asked with `--theme=` or `TUI_THEME`, else the one for the terminal's background
      * @param array<string, \Closure|string|array<int|string, mixed>> $keys keys bound on the root (see the class description)
      * @throws \RuntimeException when STDIN or STDOUT is not a terminal
      */
     public static function run(Element|\Closure $root, ?string $theme = null, array $keys = []): Component
     {
-        return self::starting(fn() => self::until(self::headlessSize() === null ? new Tty() : null, $root, $theme, $keys));
+        return self::starting(fn() => self::until(self::headlessSize() === null ? new Tty() : null, $root, $theme ?? self::themeAsked(), $keys));
     }
 
     /**
@@ -247,7 +248,7 @@ final class Tui
      */
     public static function inline(Element|\Closure $root, bool $keep = true, ?string $theme = null, array $keys = []): Component
     {
-        return self::starting(fn() => self::until(self::headlessSize() === null ? Tty::inline(keep: $keep) : null, $root, $theme, $keys, true));
+        return self::starting(fn() => self::until(self::headlessSize() === null ? Tty::inline(keep: $keep) : null, $root, $theme ?? self::themeAsked(), $keys, true));
     }
 
     /**
@@ -263,7 +264,7 @@ final class Tui
      *     });
      *
      * @param Element|(\Closure(): ?Element) $root
-     * @param string|null $theme      as for `run()`
+     * @param string|null $theme      `'dark'`, `'light'`, `'mono'`; null: the one for the terminal's background (`TUI_THEME` is for `run()` and `inline()`)
      * @param string|null $background what the terminal says its background is: `'dark'`, `'light'`, null for nothing (see `FakeTerminal`)
      * @param array<string, \Closure|string|array<int|string, mixed>> $keys as for `run()`
      */
@@ -380,6 +381,23 @@ final class Tui
             throw new \InvalidArgumentException("Headless: '$spec' is not COLSxROWS or COLSxROWS@SECONDS (as in --headless=80x24 or TUI_HEADLESS=80x24@2)");
         }
         return [(int) $m[1], (int) $m[2], isset($m[3]) ? (float) $m[3] : 1.0];
+    }
+
+    /**
+     * The theme the person running the program asked for, when the program gives none:
+     * `--theme=NAME` on the command line or `TUI_THEME=NAME` in the environment (`dark`,
+     * `light`, `mono`); null when neither says. For a screenshot of a program in another theme
+     * (`TUI_THEME=light php examples/dashboard.php --headless=100x30`).
+     */
+    private static function themeAsked(): ?string
+    {
+        $theme = null;
+        foreach ($_SERVER['argv'] ?? [] as $arg) {
+            if (\is_string($arg) && str_starts_with($arg, '--theme=')) {
+                $theme = substr($arg, 8);
+            }
+        }
+        return $theme ?? (getenv('TUI_THEME') ?: null);
     }
 
     /** @param array<string, mixed> $keys */

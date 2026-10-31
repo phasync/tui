@@ -34,7 +34,7 @@ final class Workspace extends Component
     protected function bindings(): array
     {
         return [
-            'ctrl+n' => ['add', 'new tab'],
+            'ctrl+n' => ['add', 'new tab', 'first' => true],    // (also from the shell, whose keys are its own)
             'ctrl+q' => ['quit', 'quit', 'always' => true],
         ];
     }

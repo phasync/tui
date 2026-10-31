@@ -28,6 +28,15 @@ use phasync\Tui\Pty;
  * program or show the status. Disposing the component hangs the program up (SIGHUP, then
  * SIGKILL if it is still there after half a second); so does quitting, since detaching the
  * terminal device disposes the component tree.
+ *
+ * **Keys.** While it has the focus, its program gets every key: a shell needs Ctrl-D, Ctrl-C,
+ * Ctrl-R, Ctrl-A/E/K/U/W, Tab, Escape and the arrows, an editor Ctrl-S, Ctrl-Q and the function
+ * keys, so the plain bindings of the components around it (and their elements' `onKey:`) do
+ * not take keys from it. A key the application needs while a shell has the focus is bound
+ * `'first' => true` or `'always' => true` (it is then not the shell's): pick ones a shell does
+ * not use, as tmux does (Ctrl-Tab, Alt-number, a prefix key such as Ctrl-B or Ctrl-Space,
+ * F-keys a program does not read). The runner's Ctrl-Q (`Tui::run()`) still ends the program
+ * when nothing binds it.
  */
 final class Terminal extends Component
 {
@@ -72,6 +81,12 @@ final class Terminal extends Component
 
     /** It takes the keys (they go to its program), so it is focused as itself. */
     protected function canFocus(): bool
+    {
+        return true;
+    }
+
+    /** Its program reads every key: the plain bindings of the components around it do not take them (see `Component::takesEveryKey()`). */
+    protected function takesEveryKey(): bool
     {
         return true;
     }
