@@ -13,7 +13,8 @@ use phasync\Tui\Rect;
 
 /**
  * A modal dialog with a message (or any element tree: a form) and buttons, whose answer is an
- * awaitable: open it with `Component::dialog()` from the component it belongs to.
+ * awaitable: open it with `Component::dialog()` from the component it belongs to, or with
+ * `Dialog::open()` from anywhere (a program without classes, a key handler).
  *
  *     $this->go(function () {
  *         $choice = fiber\await($this->dialog(new Dialog(
@@ -69,6 +70,36 @@ class Dialog extends Component
         public array $buttons = ['OK' => true],
         public mixed $cancel = null,
     ) {
+    }
+
+    /**
+     * Show $dialog over the running program and return an awaitable for its answer, from any
+     * code: a key handler, an element's `onKey`, a coroutine (`fiber\go()`), a program without
+     * classes. It is hosted on the program's root (the one `Tui::run()` started: the root
+     * started last that is still running) as `Component::dialog()` opens it there: in the
+     * middle, modal, with the focus, and the focus goes back when it closes.
+     *
+     *     Tui::run(fn() => ..., keys: ['enter' => function () use ($s) {
+     *         $form = new Form((new Editor(maxLines: 1))->with(id: 'name'));
+     *         if (fiber\await(Dialog::open(new Dialog('Rename', $form, ['OK' => true, 'Cancel' => false])))) {
+     *             $s->name = $form->values()['name'];
+     *         }
+     *     }]);
+     *
+     * **One at a time per root**: while a dialog opened this way is open, `open()` gives it the
+     * focus and returns its awaitable (the new `$dialog` is not used), so a key pressed twice
+     * asks once. Waiting for the answer in a handler is fine: the keys that answer it go on to
+     * the dialog meanwhile.
+     *
+     * @throws \LogicException when no program is running (no root component is mounted)
+     */
+    public static function open(Dialog $dialog): object
+    {
+        $root = Component::runningRoot();
+        if ($root === null) {
+            throw new \LogicException('Dialog::open(): no program is running (start one with Tui::run(), or start() a root component)');
+        }
+        return $root->openDialog($dialog);
     }
 
     /** The awaitable that resolves with the answer when the dialog closes. */

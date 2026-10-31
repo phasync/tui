@@ -11,8 +11,8 @@ use phasync\Tui\Element\Text;
  * @internal A closure as a component: what `Tui::run(fn() => ...)` runs, and what shows an
  * element whose content is a closure (`new Text(fn() => ...)`, a `Box` title). Its render calls
  * the closure (or makes the element with the closure's value), so a `State` read there renders
- * this component again, and only it. It has no keys of its own; the focus goes on to what it
- * shows.
+ * this component again, and only it. The keys bound on it (`Tui::run($root, keys: ...)`) are
+ * the program's; the focus goes on to what it shows.
  */
 final class Live extends Component
 {
@@ -31,6 +31,12 @@ final class Live extends Component
     public function prime(?Element $value): void
     {
         $this->first = [$value];
+    }
+
+    /** Its keys (`Tui::run($root, keys: ...)`) are the program's: the focus goes on to what it shows. */
+    protected function canFocus(): bool
+    {
+        return false;
     }
 
     protected function render(): ?Element

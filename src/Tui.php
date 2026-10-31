@@ -20,9 +20,24 @@ use phasync\Tui\Internal\Live;
  * `$root` is what to show: an element tree (`new Column([...])`), a component (`new App()`), or a
  * closure that returns either. **A closure is a component**: it is rendered (called) when the
  * screen is shown and again whenever a `State` it read changes, so the screen follows the state
- * with no class and no `requestRender()`. It has no keys of its own. A closure that reads no
- * state is called once: the component it returns is the root itself (`fn() => new App()`, for a
- * component that starts coroutines or reads the terminal in its constructor).
+ * with no class and no `requestRender()`. A closure that reads no state is called once: the
+ * component it returns is the root itself (`fn() => new App()`, for a component that starts
+ * coroutines or reads the terminal in its constructor).
+ *
+ * **Input without a class.** `keys:` binds keys on the root, in the notation of
+ * `Component::bindings()` with closures for the methods:
+ *
+ *     Tui::run(fn() => $board($s), keys: [
+ *         'down'        => fn() => $s->sel++,
+ *         'shift+right' => [fn() => $s->move(+1), 'move right'],      // listed by Help
+ *         'ctrl+s'      => [fn() => $s->save(), 'save', 'always' => true],
+ *     ]);
+ *
+ * They run before the focused component gets the key (each is marked `first`; say
+ * `'first' => false` for a key the focused component should have first, as a text field's
+ * letters); a bound key is taken. Elements take `onKey:` and `onMouse:` closures of their own
+ * (see `Element`), and `Dialog::open()` / `Confirm::ask()` open a dialog from any of these
+ * handlers, which may wait for the answer (`fiber\await(Confirm::ask('Quit', 'Really quit?'))`).
  *
  * `Tui::run()` takes the terminal over (full screen), `Tui::inline()` shows the screen as a live
  * region under the shell's output, `Tui::headless()` on a `FakeTerminal` for tests and headless
@@ -54,11 +69,12 @@ final class Tui
      *
      * @param Element|(\Closure(): ?Element) $root
      * @param string|null $theme `'dark'`, `'light'`, `'mono'`; null: the one for the terminal's background
+     * @param array<string, \Closure|string|array<int|string, mixed>> $keys keys bound on the root (see the class description)
      * @throws \RuntimeException when STDIN or STDOUT is not a terminal
      */
-    public static function run(Element|\Closure $root, ?string $theme = null): Component
+    public static function run(Element|\Closure $root, ?string $theme = null, array $keys = []): Component
     {
-        return self::until(new Tty(), $root, $theme);
+        return self::until(new Tty(), $root, $theme, $keys);
     }
 
     /**
@@ -70,11 +86,12 @@ final class Tui
      *
      * @param Element|(\Closure(): ?Element) $root
      * @param string|null $theme as for `run()`
+     * @param array<string, \Closure|string|array<int|string, mixed>> $keys as for `run()`
      * @throws \RuntimeException when STDIN or STDOUT is not a terminal
      */
-    public static function inline(Element|\Closure $root, bool $keep = true, ?string $theme = null): Component
+    public static function inline(Element|\Closure $root, bool $keep = true, ?string $theme = null, array $keys = []): Component
     {
-        return self::until(Tty::inline(keep: $keep), $root, $theme);
+        return self::until(Tty::inline(keep: $keep), $root, $theme, $keys);
     }
 
     /**
@@ -92,18 +109,20 @@ final class Tui
      * @param Element|(\Closure(): ?Element) $root
      * @param string|null $theme      as for `run()`
      * @param string|null $background what the terminal says its background is: `'dark'`, `'light'`, null for nothing (see `FakeTerminal`)
+     * @param array<string, \Closure|string|array<int|string, mixed>> $keys as for `run()`
      */
-    public static function headless(Element|\Closure $root, int $cols = 80, int $rows = 24, bool $inline = false, ?string $theme = null, ?string $background = 'dark'): FakeTerminal
+    public static function headless(Element|\Closure $root, int $cols = 80, int $rows = 24, bool $inline = false, ?string $theme = null, ?string $background = 'dark', array $keys = []): FakeTerminal
     {
         $terminal = $inline ? FakeTerminal::inline($cols, $rows, background: $background) : new FakeTerminal($cols, $rows, background: $background);
-        self::start($root, $terminal, $theme);
+        self::start($root, $terminal, $theme, $keys);
         return $terminal;
     }
 
-    private static function until(TerminalDevice $device, Element|\Closure $root, ?string $theme): Component
+    /** @param array<string, mixed> $keys */
+    private static function until(TerminalDevice $device, Element|\Closure $root, ?string $theme, array $keys): Component
     {
-        return \fiber\run(static function () use ($device, $root, $theme): Component {
-            $app = self::start($root, $device, $theme);
+        return \fiber\run(static function () use ($device, $root, $theme, $keys): Component {
+            $app = self::start($root, $device, $theme, $keys);
             try {
                 $device->wait();
             } finally {
@@ -113,11 +132,13 @@ final class Tui
         });
     }
 
-    private static function start(Element|\Closure $root, TerminalDevice $device, ?string $theme = null): Component
+    /** @param array<string, mixed> $keys */
+    private static function start(Element|\Closure $root, TerminalDevice $device, ?string $theme = null, array $keys = []): Component
     {
         if ($theme !== null) {
             Stylesheet::theme($theme);      // (an unknown one fails before the terminal is taken over)
         }
+        Component::normalizeBindings($keys);      // (a mistake fails before the terminal is taken over)
         if ($root instanceof \Closure) {
             $live = new Live($root);
             $reads = State::reads();
@@ -136,6 +157,9 @@ final class Tui
             $app = $root instanceof Component ? $root : new Live($root);
         }
         $app->quitOn(self::QUIT);
+        if ($keys !== []) {
+            $app->bind($keys, first: true);
+        }
         if ($theme !== null) {
             $app->setTheme($theme);
         }

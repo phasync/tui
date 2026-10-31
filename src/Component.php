@@ -237,6 +237,8 @@ abstract class Component extends Element
     private array $floating = [];
     private ?OverlayLayout $overlayLayout = null;
     private static int $overlayCount = 0;
+    /** @var array<int, \WeakReference<Component>> the roots started, in the order they were */
+    private static array $roots = [];
     /** @var array<int, Component> the roots that have overlays open */
     private static array $floatingRoots = [];
     /** The component whose render() runs now (focus() remembers what renders ask for). */
@@ -348,8 +350,9 @@ abstract class Component extends Element
 
     /**
      * The keys of this component and the public methods they run: `['ctrl+s' => ['save', 'Save'],
-     * 'enter' => 'submit']`, a key in `Key::parse()` notation and a method name, or `[method,
-     * description]` for a key that `Help` lists, with optional flags: `'first' => true` runs it
+     * 'enter' => 'submit']`, a key in `Key::parse()` notation and a method name (or a closure,
+     * given the `Key`), or `[method, description]` for a key that `Help` lists, with optional
+     * flags: `'first' => true` runs it
      * before the focused component inside this one gets the key (a container's Ctrl-Tab),
      * `'always' => true` keeps it working while a modal dialog this component opened is open.
      * The application changes them with `bind()`. A bound method runs when the key reaches the
@@ -483,6 +486,8 @@ abstract class Component extends Element
             $this->focus();
         }
         if ($this->parent === null) {
+            unset(self::$roots[spl_object_id($this)]);
+            self::$roots[spl_object_id($this)] = \WeakReference::create($this);
             self::$unfocused ??= new \WeakMap();
             self::$unfocused[$this] = true;
             $this->firstRender();
@@ -882,10 +887,11 @@ abstract class Component extends Element
     }
 
     /**
-     * The components below $surface that take keys themselves (`canFocus()`), enabled, in the
-     * order they show: by their windows top to bottom, left to right, depth first.
+     * The components below $surface that take keys themselves (`canFocus()`), enabled, and the
+     * surfaces of the elements with `onKey`, in the order they show: by their windows top to
+     * bottom, left to right, depth first.
      *
-     * @return list<Component>
+     * @return list<Component|Surface>
      */
     private static function focusables(Surface $surface): array
     {
@@ -901,6 +907,8 @@ abstract class Component extends Element
                 $out[] = $c;
             } elseif ($c === null && !$v->source->isFocusable()) {
                 continue;
+            } elseif ($c === null && Tree::takesKeys($v->source)) {
+                $out[] = $v->source;
             }
             array_push($out, ...self::focusables($v->source));
         }
@@ -924,7 +932,7 @@ abstract class Component extends Element
         }
         $all = self::focusables($scope);
         $n = \count($all);
-        $at = array_search($this, $all, true);
+        $at = array_search($this->focusedElement() ?? $this, $all, true);
         if ($n === 0 || ($n === 1 && $at !== false)) {
             return false;
         }
@@ -1529,7 +1537,7 @@ abstract class Component extends Element
         $this->placed = $this->placedSelf = [];
         $this->shownWith = null;
         if ($result instanceof Element) {
-            $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
+            $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...), $this->runElementHandler(...));
             $sheet = $this->stylesheet();
             $style = $this->style();
             $layout = $this->tree->build($result, $sheet, $style);
@@ -1562,7 +1570,7 @@ abstract class Component extends Element
         if ($this->shown === null) {
             return null;
         }
-        $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
+        $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...), $this->runElementHandler(...));
         // (by the items its last render laid out; a tree it did not lay out last is measured dry)
         $built = $this->tree->measureBuilt($this->shown, $cols, $rows);
         return $built !== false ? $built : $this->tree->measure($this->shown, $cols, $rows, $this->stylesheet(), $this->style(), place: false);
@@ -1576,7 +1584,7 @@ abstract class Component extends Element
      */
     final protected function layoutElement(Element $element): Layout
     {
-        $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
+        $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...), $this->runElementHandler(...));
         return $this->tree->build($element, $this->stylesheet(), $this->style());
     }
 
@@ -1594,7 +1602,7 @@ abstract class Component extends Element
      */
     final protected function measureElement(Element $element, int $cols, int $rows): ?array
     {
-        $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
+        $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...), $this->runElementHandler(...));
         return $this->tree->measure($element, $cols, $rows, $this->stylesheet(), $this->style());
     }
 
@@ -2035,12 +2043,14 @@ abstract class Component extends Element
             return (!$this->attribute('disabled') && $this->runBinding($key, $this->suspended(), true))
                 || ($mine && $this->handle(fn() => $this->onKey($key))) || $this->toUnshown($key);
         }
-        if ($mine && ($this->runBinding($key) || $this->handle(fn() => $this->onKey($key)))) {
+        if ($mine && ($this->elementKeys($key) || $this->runBinding($key) || $this->handle(fn() => $this->onKey($key)))) {
             return true;
         }
         for ($c = $this; $c !== null; $c = $c->parent) {
-            // (a parent the key passed on its way down had its `first` bindings asked then)
-            if ($c !== $this && !$c->attribute('disabled') && $c->runBinding($key, $c->suspended(), $this->isShownIn($c->surface) ? false : null)) {
+            // (a parent the key passed on its way down had its `first` bindings asked then;
+            // the elements of its tree around this component are inside it: they come first)
+            if ($c !== $this && !$c->attribute('disabled') && ((!$c->suspended() && $c->elementKeys($key))
+                || $c->runBinding($key, $c->suspended(), $this->isShownIn($c->surface) ? false : null))) {
                 return true;
             }
             if ($c === $this && $this->suspended() && $this->runBinding($key, true)) {
@@ -2057,11 +2067,73 @@ abstract class Component extends Element
             return true;
         }
         $name = (string) $key;
-        if (($name === 'tab' || $name === 'shift+tab') && $mine && $this->ownKeys()) {
-            // (at a component with keys of its own; a Terminal's program keeps its Tab)
+        if (($name === 'tab' || $name === 'shift+tab') && $mine && ($this->ownKeys() || $this->focusedElement() !== null)) {
+            // (at a component or an element with keys of its own; a Terminal's program keeps its Tab)
             return $this->walkFocus($name === 'shift+tab');
         }
         return false;
+    }
+
+    /**
+     * The elements of this component's tree on the focus path that have `onKey`, innermost
+     * first: the elements around the focus, down to the next component.
+     *
+     * @return list<Element>
+     */
+    private function keyElements(): array
+    {
+        if ($this->tree === null) {
+            return [];
+        }
+        $out = [];
+        for ($s = $this->surface; $s !== null; $s = $s->focused()) {
+            if ($s !== $this->surface && (self::$onSurface[$s] ?? null)?->mounted) {
+                break;      // (a component: its elements are its own)
+            }
+            $element = $this->tree->elementAt($s);
+            if ($element !== null && $element->attribute('onKey') !== null && !$element->attribute('disabled')) {
+                array_unshift($out, [$element, $s]);
+            }
+        }
+        return $out;
+    }
+
+    /** The surface of the innermost element with `onKey` that has the focus in this component's tree, or null. */
+    private function focusedElement(): ?Surface
+    {
+        return $this->keyElements()[0][1] ?? null;
+    }
+
+    /** The focused elements' `onKey`, innermost first; true when one took $key. */
+    private function elementKeys(Key $key): bool
+    {
+        foreach ($this->keyElements() as [$element]) {
+            $on = $element->attribute('onKey');
+            if (\is_array($on)) {
+                $binding = self::normalizeBindings($on)[(string) $key] ?? null;
+                if ($binding !== null) {
+                    $this->runElementHandler($binding[0], $key, $element);
+                    return true;
+                }
+            } elseif ($this->runElementHandler($on, $key, $element) === true) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Run a handler of an element of this component's tree (`onKey`, `onMouse`) as one of the
+     * component's own: an exception is contained as in its hooks, and a render follows.
+     */
+    private function runElementHandler(\Closure $handler, mixed ...$args): mixed
+    {
+        if (!$this->mounted) {
+            return false;
+        }
+        $result = $this->guard(fn() => $this->call($handler, ...$args));
+        $this->markDirty();
+        return $result;
     }
 
     /**
@@ -2098,6 +2170,13 @@ abstract class Component extends Element
             return false;
         }
         $method = $binding[0];
+        if ($method instanceof \Closure) {
+            // (a closure: run as a handler of this component's, given the key; a bound key is
+            // taken, whatever it returns: `fn() => $s->open = false` gives false and took it)
+            $this->guard(fn() => $this->call($method, $key));
+            $this->markDirty();
+            return true;
+        }
         $public = method_exists($this, $method) ? new \ReflectionMethod($this, $method) : null;
         if ($public === null || !$public->isPublic()) {
             throw new \LogicException(static::class . ": the key '$key' is bound to '$method', which is not a public method");
@@ -2115,14 +2194,17 @@ abstract class Component extends Element
      * Change the keys: without $for, of this component (over its class's `bindings()`); with a
      * class name, of every component of that class below this one, which is how an application
      * sets its keys for a widget (`$app->bind(['ctrl+enter' => 'submit'], Editor::class)`). A
-     * method name or `[method, description]` binds a key, null unbinds it. The nearest setting
-     * wins: an instance's own, then those of its nearest parent, up to the root. Returns $this.
+     * method name or `[method, description]` binds a key, null unbinds it; a closure in place
+     * of the method runs instead (`['ctrl+r' => [fn() => $this->reload(), 'reload']]`, given the
+     * `Key`; the key is taken whatever it returns). The nearest setting wins: an instance's
+     * own, then those of its nearest parent, up to the root. With $first, a binding that does
+     * not say otherwise is marked `first` (see `bindings()`). Returns $this.
      *
-     * @param array<string, string|array{string, string}|null> $bindings
+     * @param array<string, string|\Closure|array<int|string, mixed>|null> $bindings
      */
-    final public function bind(array $bindings, ?string $for = null): static
+    final public function bind(array $bindings, ?string $for = null, bool $first = false): static
     {
-        $normal = self::normalize($bindings);
+        $normal = self::normalizeBindings($bindings, $first);
         if ($for === null) {
             $this->bound = [...$this->bound, ...$normal];
         } else {
@@ -2136,13 +2218,13 @@ abstract class Component extends Element
 
     /**
      * The keys in force for this component: `bindings()` with what `bind()` changed, as
-     * [method, description or null, always, first] by key notation (`ctrl+s`).
+     * [method name or closure, description or null, always, first] by key notation (`ctrl+s`).
      *
-     * @return array<string, array{string, ?string, bool, bool}>
+     * @return array<string, array{string|\Closure, ?string, bool, bool}>
      */
     final public function bindingsInForce(): array
     {
-        $map = self::normalize($this->bindings());
+        $map = self::normalizeBindings($this->bindings());
         $chain = [];
         for ($c = $this->parent; $c !== null; $c = $c->parent) {
             array_unshift($chain, $c);
@@ -2158,21 +2240,30 @@ abstract class Component extends Element
     }
 
     /**
+     * @internal Bindings in the notation of `bindings()` as [action, description or null,
+     * always, first] by key notation; an action is a method name or a closure. $first is what
+     * a binding that does not say is (`Tui::run()`'s keys run before the focused component's).
+     *
      * @param array<string, mixed> $bindings
-     * @return array<string, array{string, ?string, bool, bool}|null>
+     * @return array<string, array{string|\Closure, ?string, bool, bool}|null>
+     * @throws \InvalidArgumentException for an unknown key or an action that is neither
      */
-    private static function normalize(array $bindings): array
+    final public static function normalizeBindings(array $bindings, bool $first = false): array
     {
         $out = [];
         foreach ($bindings as $spec => $action) {
             $key = (string) Key::parse((string) $spec);
+            $do = \is_array($action) ? ($action[0] ?? null) : $action;
             if ($action === null) {
                 $out[$key] = null;
-            } elseif (\is_array($action)) {
-                $out[$key] = [(string) $action[0], isset($action[1]) ? (string) $action[1] : null, (bool) ($action['always'] ?? false), (bool) ($action['first'] ?? false)];
-            } else {
-                $out[$key] = [(string) $action, null, false, false];
+                continue;
             }
+            if (!\is_string($do) && !$do instanceof \Closure) {
+                throw new \InvalidArgumentException("The key '$spec' is bound to " . get_debug_type($do) . ': bind a method name or a closure');
+            }
+            $out[$key] = \is_array($action)
+                ? [$do, isset($action[1]) ? (string) $action[1] : null, (bool) ($action['always'] ?? false), (bool) ($action['first'] ?? $first)]
+                : [$do, null, false, $first];
         }
         return $out;
     }
@@ -2191,6 +2282,15 @@ abstract class Component extends Element
         for ($c = $at; $c !== null; $c = $c->parent) {
             if ($c->attribute('disabled') || ($show === 'focused' && $c !== $at) || ($show === 'application' && $c === $at)) {
                 continue;
+            }
+            // the keys of the focused elements of its tree come first (they are inside it)
+            foreach ($c->keyElements() as [$element]) {
+                $on = $element->attribute('onKey');
+                foreach (\is_array($on) ? self::normalizeBindings($on) : [] as $key => $binding) {
+                    if ($binding !== null && $binding[1] !== null && !$c->suspended()) {
+                        $out[$key] ??= $binding[1];
+                    }
+                }
             }
             foreach ($c->bindingsInForce() as $key => [, $description, $always]) {
                 if ($description !== null && (!$c->suspended() || $always)) {
@@ -2341,6 +2441,48 @@ abstract class Component extends Element
             $this->dialogs[$key] = $dialog;
         }
         return $dialog->result();
+    }
+
+    /**
+     * @internal True while a modal overlay (a dialog) is open in this component's tree: a
+     * handler waiting now may wait for its answer, which the next input gives.
+     */
+    final public function waitsForAnswer(): bool
+    {
+        foreach ($this->rootComponent()->floating as $overlay) {
+            if ($overlay->modal && $overlay->isOpen()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @internal The root of the running program, for what opens on it from anywhere
+     * (`Dialog::open()`): the root started last that is still mounted and shown on a terminal
+     * device, else the one started last that is still mounted; null when none is.
+     */
+    final public static function runningRoot(): ?Component
+    {
+        $fallback = null;
+        foreach (array_reverse(self::$roots, true) as $id => $ref) {
+            $root = $ref->get();
+            if ($root === null || !$root->mounted) {
+                unset(self::$roots[$id]);
+                continue;
+            }
+            if ($root->device() !== null) {
+                return $root;
+            }
+            $fallback ??= $root;
+        }
+        return $fallback;
+    }
+
+    /** @internal dialog() for Dialog::open(): $dialog over this root, one at a time. */
+    final public function openDialog(Dialog $dialog): object
+    {
+        return $this->dialog($dialog, "\0open");
     }
 
     /** The overlay this component is the content of, or null when it is not shown in one. */

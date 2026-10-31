@@ -103,6 +103,12 @@ final class LayoutItem
     private function measureNow(int $cols, int $rows): ?array
     {
         $n = $this->measure === null ? null : ($this->measure)(min($cols, $this->maxWidth ?? $cols), min($rows, $this->maxHeight ?? $rows));
+        // a size given in cells is the size it needs (a Box of height 8 in a Row makes the row 8 high)
+        if (\is_int($this->width) && \is_int($this->height)) {
+            $n = [min($cols, $this->width), min($rows, $this->height)];
+        } elseif ($n !== null && (\is_int($this->width) || \is_int($this->height))) {
+            $n = [\is_int($this->width) ? min($cols, $this->width) : $n[0], \is_int($this->height) ? min($rows, $this->height) : $n[1]];
+        }
         if ($this->maxWidth === null && $this->maxHeight === null) {
             return $n;
         }

@@ -21,4 +21,16 @@ final class Confirm extends Dialog
     {
         parent::__construct($title, $question, [$yes => true, $no => false], false);
     }
+
+    /**
+     * Ask $text under the title $title over the running program (see `Dialog::open()`) and
+     * return an awaitable of the answer: true for $yes, false for $no and for Escape. From any
+     * code, a key handler included: `if (fiber\await(Confirm::ask('Delete', "Delete {$name}?"))) { ... }`.
+     *
+     * @throws \LogicException when no program is running
+     */
+    public static function ask(string $title, string $text, string $yes = 'Yes', string $no = 'No'): object
+    {
+        return self::open(new self($text, $yes, $no, $title));
+    }
 }

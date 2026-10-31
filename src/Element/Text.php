@@ -3,6 +3,8 @@
 namespace phasync\Tui\Element;
 
 use phasync\Tui\Element;
+use phasync\Tui\Key;
+use phasync\Tui\Mouse;
 use phasync\Tui\Markup;
 
 /**
@@ -42,6 +44,8 @@ final class Text extends Element
      * @param string|null $align where the lines go: `left`, `center` or `right` (the `align` style)
      * @param string|list<string> $state its own states for the stylesheet; `$selected` adds `selected` (see `Element`)
      * @param (\Closure(Element): mixed)|null $onFocus called when the focus enters it, `$onBlur` when it leaves (see `Element`)
+     * @param (\Closure(Key, Element): bool)|array<string, mixed>|null $onKey its keys: it takes the focus (see `Element`)
+     * @param (\Closure(Mouse, Element): mixed)|null $onMouse the mouse over it (see `Element`)
      */
     public function __construct(
         string|array|\Closure $content,
@@ -58,9 +62,11 @@ final class Text extends Element
         string|array $state = [],
         ?\Closure $onFocus = null,
         ?\Closure $onBlur = null,
+        \Closure|array|null $onKey = null,
+        ?\Closure $onMouse = null,
     ) {
         $this->content = $content instanceof \Closure ? $content : self::runs($content);
-        $this->with($key, $id, $class, Children::style($style, ['align' => $align]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur);
+        $this->with($key, $id, $class, Children::style($style, ['align' => $align]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur, $onKey, $onMouse);
     }
 
     /**
@@ -102,7 +108,7 @@ final class Text extends Element
         if (!$this->content instanceof \Closure) {
             return $this;
         }
-        $text = new self(($this->content)(), $this->wrap, null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'), state: $this->attribute('state'), onFocus: $this->attribute('onFocus'), onBlur: $this->attribute('onBlur'));
+        $text = new self(($this->content)(), $this->wrap, null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'), state: $this->attribute('state'), onFocus: $this->attribute('onFocus'), onBlur: $this->attribute('onBlur'), onKey: $this->attribute('onKey'), onMouse: $this->attribute('onMouse'));
         $text->raw = $this->raw;
         return $text;
     }

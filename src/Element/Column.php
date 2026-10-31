@@ -3,6 +3,8 @@
 namespace phasync\Tui\Element;
 
 use phasync\Tui\Element;
+use phasync\Tui\Key;
+use phasync\Tui\Mouse;
 
 /**
  * Elements on top of each other, top to bottom: the element-tree form of `Split::vertical()`.
@@ -35,6 +37,8 @@ final class Column extends Element
      * @param string|null $align where the children go across it when narrower: `start`, `center`, `end` or `stretch` (the default; the `align-items` style)
      * @param string|list<string> $state its own states for the stylesheet; `$selected` adds `selected` (see `Element`)
      * @param (\Closure(Element): mixed)|null $onFocus called when the focus enters it, `$onBlur` when it leaves (see `Element`)
+     * @param (\Closure(Key, Element): bool)|array<string, mixed>|null $onKey its keys: it takes the focus (see `Element`)
+     * @param (\Closure(Mouse, Element): mixed)|null $onMouse the mouse over it (see `Element`)
      */
     public function __construct(
         array $children,
@@ -52,8 +56,10 @@ final class Column extends Element
         string|array $state = [],
         ?\Closure $onFocus = null,
         ?\Closure $onBlur = null,
+        \Closure|array|null $onKey = null,
+        ?\Closure $onMouse = null,
     ) {
         $this->children = Children::of($children);
-        $this->with($key, $id, $class, Children::style($style, ['padding' => $padding, 'align-items' => $align]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur);
+        $this->with($key, $id, $class, Children::style($style, ['padding' => $padding, 'align-items' => $align]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur, $onKey, $onMouse);
     }
 }

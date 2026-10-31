@@ -149,6 +149,24 @@ abstract class TerminalDevice
     private bool $ending = false;
     /** @var list<string> lines given to println() while attached full screen, printed after detach */
     private array $held = [];
+    /** @var list<Event> input events not dispatched yet (see deliver()) */
+    private array $events = [];
+    /** The dispatcher that dispatches the events (0: none), how many were started, and its coroutine. */
+    private int $dispatcher = 0;
+    private int $dispatchers = 0;
+    private ?object $dispatcherTask = null;
+    /** The dispatcher is in the middle of an event (when something else runs: waiting in a handler). */
+    private bool $dispatching = false;
+    /** Callers of deliver() waiting for their events to be taken. */
+    private int $waiting = 0;
+    /** An exception of a dispatch, for the caller of deliver() waiting. */
+    private ?\Throwable $failure = null;
+    /** @var array<int, true> the dispatchers whose coroutine has not ended */
+    private array $busy = [];
+    /** Notified when a dispatcher's coroutine ends. */
+    private Signal $handled;
+    /** deliver() returns only when the handlers are done (see there): a test device. */
+    protected bool $untilHandled = false;
 
     /** Prepare the terminal (raw mode); $restore is to be sent when it is restored, even on a crash. */
     abstract protected function open(string $restore): void;
@@ -212,6 +230,7 @@ abstract class TerminalDevice
         Internal\Runtime::check();
         $this->decoder = new InputDecoder();
         $this->wake = new Signal();
+        $this->handled ??= new Signal();
         $this->detached ??= new Signal();
         $this->frame = [];
         $this->redraw = true;
@@ -860,11 +879,94 @@ abstract class TerminalDevice
         }
     }
 
-    /** @param list<Event> $events */
+    /**
+     * Give $events to the root, in order, and return once they are taken: dispatched, or the
+     * one being dispatched waits in a handler (a key handler awaiting a dialog's answer). The
+     * events are dispatched in a coroutine of their own, so a handler that waits holds up
+     * neither the terminal's input nor the caller (a test's `press()`): the events after it are
+     * dispatched by another coroutine meanwhile, so the keys that answer the dialog reach it,
+     * and the waiting handler goes on when its wait is over. An exception of the dispatch (the
+     * root failing) is thrown here when it happens while the events are being taken.
+     *
+     * With `$untilHandled` (a test device's input calls), it returns only when the handlers are
+     * done, except while a modal dialog is open (a handler waits for its answer, which the next
+     * input gives) and at the latest after a second.
+     *
+     * @param list<Event> $events
+     */
     private function deliver(array $events): void
     {
-        foreach ($events as $event) {
-            $this->root?->dispatch($event);
+        if ($events === []) {
+            return;
+        }
+        array_push($this->events, ...$events);
+        if ($this->dispatching && $this->dispatcherTask !== null && $this->dispatcherTask === \fiber\current()) {
+            return;     // (delivered from inside a dispatch: it takes them after the event in hand)
+        }
+        $this->waiting++;
+        try {
+            while ($this->events !== [] && $this->root !== null) {
+                if ($this->dispatcher === 0 || $this->dispatching) {
+                    // nobody dispatches, or the one that does waits in a handler (we run, so it
+                    // does not): a new dispatcher takes over the events after it
+                    $token = ++$this->dispatchers;
+                    $this->dispatcher = $token;
+                    $this->dispatching = false;
+                    $this->busy[$token] = true;
+                    go(fn() => $this->dispatch($token));
+                }
+                if ($this->failure !== null) {
+                    break;
+                }
+                if ($this->events !== []) {
+                    sleep(0);       // (a runtime that starts it later: until it took them)
+                }
+            }
+            $until = microtime(true) + 1.0;
+            while ($this->untilHandled && $this->failure === null && $this->busy !== [] && microtime(true) < $until
+                && !(Component::of($this->root ?? new Surface(1, 1, 0))?->waitsForAnswer() ?? false)) {
+                $this->handled->wait(0.01);
+            }
+        } finally {
+            $this->waiting--;
+        }
+        if ($this->failure !== null) {
+            [$e, $this->failure] = [$this->failure, null];
+            throw $e;
+        }
+    }
+
+    /** The dispatcher $token: dispatch the events in order until there are none or another took over. */
+    private function dispatch(int $token): void
+    {
+        $this->dispatcherTask = \fiber\current();
+        try {
+            while ($this->dispatcher === $token && $this->events !== [] && $this->root !== null) {
+                $event = array_shift($this->events);
+                $this->dispatching = true;
+                try {
+                    $this->root->dispatch($event);
+                } finally {
+                    if ($this->dispatcher === $token) {
+                        $this->dispatching = false;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            if ($this->dispatcher === $token) {
+                $this->events = [];
+            }
+            if ($this->waiting === 0) {
+                throw $e;       // (nobody waits for these events: fiber\run() reports it)
+            }
+            $this->failure ??= $e;
+        } finally {
+            if ($this->dispatcher === $token) {
+                $this->dispatcher = 0;
+                $this->dispatcherTask = null;
+            }
+            unset($this->busy[$token]);
+            $this->handled->notify();
         }
     }
 

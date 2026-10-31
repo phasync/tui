@@ -101,6 +101,8 @@ it('runs the README\'s first program with a class: resizes keep the text, focus 
         // Alt-Right goes to the shell, Alt-Left back to the input
         $t->press('alt+right');
         expect($shell->hasFocus())->toBeTrue();
+        // (typed before the shell is ready, the line may be lost: wait for its prompt)
+        expect($t->waitFor(fn() => trim($shell->surface->text()) !== ''))->toBeTrue();
         $t->type("echo from-shell\n");
         expect($t->waitFor('from-shell'))->toBeTrue();
         $t->press('alt+left');

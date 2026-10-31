@@ -38,15 +38,31 @@ namespace phasync\Tui;
  * - `onFocus`, `onBlur`: closures called (with the element) when the focus enters the element
  *   (a component in it, or the component itself, gets the keys) and when it leaves, so a
  *   program without classes can follow the focused row: `onFocus: fn() => $s->current = $id`.
+ * - `onKey`: the element's keys, for a program without classes. An element with `onKey` takes
+ *   the focus: Tab and Shift-Tab stop at it, a click focuses it, `focus:` classes and
+ *   `:focused` rules show it, and while it has the focus its keys come here first. Either a
+ *   map of keys to closures in the notation of `Component::bindings()`
+ *   (`['enter' => fn() => $s->open = $id, 'delete' => [fn() => $s->remove($id), 'remove']]`:
+ *   a bound key is taken), or one closure for every key, `fn(Key $key, Element $element):
+ *   bool`, that returns true when it took the key (`fn(Key $k) => $k->isText() && $s->find($k->text)`).
+ *   A key nobody takes goes on to the component that placed the element and its parents.
+ * - `onMouse`: `fn(Mouse $mouse, Element $element)`, called for the mouse over the element:
+ *   presses, drags and releases (taken unless it returns false; a drag and the release go to
+ *   the element that took the press, also outside it), and the wheel (taken only when it
+ *   returns true, else it scrolls as usual). `$mouse->x`/`y` are relative to the element;
+ *   `$mouse->over()` lists the elements under the mouse, innermost first, so the release of a
+ *   drag tells where it was dropped.
+ *
+ * Handlers may wait (`fiber\await(Confirm::ask(...))`): the input after them goes on meanwhile.
  *
  * An element is in the state `hover` while the mouse is over it, when a `hover:` class or a
  * `:hover` rule asks for it (it then follows the mouse); `focused` while the focus is in it.
  */
 abstract class Element
 {
-    /** @var array{key: ?string, id: ?string, class: list<string>, style: array<string, mixed>, width: int|string|null, height: int|string|null, disabled: bool, state: list<string>, onFocus: ?\Closure, onBlur: ?\Closure} */
+    /** @var array{key: ?string, id: ?string, class: list<string>, style: array<string, mixed>, width: int|string|null, height: int|string|null, disabled: bool, state: list<string>, onFocus: ?\Closure, onBlur: ?\Closure, onKey: \Closure|array|null, onMouse: ?\Closure} */
     private array $elementAttributes = ['key' => null, 'id' => null, 'class' => [], 'style' => [], 'width' => null, 'height' => null,
-        'disabled' => false, 'state' => [], 'onFocus' => null, 'onBlur' => null];
+        'disabled' => false, 'state' => [], 'onFocus' => null, 'onBlur' => null, 'onKey' => null, 'onMouse' => null];
 
     /**
      * Set attributes (see the class description); those not given stay as they are. Returns the
@@ -59,6 +75,8 @@ abstract class Element
      * @param string|list<string>|null $state the element's own states (replacing those it had)
      * @param (\Closure(Element): mixed)|null $onFocus
      * @param (\Closure(Element): mixed)|null $onBlur
+     * @param (\Closure(Key, Element): bool)|array<string, mixed>|null $onKey
+     * @param (\Closure(Mouse, Element): mixed)|null $onMouse
      */
     final public function with(
         ?string $key = null,
@@ -72,6 +90,8 @@ abstract class Element
         string|array|null $state = null,
         ?\Closure $onFocus = null,
         ?\Closure $onBlur = null,
+        \Closure|array|null $onKey = null,
+        ?\Closure $onMouse = null,
     ): static {
         $before = $this->elementAttributes;
         if ($state !== null) {
@@ -81,8 +101,11 @@ abstract class Element
             $states = array_values(array_diff($this->elementAttributes['state'], ['selected']));
             $this->elementAttributes['state'] = $selected ? [...$states, 'selected'] : $states;
         }
+        if (\is_array($onKey)) {
+            Component::normalizeBindings($onKey);     // (a mistake shows where it is made)
+        }
         foreach (['key' => $key, 'id' => $id, 'width' => $width, 'height' => $height, 'disabled' => $disabled, 'style' => $style,
-            'onFocus' => $onFocus, 'onBlur' => $onBlur] as $name => $value) {
+            'onFocus' => $onFocus, 'onBlur' => $onBlur, 'onKey' => $onKey, 'onMouse' => $onMouse] as $name => $value) {
             if ($value !== null) {
                 if ($name === 'width' || $name === 'height') {
                     Internal\Size::parse($value === 'auto' ? 0 : $value);
@@ -101,7 +124,7 @@ abstract class Element
 
     /**
      * An attribute: `'key'`, `'id'`, `'class'` (a list), `'style'` (an array), `'width'`,
-     * `'height'`, `'disabled'`, `'state'` (a list), `'onFocus'` or `'onBlur'`.
+     * `'height'`, `'disabled'`, `'state'` (a list), `'onFocus'`, `'onBlur'`, `'onKey'` or `'onMouse'`.
      *
      * @throws \InvalidArgumentException for another name
      */

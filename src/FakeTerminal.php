@@ -71,6 +71,7 @@ final class FakeTerminal extends TerminalDevice
             throw new \InvalidArgumentException("A FakeTerminal's background is 'dark', 'light' or null, not '$background'");
         }
         $this->hyperlinks = $hyperlinks;
+        $this->untilHandled = true;
         $this->setColors($colors);
         $this->surface = new Surface($cols, $rows);
         if ($background === 'light') {

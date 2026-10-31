@@ -5,8 +5,9 @@ namespace phasync\Tui;
 /**
  * A mouse event: a button pressed or released, the mouse dragged or moved, the wheel turned.
  *
- * Coordinates are 0-based cells: on the screen when the Screen receives it, relative to the
- * component's area when a component does (`at()` makes the local copy).
+ * Coordinates are 0-based cells: on the screen when the root receives it, relative to the
+ * component's area when a component does, and to the element's when an element's `onMouse`
+ * does (`at()` makes the local copy).
  */
 final class Mouse implements Event
 {
@@ -41,10 +42,37 @@ final class Mouse implements Event
     ) {
     }
 
+    /** @var (\Closure(): list<Element>)|null finds the elements under the mouse (see over()) */
+    private ?\Closure $finder = null;
+
     /** The same event at another position (for coordinates relative to a window). */
     public function at(int $x, int $y): Mouse
     {
-        return new Mouse($this->action, $x, $y, $this->button, $this->ctrl, $this->alt, $this->shift);
+        $copy = new Mouse($this->action, $x, $y, $this->button, $this->ctrl, $this->alt, $this->shift);
+        $copy->finder = $this->finder;
+        return $copy;
+    }
+
+    /**
+     * The elements under the mouse where this event happened, innermost first (a `Text`, the
+     * `Box` around it, the `Column` around that; components too), for an element's `onMouse`:
+     * the release of a drag that began on a card says which column it was dropped on
+     * (`$mouse->over()` holds the column's `Box`, found by its `key` or `id`). Empty for an
+     * event that did not come to an element's `onMouse`.
+     *
+     * @return list<Element>
+     */
+    public function over(): array
+    {
+        return $this->finder === null ? [] : ($this->finder)();
+    }
+
+    /** @internal This event, with $finder for over(). */
+    public function withOver(\Closure $finder): Mouse
+    {
+        $copy = $this->at($this->x, $this->y);
+        $copy->finder = $finder;
+        return $copy;
     }
 
     /** True for the wheel actions. */

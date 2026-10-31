@@ -15,6 +15,7 @@ use phasync\Tui\Element\Span;
 use phasync\Tui\Element\Text;
 use phasync\Tui\Layout;
 use phasync\Tui\Markup;
+use phasync\Tui\Mouse;
 use phasync\Tui\Stylesheet;
 use phasync\Tui\Surface;
 use phasync\Tui\TerminalDevice;
@@ -37,6 +38,10 @@ final class Tree
     private array $seen = [];
     /** @var array<int, true> the started components the build in progress shows, by object id (see claim()) */
     public array $present = [];
+    /** @var array<string, Element> per path: the element the last build showed there */
+    private array $nodes = [];
+    /** @var \WeakMap<Surface, array{Tree, string}>|null every surface an element tree shows an element in: its tree and path */
+    private static ?\WeakMap $shows = null;
     /** The last build had a `Help` element (it follows the focus). */
     public bool $showsHelp = false;
     /** A measure that places nothing: component elements are only looked up (see measure()). */
@@ -63,11 +68,113 @@ final class Tree
      * @param \Closure(string $key, Component $fresh, bool $create): ?Component $place  the child component for a component element (without $create: the one there, or null)
      * @param \Closure(?Component $for, string $show): list<array{string, string}> $help the bindings for a Help element
      */
+    /**
+     * @param \Closure(\Closure $handler, mixed ...$args): mixed $run runs an element's handler as one of the owner's
+     */
     public function __construct(
         private readonly Component $owner,
         private readonly \Closure $place,
         private readonly \Closure $help,
+        private readonly \Closure $run,
     ) {
+        // (the root container's onMouse: the owner's own surface)
+        $owner->surface->on('mouse', fn(Mouse $m) => $this->mouse($owner->surface, $m));
+    }
+
+    /** The element shown in $surface by an element tree (a component placed in one is its own element), or null. */
+    public static function elementOf(Surface $surface): ?Element
+    {
+        $at = self::$shows[$surface] ?? null;
+        return $at === null ? null : ($at[0]->nodes[$at[1]] ?? null);
+    }
+
+    /** True if $surface shows an element with `onKey` (it takes the focus: a stop of the Tab walk). */
+    public static function takesKeys(Surface $surface): bool
+    {
+        $element = self::elementOf($surface);
+        return $element !== null && !$element instanceof Component && $element->attribute('onKey') !== null && !$element->attribute('disabled');
+    }
+
+    /** The element of this tree $surface shows (one of its surfaces, or the owner's for the root container), or null. */
+    public function elementAt(Surface $surface): ?Element
+    {
+        if ($surface === $this->owner->surface) {
+            return $this->nodes['r'] ?? null;
+        }
+        $at = self::$shows[$surface] ?? null;
+        return $at !== null && $at[0] === $this ? ($this->nodes[$at[1]] ?? null) : null;
+    }
+
+    /**
+     * The elements shown at ($x, $y) of $root, innermost first: those of every element tree on
+     * it, components included (what `Mouse::over()` gives).
+     *
+     * @return list<Element>
+     */
+    public static function elementsAt(Surface $root, int $x, int $y): array
+    {
+        $found = [];
+        foreach (self::$shows ?? [] as $surface => [$tree, $path]) {
+            if (($tree->owner instanceof Live && $path === 'r') || !isset($tree->nodes[$path]) || $surface->root() !== $root) {
+                continue;       // (a live element is the element its component was placed for, in the tree around it)
+            }
+            $area = $surface->area();
+            if (!$area->isEmpty() && $area->contains($x, $y)) {
+                $depth = 0;
+                for ($p = $surface->parent(); $p !== null; $p = $p->parent()) {
+                    $depth++;
+                }
+                $found[] = [$depth, $tree->nodes[$path]];
+            }
+        }
+        usort($found, fn(array $a, array $b) => $b[0] <=> $a[0]);
+        $out = [];
+        foreach ($found as [, $element]) {
+            $out[spl_object_id($element)] = $element;
+        }
+        return array_values($out);
+    }
+
+    /**
+     * Record that $surface shows $node at $path (for handlers, the Tab walk and `Mouse::over()`);
+     * the root container ('r', on the owner's own surface) only for this tree's handlers, since
+     * the owner's surface is the component's in the tree around it.
+     */
+    private function shows(string $path, Surface $surface, Element $node): void
+    {
+        if ($this->dry) {
+            return;
+        }
+        $this->nodes[$path] = $node;
+        if ($surface !== $this->owner->surface) {
+            self::$shows ??= new \WeakMap();
+            self::$shows[$surface] = [$this, $path];
+        }
+    }
+
+    /**
+     * A mouse event reached $surface: the onMouse of the element there gets it (presses, drags,
+     * releases unless it returns false; the wheel only when it returns true), and a press on an
+     * element with onKey focuses it.
+     */
+    private function mouse(Surface $surface, Mouse $mouse): bool
+    {
+        $node = $this->elementAt($surface);
+        if ($node === null || $node instanceof Component || $node->attribute('disabled')) {
+            return false;
+        }
+        if ($mouse->action === Mouse::PRESS && $node->attribute('onKey') !== null && !$surface->hasFocus()) {
+            $surface->focus();
+        }
+        $handler = $node->attribute('onMouse');
+        if ($handler === null) {
+            return false;
+        }
+        $area = $surface->area();
+        $root = $surface->root();
+        [$x, $y] = [$area->x + $mouse->x, $area->y + $mouse->y];
+        $result = ($this->run)($handler, $mouse->withOver(fn() => self::elementsAt($root, $x, $y)), $node);
+        return $mouse->isWheel() ? $result === true : $result !== false;
     }
 
     /** The layout for the owner's surface that shows $root. */
@@ -92,6 +199,7 @@ final class Tree
             if ($style->hoverAware) {
                 $this->hovers['r'] = $this->owner->surface;
             }
+            $this->shows('r', $this->owner->surface, $root);
         }
         if ($inline) {
             // (laid out above)
@@ -115,7 +223,7 @@ final class Tree
             // (the margin of a live element is laid out where the element is, around its
             // component; the component takes the focus when something in it does)
             $item->margin = [0, 0, 0, 0];
-            $focusable = false;
+            $focusable = $root->attribute('onKey') !== null;
             foreach ($layout->items as $child) {
                 $focusable = $focusable || $child->focusable;
             }
@@ -138,8 +246,13 @@ final class Tree
         $this->focused = $this->focusing;
         foreach ($this->surfaces as $path => $surface) {
             if (!isset($this->seen[$path])) {
-                unset($this->surfaces[$path], $this->painted[$path], $this->wrapped[$path], $this->items[$path], $this->layouts[$path]);
+                unset($this->surfaces[$path], $this->painted[$path], $this->wrapped[$path], $this->items[$path], $this->layouts[$path], self::$shows[$surface]);
                 $surface->giveUp();
+            }
+        }
+        foreach ($this->nodes as $path => $_) {
+            if (!isset($this->seen[$path]) && ($path !== 'r' || !$root instanceof Column && !$root instanceof Row && !$root instanceof Layers)) {
+                unset($this->nodes[$path]);
             }
         }
         return $layout;
@@ -271,6 +384,8 @@ final class Tree
             if ($style->hidden) {
                 return null;
             }
+            $this->seen[$path] = true;
+            $this->shows($path, $component->surface, $component);
             $sig = 'c' . spl_object_id($component) . '|' . self::sizes($component);
             return $this->kept($path, $sig, $style) ?? $this->keep($path, $sig, $style, $this->componentItem($component, $style));
         }
@@ -285,27 +400,31 @@ final class Tree
         if ($style->hidden) {
             return null;
         }
+        $this->shows($path, $surface, $node);
+        $keys = $node->attribute('onKey') !== null && !$node->attribute('disabled');     // (it takes the focus)
         if ($node instanceof Text || $node instanceof Help) {
-            $surface->setFocusable(false);
+            $surface->setFocusable($keys);
             $text = $node instanceof Help ? $this->helpText($node, $sheet, $style) : $node;
             $content = $this->content($text, $sheet, $style);
             $wrap = $text->wrap && $style->wrap !== false;
             $sig = 't' . ($wrap ? 'w' : 'c') . self::sizes($node) . "\0" . $content;
-            return $this->kept($path, $sig, $style)
+            $item = $this->kept($path, $sig, $style)
                 ?? $this->keep($path, $sig, $style, $this->text($this->frame(new LayoutItem($surface), $node, $style, 'auto', 'auto'), $content, $wrap, $path, $style));
+            $item->focusable = $keys;
+            return $item;
         }
         if ($node instanceof Box) {
             $inner = $this->item($node->child, $path . '/' . self::segment($node->child, 0), $sheet, $style) ?? self::nothing();
-            $surface->setFocusable($inner->focusable);
+            $surface->setFocusable($inner->focusable || $keys);
             $title = $node->title === '' ? '' : Markup::toAnsi($node->title, $style->borderStyle ?? $style->text, $sheet);
-            $sig = 'b' . spl_object_id($inner) . '|' . self::sizes($node) . "\0" . $title;
+            $sig = 'b' . ($keys ? 'k' : '') . spl_object_id($inner) . '|' . self::sizes($node) . "\0" . $title;
             if (($item = $this->kept($path, $sig, $style)) !== null) {
                 return $item;
             }
             $item = $this->frame(new LayoutItem($surface), $node, $style, 'auto', 'auto');
             $item->title = $title;
             $item->layout = new ElementLayout(ElementLayout::SINGLE, $inner->surface === self::nothing()->surface ? [] : [$inner], padding: $style->padding, fill: $style->text);
-            $item->focusable = $inner->focusable;
+            $item->focusable = $inner->focusable || $keys;
             [$t, $r, $b, $l] = $style->padding;
             $extraW = $l + $r + ($item->border === false ? 0 : 2);
             $extraH = $t + $b + ($item->border === false ? 0 : 2);
@@ -319,12 +438,12 @@ final class Tree
             // as large as its children need ('auto'), so a toolbar Row is one row; a child that
             // takes any room (null measure) makes it take a share ('1fr', see ElementLayout)
             $layout = $this->container($node, $path, $sheet, $style);
-            $focusable = false;
+            $focusable = $keys;
             foreach ($layout->items as $child) {
                 $focusable = $focusable || $child->focusable;
             }
             $surface->setFocusable($focusable);
-            $sig = 'l' . spl_object_id($layout) . '|' . self::sizes($node);
+            $sig = 'l' . ($keys ? 'k' : '') . spl_object_id($layout) . '|' . self::sizes($node);
             if (($item = $this->kept($path, $sig, $style)) !== null) {
                 return $item;
             }
@@ -648,6 +767,7 @@ final class Tree
             $surface = new Surface(1, 1, 0);
             // :focused of the elements follows the focus
             $surface->on('focus', fn() => $this->owner->markDirty());
+            $surface->on('mouse', fn(Mouse $m) => $this->mouse($surface, $m));
             $this->surfaces[$path] = $surface;
         }
         return $this->surfaces[$path];

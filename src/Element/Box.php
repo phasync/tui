@@ -3,6 +3,8 @@
 namespace phasync\Tui\Element;
 
 use phasync\Tui\Element;
+use phasync\Tui\Key;
+use phasync\Tui\Mouse;
 
 /**
  * A border, with a title in it, around one element:
@@ -29,6 +31,8 @@ final class Box extends Element
      * @param int|string|null $padding blank cells between the border and the content (`1`, `'0 1'`; the `padding` style)
      * @param string|list<string> $state its own states for the stylesheet; `$selected` adds `selected` (see `Element`)
      * @param (\Closure(Element): mixed)|null $onFocus called when the focus enters it, `$onBlur` when it leaves (see `Element`)
+     * @param (\Closure(Key, Element): bool)|array<string, mixed>|null $onKey its keys: it takes the focus (see `Element`)
+     * @param (\Closure(Mouse, Element): mixed)|null $onMouse the mouse over it (see `Element`)
      */
     public function __construct(
         public readonly Element $child,
@@ -46,8 +50,10 @@ final class Box extends Element
         string|array $state = [],
         ?\Closure $onFocus = null,
         ?\Closure $onBlur = null,
+        \Closure|array|null $onKey = null,
+        ?\Closure $onMouse = null,
     ) {
-        $this->with($key, $id, $class, Children::style($style, ['padding' => $padding]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur);
+        $this->with($key, $id, $class, Children::style($style, ['padding' => $padding]), $width, $height, $disabled, $selected ?: null, $state === [] ? null : $state, $onFocus, $onBlur, $onKey, $onMouse);
     }
 
     /** @internal This box with a closure's title as it is now (what the component that shows it renders). */
@@ -56,6 +62,6 @@ final class Box extends Element
         if (!$this->title instanceof \Closure) {
             return $this;
         }
-        return new self($this->child, (string) ($this->title)(), null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'), state: $this->attribute('state'), onFocus: $this->attribute('onFocus'), onBlur: $this->attribute('onBlur'));
+        return new self($this->child, (string) ($this->title)(), null, $this->attribute('id'), $this->attribute('class'), $this->attribute('style'), disabled: $this->attribute('disabled'), state: $this->attribute('state'), onFocus: $this->attribute('onFocus'), onBlur: $this->attribute('onBlur'), onKey: $this->attribute('onKey'), onMouse: $this->attribute('onMouse'));
     }
 }
