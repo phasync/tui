@@ -723,17 +723,27 @@ final class Surface implements \Stringable
      */
     public function area(): Rect
     {
-        $rect = new Rect(0, 0, $this->cols(), $this->rows());
+        // (as Rect::intersect() at each level, in plain numbers: it runs for every watched surface when the geometry changes)
+        [$x, $y, $w, $h] = [0, 0, $this->cols(), $this->rows()];
         $s = $this;
         while (($v = $s->viewport()) !== null) {
             $b = $v->hasBorder() ? 1 : 0;
-            $inner = new Rect($v->x() + $b, $v->y() + $b, $v->innerWidth(), $v->innerHeight());
-            $rect = (new Rect($inner->x + $rect->x - $v->left(), $inner->y + $rect->y - $v->top(), $rect->width, $rect->height))
-                ->intersect($inner);
+            [$ix, $iy, $iw, $ih] = [$v->x() + $b, $v->y() + $b, $v->innerWidth(), $v->innerHeight()];
             $s = $v->host();
-            $rect = $rect->intersect(new Rect(0, 0, $s->cols(), $s->rows()));
+            $x0 = $ix + $x - $v->left();
+            $y0 = $iy + $y - $v->top();
+            $x = max($x0, $ix);
+            $y = max($y0, $iy);
+            $w = max(0, min($x0 + $w, $ix + $iw) - $x);
+            $h = max(0, min($y0 + $h, $iy + $ih) - $y);
+            $r = min($x + $w, $s->cols());
+            $bottom = min($y + $h, $s->rows());
+            $x = max($x, 0);
+            $y = max($y, 0);
+            $w = max(0, $r - $x);
+            $h = max(0, $bottom - $y);
         }
-        return $rect;
+        return new Rect($x, $y, $w, $h);
     }
 
     /**
@@ -1308,6 +1318,12 @@ final class Surface implements \Stringable
     public function ownLines(): array
     {
         return $this->vt->lines;
+    }
+
+    /** @internal @return array<int, int> the version at which each row of its own cells last changed */
+    public function ownRowVersions(): array
+    {
+        return $this->vt->rowVersion;
     }
 
     /** @internal Scrollback row $y (negative), or null beyond the oldest one kept. */

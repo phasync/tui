@@ -108,7 +108,12 @@ it('makes again only the rows a change is on: a window among two hundred costs i
     $windows[4 * 17 + 2]->write("\e[H\e[1mfocused");
     $root->compose();
     expect($root->damagedSince($before))->toBe([17])->and($root->line(17))->toContain('focused');
-    $median = composeMedian($root, fn(int $i) => $windows[($i * 37) % 200]->write("\e[H" . ($i % 10)));
-    // (about 0.1 ms on the machine this was written on; every window drawn: about 1 ms)
-    expect($median)->toBeLessThan(0.6);
+    $one = composeMedian($root, fn(int $i) => $windows[($i * 37) % 200]->write("\e[H" . ($i % 10)));
+    $every = composeMedian($root, function (int $i) use ($windows) {
+        foreach ($windows as $w) {
+            $w->write("\e[H" . ($i % 10));
+        }
+    });
+    // (about 0.1 and 1.2 ms on the machine this was written on)
+    expect($one)->toBeLessThan($every / 4)->and($one)->toBeLessThan(2.0);
 });

@@ -32,10 +32,10 @@ final class Host
     private array $rowVersion = [];
     /** A window held back a synchronized update when the frame was made. */
     private bool $holding = false;
-    /** @var array<int, int> the own rows' versions when the frame was made */
-    private array $ownVersion = [];
-    /** @var list<array{Viewport, ?string, int, int}> each window when the frame was made: its key (`place()`) and rows */
-    private array $shown = [];
+    /** @var array{array<int,int>, list<Viewport>}|null the own rows' versions and the windows when the frame was made (see damage()) */
+    private ?array $own = null;
+    /** @var \WeakMap<Viewport, array{string, string, int, int, ?array}> each window shown in the frame, to any depth: its key and look (`place()`), its rows, what it showed inside (see damage()) */
+    private \WeakMap $seen;
     public ?Layout $layout = null;
     /** A press on a window focuses it; null: as the host's host says. */
     public ?bool $clickFocus = null;
@@ -57,6 +57,7 @@ final class Host
         /** Tells the host's own host (and a terminal device) that what this surface shows changed. */
         private readonly \Closure $notify,
     ) {
+        $this->seen = new \WeakMap();
     }
 
     // ------------------------------------------------------------------------------------------
@@ -362,11 +363,9 @@ final class Host
      * clipped by every window on the way down; a shadow shades the windows below the one that
      * casts it. Rows that differ from the previous frame get a new version (the host's damage).
      *
-     * Only rows something changed on are made again: rows of the host's own cells that changed,
-     * and the rows of each window drawn differently than in the last frame (where it was and
-     * where it is), with every window on them; the others are the last frame's. A new size, a
-     * window hosted, unhosted or raised, or a window holding back an update makes all of them.
-     * It costs the rows that changed, whatever the depth of the tree.
+     * Only the rows something changed on are made again (see `damage()`), each with everything
+     * on it; the others are the last frame's. It costs the rows that changed, whatever the depth
+     * of the tree and the number of windows.
      */
     public function compose(): void
     {
@@ -378,12 +377,7 @@ final class Host
         $cols = $vt->cols;
         $rows = $vt->rows;
         $views = $this->viewports;
-        $above = self::shadesAbove($views, 0, 0);
-        $at = [];
-        foreach ($views as $i => $v) {
-            $at[$i] = self::place($v, 0, 0, 0, 0, $cols, $rows, $above[$i]);
-        }
-        $all = $this->holding || \count($this->shown) !== \count($views);
+        $all = $this->holding;
         if (\count($this->frame) !== $rows || \count($this->frame[0]->chars) !== $cols) {
             // the first frame, or another size: what showed before is the host's own cells
             $this->frame = array_map(fn(Line $line) => clone $line, $vt->lines);
@@ -391,38 +385,17 @@ final class Host
             $all = true;
         }
         $damaged = [];
-        foreach ($views as $i => $v) {
-            $was = $this->shown[$i] ?? null;
-            if ($all || $was[0] !== $v) {
-                $all = true;
-                break;
-            }
-            $key = $at[$i][8] ?? null;
-            if ($key !== $was[1]) {
-                for ($y = $was[2]; $y < $was[3]; $y++) {
-                    $damaged[$y] = true;
-                }
-                for ($y = $at[$i][5] ?? 0, $y2 = $at[$i][7] ?? 0; $y < $y2; $y++) {
-                    $damaged[$y] = true;
-                }
-            }
-        }
-        foreach ($vt->rowVersion as $y => $version) {
-            if ($all || $version !== ($this->ownVersion[$y] ?? null)) {
-                $damaged[$y] = true;
-            }
-        }
-        $this->ownVersion = $vt->rowVersion;
-        $this->shown = [];
-        foreach ($views as $i => $v) {
-            $this->shown[] = $at[$i] === null ? [$v, null, 0, 0] : [$v, $at[$i][8], $at[$i][5], $at[$i][7]];
-        }
+        $this->damage($this->surface, $views, 0, 0, 0, $rows, 0, 0, $cols, $rows, $this->own, $all, $damaged);
         $this->holding = false;
+        if ($all) {
+            $damaged = array_fill(0, $rows, true);
+        }
         if ($damaged === []) {
             return;
         }
         ksort($damaged);
         $ys = array_keys($damaged);
+        $above = self::shadesAbove($views, 0, 0);
         $version = null;
         for ($k = 0, $n = \count($ys); $k < $n;) {
             // a band of rows: the own cells, the windows on them
@@ -434,8 +407,9 @@ final class Host
                 $styles[$y] = $vt->lines[$y]->styles;
             }
             foreach ($views as $i => $v) {
-                if ($at[$i] !== null) {
-                    $this->blit($chars, $styles, $v, $at[$i], $above[$i], $a, $b);
+                $at = self::place($v, 0, 0, 0, 0, $cols, $rows, $above[$i], $a, $b);
+                if ($at !== null) {
+                    $this->blit($chars, $styles, $v, $at, $above[$i], $a, $b);
                 }
             }
             for ($y = $a; $y < $b; $y++) {
@@ -453,6 +427,87 @@ final class Host
     }
 
     /**
+     * Mark in $damaged the frame rows on which what $source shows changed since the last frame:
+     * $source placed at $sx,$sy of the frame (its row 0 at $sy), its cells shown on the rows $from
+     * to $to (scrollback included), its windows ($views) seen through the clip $cl,$ct - $cr,$cb. $seen is what it was at the last frame (its own rows'
+     * versions and its windows), and becomes what it is now.
+     *
+     * A row of its own cells changed where its version did (a row of its scrollback whenever it
+     * changed at all). A window whose key (`place()`) is
+     * the same shows the same, and so does all it hosts: nothing below it is visited. One whose
+     * place, look, clip or shadows changed, or that is new or gone, changed on all its rows,
+     * where it was and where it is. One whose source changed and nothing else is looked into
+     * the same way, so a change deep down is the rows it is on. A window hosted, unhosted or
+     * raised changes the whole of its host's window. With $all (all rows are made again) it only
+     * notes what everything is now.
+     *
+     * @param list<Viewport>                              $views
+     * @param array{array<int,int>, list<Viewport>}|null  $seen
+     * @param array<int, true>                            $damaged
+     */
+    private function damage(Surface $source, array $views, int $sx, int $sy, int $from, int $to, int $cl, int $ct, int $cr, int $cb, ?array &$seen, bool &$all, array &$damaged): void
+    {
+        $own = $source->ownRowVersions();
+        if (!$all && ($seen === null || $seen[1] !== $views)) {
+            $all = true;        // (the caller makes the whole window again)
+        }
+        if (!$all) {
+            $was = $seen[0];
+            for ($y = $from; $y < $to; $y++) {
+                $row = $y - $sy;
+                if ($row < 0 || ($own[$row] ?? null) !== ($was[$row] ?? null)) {   // (scrollback has no versions: as changed)
+                    $damaged[$y] = true;
+                }
+            }
+        }
+        $seen = [$own, $views];
+        $above = $views === [] ? [] : self::shadesAbove($views, $sx, $sy);
+        foreach ($views as $i => $v) {
+            $at = self::place($v, $sx, $sy, $cl, $ct, $cr, $cb, $above[$i]);
+            $last = $this->seen[$v] ?? null;
+            if ($at === null) {
+                if ($last !== null) {
+                    unset($this->seen[$v]);
+                    for ($y = $last[2]; !$all && $y < $last[3]; $y++) {
+                        $damaged[$y] = true;
+                    }
+                }
+                continue;
+            }
+            [$x0, $y0, , , $left, $top, $right, $bottom, $key, $look] = $at;
+            if ($last !== null && $last[0] === $key) {
+                continue;       // (it and all below it show what they showed)
+            }
+            $whole = $all || $last === null || $last[1] !== $look;
+            if ($whole && !$all) {
+                for ($y = $last[2] ?? 0; $y < ($last[3] ?? 0); $y++) {
+                    $damaged[$y] = true;
+                }
+                for ($y = $top; $y < $bottom; $y++) {
+                    $damaged[$y] = true;
+                }
+            }
+            $inner = $last[4] ?? null;
+            [$ix, $iy, $il, $ir, $it, $ib] = self::inner($v, $x0, $y0, $left, $top, $right, $bottom);
+            if ($il < $ir && $it < $ib) {
+                $hosted = $v->source;
+                $vx = $ix - $v->left();
+                $vy = $iy - $v->top();
+                $this->damage($hosted, $hosted->viewports(), $vx, $vy, $it, $ib, max($il, $vx), max($it, $vy),
+                    min($ir, $vx + $hosted->cols()), min($ib, $vy + $hosted->rows()), $inner, $whole, $damaged);
+                if ($whole && !$all) {
+                    for ($y = $top; $y < $bottom; $y++) {
+                        $damaged[$y] = true;
+                    }
+                }
+            } else {
+                $inner = null;
+            }
+            $this->seen[$v] = [$key, $look, $top, $bottom, $inner];
+        }
+    }
+
+    /**
      * Blit $views (a host's windows, bottom first, placed at $ox,$oy of the frame) into the
      * frame's rows $by1 to $by2 (exclusive), inside the clip rectangle $cx1,$cy1 - $cx2,$cy2.
      *
@@ -464,7 +519,7 @@ final class Host
     {
         $above = self::shadesAbove($views, $ox, $oy);
         foreach ($views as $i => $v) {
-            $at = self::place($v, $ox, $oy, $cx1, $cy1, $cx2, $cy2, $above[$i]);
+            $at = self::place($v, $ox, $oy, $cx1, $cy1, $cx2, $cy2, $above[$i], $by1, $by2);
             if ($at !== null) {
                 $this->blit($chars, $styles, $v, $at, $above[$i], $by1, $by2);
             }
@@ -495,12 +550,13 @@ final class Host
     /**
      * Where window $v is in the frame (its host placed at $ox,$oy), the part of it inside the
      * clip, and the key of how it is drawn there: equal keys, equal cells (its subtree, look,
-     * place, clip and shadows the same). Null when none of it shows.
+     * place, clip and shadows the same); `look` is the key without its source's change count.
+     * Null when none of it shows, or none of it is on the rows $by1 to $by2.
      *
      * @param list<array{int,int,int,int,int}> $shades
-     * @return array{int,int,int,int,int,int,int,int,string}|null x, y, width, height, left, top, right, bottom, key
+     * @return array{int,int,int,int,int,int,int,int,string,string}|null x, y, width, height, left, top, right, bottom, key, look
      */
-    private static function place(Viewport $v, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2, array $shades): ?array
+    private static function place(Viewport $v, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2, array $shades, int $by1 = PHP_INT_MIN, int $by2 = PHP_INT_MAX): ?array
     {
         [$x0, $y0, $w, $h] = $v->rect();
         $x0 += $ox;
@@ -509,11 +565,25 @@ final class Host
         $right = min($x0 + $w, $cx2);
         $top = max($y0, $cy1);
         $bottom = min($y0 + $h, $cy2);
-        if ($left >= $right || $top >= $bottom) {
+        if ($left >= $right || $top >= $bottom || $top >= $by2 || $bottom <= $by1) {
             return null;
         }
-        $key = $v->source->changeCount() . ",$x0,$y0,$w,$h,$left,$top,$right,$bottom," . $v->lookKey() . ($shades === [] ? '' : json_encode($shades));
-        return [$x0, $y0, $w, $h, $left, $top, $right, $bottom, $key];
+        $look = "$x0,$y0,$w,$h,$left,$top,$right,$bottom," . $v->lookKey() . ($shades === [] ? '' : json_encode($shades));
+        return [$x0, $y0, $w, $h, $left, $top, $right, $bottom, $v->source->changeCount() . ',' . $look, $look];
+    }
+
+    /**
+     * The inside of window $v at $x0,$y0 of the frame, clipped to $left,$top - $right,$bottom:
+     * where it starts (inside the border) and the part that shows.
+     *
+     * @return array{int,int,int,int,int,int} x, y, left, right, top, bottom
+     */
+    private static function inner(Viewport $v, int $x0, int $y0, int $left, int $top, int $right, int $bottom): array
+    {
+        $b = $v->hasBorder() ? 1 : 0;
+        $ix = $x0 + $b;
+        $iy = $y0 + $b;
+        return [$ix, $iy, max($ix, $left), min($ix + $v->innerWidth(), $right), max($iy, $top), min($iy + $v->innerHeight(), $bottom)];
     }
 
     /**
@@ -619,12 +689,7 @@ final class Host
                 }
             }
         }
-        $ix = $x0 + $b;
-        $iy = $y0 + $b;
-        $il = max($ix, $left);
-        $ir = min($ix + $v->innerWidth(), $right);
-        $it = max($iy, $top);
-        $ib = min($iy + $v->innerHeight(), $bottom);
+        [$ix, $iy, $il, $ir, $it, $ib] = self::inner($v, $x0, $y0, $left, $top, $right, $bottom);
         $rt = max($it, $by1);
         $rb = min($ib, $by2);
         if ($il < $ir && $rt < $rb) {
