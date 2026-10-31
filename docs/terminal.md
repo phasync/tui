@@ -221,7 +221,20 @@ Tui::run(new App());                 // the same in one call, Ctrl-Q quitting by
 redirected (attaching then throws `RuntimeException`). The terminal settings are saved and set
 to raw mode with `stty`, and restored on `detach()`, and also when the program ends any other
 way: an uncaught exception, a fatal error, `exit()`, or SIGTERM, SIGHUP, SIGINT or SIGQUIT (with
-ext-pcntl; the program then exits with 128 + signal). The size is re-read on SIGWINCH with
+ext-pcntl; the program then exits with 128 + signal). **An exception nobody catches** (in the
+run closure, a coroutine of `Tui::go()`, a handler, the root) is printed once the terminal is
+restored, on stderr, as its class, message and file:line, with those of its previous
+exceptions:
+
+```
+RuntimeException: failed in Tui::go()
+  at /home/me/app.php:70
+(TUI_TRACE=1 shows the stack trace)
+```
+
+and the program exits with status 255 (as PHP's own handler). `TUI_TRACE=1` in the environment
+adds the stack traces; a program that installed its own `set_exception_handler()` before the
+terminal was first taken over keeps it. The size is re-read on SIGWINCH with
 ext-pcntl, else polled twice a second. Text copied in a window goes to the clipboard with OSC 52
 and also through `wl-copy`, `xclip` or `pbcopy` when one is installed and a display is available.
 Writes to the terminal never block other coroutines and never interleave.

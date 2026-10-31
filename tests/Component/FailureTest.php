@@ -268,15 +268,15 @@ it('leaves ctrl+q to a component that binds it', function () {
 });
 
 /** Run tests/fixtures/programs/crash.php $mode on a pty; [exit status, stderr, the terminal after, seconds]. */
-function crashOnPty(string $mode): array
+function crashOnPty(string $mode, string $env = ''): array
 {
     $err = tempnam(sys_get_temp_dir(), 'crash');
     $script = dirname(__DIR__) . '/fixtures/programs/crash.php';
     $result = null;
-    fiber\run(function () use ($mode, $err, $script, &$result) {
+    fiber\run(function () use ($mode, $err, $script, $env, &$result) {
         $s = new Surface(60, 12);
         $started = microtime(true);
-        $pty = Pty::start(['sh', '-c', 'php "$0" "$1" 2>"$2"; echo "status=$?"; stty -a', $script, $mode, $err], $s);
+        $pty = Pty::start(['sh', '-c', $env . ' php "$0" "$1" 2>"$2"; echo "status=$?"; stty -a', $script, $mode, $err], $s);
         $code = $pty->wait(10);
         $result = [$code, $s, microtime(true) - $started];
     });
@@ -291,6 +291,7 @@ it('restores the real terminal and exits non-zero with the message on stderr', f
     [$status, $stderr, $s, $seconds] = crashOnPty($mode);
     expect($status)->not->toBe(0)
         ->and($stderr)->toContain($message)
+        // (0.0.3-beta4) the class, message and file:line, no stack trace
         ->and($s->isAltScreen())->toBeFalse()
         ->and($s->mode(1000))->toBeFalse()
         ->and($s->mode(1002))->toBeFalse()
@@ -300,6 +301,8 @@ it('restores the real terminal and exits non-zero with the message on stderr', f
         ->and($s->text())->toMatch('/(?<!-)icanon/')      // stty: cooked mode again
         ->and($s->text())->toMatch('/(?<!-)echo /')
         ->and($seconds)->toBeLessThan(2.5);     // (php's own start-up included)
+    expect($stderr)->toMatch('/\n  at \S+\.php:\d+\n/')->not->toContain('Stack trace')->not->toContain('#0 ')
+        ->and($stderr)->toContain('TUI_TRACE=1');
 })->with([
     'the exact shape' => ['start', 'Call to protected method CrashApp::secret()'],
     'a bare surface' => ['attach', 'failed after attach()'],
@@ -310,3 +313,9 @@ it('restores the real terminal and exits non-zero with the message on stderr', f
     'a coroutine of Tui::go()' => ['tuigo', 'failed in Tui::go()'],
     'a key handler of Tui::run(keys:)' => ['keys', 'failed in a key handler'],
 ]);
+
+it('prints the stack trace of an uncaught failure with TUI_TRACE=1 (0.0.3-beta4)', function () {
+    [$status, $stderr, $s] = crashOnPty('tuigo', 'TUI_TRACE=1');
+    expect($stderr)->toContain('RuntimeException: failed in Tui::go()')
+        ->and($stderr)->toContain('#0 ')->and($s->isAltScreen())->toBeFalse();
+});

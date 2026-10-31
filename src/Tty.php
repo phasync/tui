@@ -20,7 +20,11 @@ use function fiber\writable;
  * Attaching saves the terminal settings and switches to raw mode with `stty`; detaching restores
  * them. They are also restored when the program ends any other way: an uncaught exception, a
  * fatal error, `exit()`, or SIGTERM/SIGHUP/SIGINT/SIGQUIT (with ext-pcntl; the program then exits
- * with status 128 + signal). The size is re-read on SIGWINCH with ext-pcntl, else polled with
+ * with status 128 + signal). An exception nobody catches is printed after the terminal is
+ * restored as its class, message and file:line (and those of its previous exceptions) on
+ * stderr, with the stack trace only when `TUI_TRACE=1` is in the environment, and the program
+ * exits with status 255; a program that set its own handler with `set_exception_handler()`
+ * before keeps it. The size is re-read on SIGWINCH with ext-pcntl, else polled with
  * `stty size` twice a second. Text copied in a window goes to the clipboard with OSC 52, and also
  * through `wl-copy`, `xclip` or `pbcopy` when one is installed and a display is available.
  */
@@ -143,6 +147,12 @@ final class Tty extends TerminalDevice
                     $tty->close();
                 }
             });
+            // an exception nobody catches: the message on the restored terminal, not a stack
+            // trace over it (unless the program has a handler of its own)
+            $previous = set_exception_handler(self::uncaught(...));
+            if ($previous !== null) {
+                set_exception_handler($previous);
+            }
         }
         if (\function_exists('pcntl_signal') && !$this->signals) {
             $this->signals = true;
@@ -157,6 +167,27 @@ final class Tty extends TerminalDevice
                 });
             }
         }
+    }
+
+    /**
+     * How a program that used the terminal ends on an exception nobody caught (the handler PHP
+     * calls, when the program set none): the terminal restored, then on stderr the class, the
+     * message and where it was thrown (and the same for its previous exceptions), the stack
+     * trace only with `TUI_TRACE=1` in the environment; exit status 255, as PHP's own.
+     */
+    private static function uncaught(\Throwable $e): never
+    {
+        foreach (self::$openTerminals as $tty) {
+            $tty->close();
+        }
+        $trace = (bool) getenv('TUI_TRACE');
+        $out = '';
+        for ($x = $e; $x !== null; $x = $x->getPrevious()) {
+            $out .= ($x === $e ? '' : 'Caused by: ') . $x::class . ': ' . $x->getMessage() . "\n  at " . $x->getFile() . ':' . $x->getLine() . "\n"
+                . ($trace ? preg_replace('/^/m', '  ', $x->getTraceAsString()) . "\n" : '');
+        }
+        fwrite(\STDERR, $out . ($trace ? '' : "(TUI_TRACE=1 shows the stack trace)\n"));
+        exit(255);
     }
 
     protected function close(): void
