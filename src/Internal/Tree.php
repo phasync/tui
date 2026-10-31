@@ -384,7 +384,8 @@ final class Tree
             }
             $this->painted[$path] = $key;
             $width = max(0, $cols - $l - $r);
-            $out = "\e[0m\e[?7l" . $base . "\e[2J";
+            // (no autowrap, no cursor: the surface is the Tree's, nothing else writes to it)
+            $out = "\e[?7;25l" . $base . "\e[2J";
             foreach ($lines($width) as $y => $line) {
                 if ($t + $y >= $rows - $b) {
                     break;
@@ -397,7 +398,7 @@ final class Tree
                 };
                 $out .= Ansi::moveTo($x, $t + $y) . $line;
             }
-            $surface->write($out . "\e[0m\e[?7h\e[?25l");
+            $surface->write($out);
         };
         return $item;
     }

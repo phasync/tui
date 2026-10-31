@@ -20,12 +20,18 @@ use function fiber\await;
  * until the earliest (50 ms at most, then it looks again) and ends the waits that are due, those
  * due within a millisecond with them.
  * So the coroutines of fifty components that sleep in step (a 10 Hz loop each) wake in the same
- * moment and their renders are one frame, and the clock runs only while someone waits.
+ * moment and their renders are one frame, and the clock runs only while someone waits. Waits
+ * "in step" (Component::sleep()) end at ticks of a frame clock, so loops that began at
+ * different moments wake together too.
  */
 final class Signal
 {
     /** Waits due this close to the earliest end with it (seconds): coroutines in step wake together. */
     private const TOGETHER = 0.001;
+    /** The frame clock's tick (seconds) for waits in step: as often as a terminal draws. */
+    private const STEP = 1 / 60;
+    /** How much earlier than asked a wait in step may end (seconds), so a loop keeps its rate. */
+    private const EARLY = 0.002;
     /** The longest the clock sleeps at a time (seconds): it looks again whether anyone still waits. */
     private const LONGEST = 0.05;
 
@@ -39,8 +45,12 @@ final class Signal
     /** Numbers the clock's coroutines: only the latest goes on after it woke. */
     private static int $clock = 0;
 
-    /** Wait for notify(). Returns false if the timeout expired first. */
-    public function wait(float $timeout = \PHP_FLOAT_MAX): bool
+    /**
+     * Wait for notify(). Returns false if the timeout expired first. $inStep: the timeout ends
+     * at a tick of the frame clock (STEP), the first after it or one at most EARLY before it, so
+     * that waits of about the same length that began at different moments end together.
+     */
+    public function wait(float $timeout = \PHP_FLOAT_MAX, bool $inStep = false): bool
     {
         $d = new Deferred();
         $id = spl_object_id($d);
@@ -50,7 +60,12 @@ final class Signal
                 await($d);
                 return true;
             }
-            self::at(microtime(true) + max(0.0, $timeout), $d);
+            $now = microtime(true);
+            $end = $now + max(0.0, $timeout);
+            if ($inStep) {
+                $end = max($now, ceil((max($now, $end - self::EARLY)) / self::STEP) * self::STEP);
+            }
+            self::at($end, $d);
             return await($d) === true;
         } finally {
             unset($this->waiters[$id], self::$deadlines[$id]);

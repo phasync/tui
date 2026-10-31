@@ -144,7 +144,7 @@ it('renders a coroutine loop that changes the state once per frame, not once per
         }
     };
     mountOn($app, 20, 1, function (FakeTerminal $t, Component $app) {
-        \fiber\sleep(0.06);
+        \fiber\sleep(0.15);  // (a step a frame: sleep() ends at a tick of the frame clock)
         $app->halt = true;  // (no step between the screen and the count read below)
         \fiber\sleep(0.01);
         $t->settle();       // (the render of the last step)
@@ -308,5 +308,55 @@ it('does not take the focus back when a render that focuses runs again after a k
         $app->requestRender();                    // asked for: the render's focus() takes effect again
         frame();
         expect($app->counter('a')->hasFocus())->toBeTrue();
+    });
+});
+
+it('ends the sleep of a component at a tick of the frame clock, so loops begun at different moments wake together', function () {
+    $woke = new ArrayObject();
+    $make = fn(string $name, float $after) => new class ($name, $after, $woke) extends Component {
+        public function __construct(private string $name, private float $after, private ArrayObject $woke)
+        {
+        }
+
+        protected function run(): void
+        {
+            \fiber\sleep($this->after);         // (begins its loop a little later than the other)
+            $steps = 0;
+            while ($this->sleep(0.1) && ++$steps <= 3) {
+                $this->woke[] = [$this->name, microtime(true)];
+            }
+        }
+
+        protected function render(): Element
+        {
+            return new Text($this->name);
+        }
+    };
+    $a = $make('a', 0.0);
+    $b = $make('b', 0.006);
+    $app = new class ($a, $b) extends Component {
+        public function __construct(private Component $a, private Component $b)
+        {
+        }
+
+        protected function render(): Element
+        {
+            return new Column([$this->a, $this->b]);
+        }
+    };
+    mountOn($app, 10, 2, function (FakeTerminal $t) use ($woke) {
+        $start = microtime(true);
+        \fiber\sleep(0.45);
+        $at = [];
+        foreach ($woke as [$name, $time]) {
+            $at[$name][] = $time;
+        }
+        expect($at['a'])->toHaveCount(3)->and($at['b'])->toHaveCount(3);
+        foreach ([...$at['a'], ...$at['b']] as $time) {
+            // on a tick (a sixtieth of a second), however their loops were offset
+            expect(fmod($time, 1 / 60))->toBeLessThan(0.006);
+        }
+        // still about ten steps a second: a sleep(0.1) ends at most 2 ms early, one tick late
+        expect($at['a'][2] - $at['a'][0])->toBeGreaterThan(0.19)->toBeLessThan(0.24);
     });
 });

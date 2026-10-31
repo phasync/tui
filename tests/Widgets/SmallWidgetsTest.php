@@ -101,6 +101,33 @@ it('fills a ProgressBar to its value with a label, and moves an indeterminate on
     });
 });
 
+it('moves a ProgressBar by itself only while it is indeterminate', function () {
+    $bar = new class (0.5) extends ProgressBar {
+        public int $renders = 0;
+
+        protected function render(): null
+        {
+            $this->renders++;
+            return parent::render();
+        }
+    };
+    mountOn(new Screen(fn() => new Column([$bar])), 20, 1, function (FakeTerminal $t) use ($bar) {
+        $t->settle();
+        $renders = $bar->renders;
+        \fiber\sleep(0.35);
+        expect($bar->renders)->toBe($renders);              // a determinate bar does not wake
+        $bar->setValue(null);
+        \fiber\sleep(0.35);
+        expect($bar->renders - $renders)->toBeGreaterThanOrEqual(3);
+        $bar->setValue(0.25);
+        \fiber\sleep(0.15);                                // (its last step ends the coroutine)
+        $t->settle();
+        $renders = $bar->renders;
+        \fiber\sleep(0.35);
+        expect($bar->renders)->toBe($renders)->and($t->text())->toStartWith('████░');
+    });
+});
+
 it('spins a Spinner by itself while it is shown', function () {
     $spinner = new Spinner('loading', frames: ['a', 'b', 'c'], interval: 0.02);
     mountOn(new Screen(fn() => new Column([$spinner])), 20, 1, function (FakeTerminal $t) use ($spinner) {

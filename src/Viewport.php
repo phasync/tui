@@ -589,45 +589,61 @@ final class Viewport
                 if ($b && ($r === 0 || $r === $h - 1)) {
                     [$chars, $styles] = $this->borderRow($r === 0, $style);
                 } else {
-                    $chars = [];
-                    $styles = [];
-                    if ($b) {
-                        $chars[] = self::BORDERS[$this->borderKind][5];
-                        $styles[] = $style;
-                    }
                     $srcRow = $top + $r - $b;
                     if ($srcRow >= $minRow && $srcRow < $srcRows) {
                         [$rc, $rs] = $this->source->rowData($srcRow);
                     } else {
                         $rc = $rs = [];
                     }
-                    for ($i = 0; $i < $innerW; $i++) {
-                        $col = $left + $i;
-                        $ch = $rc[$col] ?? ' ';
-                        $st = $rs[$col] ?? $plain;
-                        if ($ch === '' && $i === 0) {
-                            $ch = ' ';    // second half of a wide character cut at the left edge
-                        } elseif ($ch !== '' && $i === $innerW - 1 && ($rc[$col + 1] ?? null) === '') {
-                            $ch = ' ';    // wide character cut at the right edge
+                    if ($left === 0 && \count($rc) === $innerW) {
+                        $chars = $rc;       // (the whole row, as it is: no copy)
+                        $styles = $rs;
+                    } else {
+                        $chars = \array_slice($rc, $left, $innerW);
+                        $styles = \array_slice($rs, $left, $innerW);
+                        for ($i = \count($chars); $i < $innerW; $i++) {
+                            $chars[] = ' ';
+                            $styles[] = $plain;
                         }
-                        if ($selection !== null && self::inSelection($selection, $col, $srcRow)) {
-                            $st = $st->has(Style::INVERSE) ? $st->without(Style::INVERSE) : $st->with(Style::INVERSE);
-                        }
-                        $chars[] = $ch;
-                        $styles[] = $st;
                     }
-                    if ($b && $w > 1) {
-                        $chars[] = self::BORDERS[$this->borderKind][5];     // (a window one cell wide has room for one side)
-                        $styles[] = $style;
+                    if ($innerW > 0) {
+                        if ($chars[0] === '') {
+                            $chars[0] = ' ';        // second half of a wide character cut at the left edge
+                        }
+                        if ($chars[$innerW - 1] !== '' && ($rc[$left + $innerW] ?? null) === '') {
+                            $chars[$innerW - 1] = ' ';     // wide character cut at the right edge
+                        }
+                    }
+                    if ($selection !== null) {
+                        for ($i = 0; $i < $innerW; $i++) {
+                            if (self::inSelection($selection, $left + $i, $srcRow)) {
+                                $st = $styles[$i];
+                                $styles[$i] = $st->has(Style::INVERSE) ? $st->without(Style::INVERSE) : $st->with(Style::INVERSE);
+                            }
+                        }
+                    }
+                    if ($b) {
+                        $side = self::BORDERS[$this->borderKind][5];
+                        array_unshift($chars, $side);
+                        array_unshift($styles, $style);
+                        if ($w > 1) {
+                            $chars[] = $side;     // (a window one cell wide has room for one side)
+                            $styles[] = $style;
+                        }
                     }
                 }
-                // the cells of this row that the host shows (inside the host, not under a window above)
-                $visible = array_fill(0, $w, false);
-                for ($i = $clipL - $x0; $i < $clipR - $x0; $i++) {
-                    $visible[$i] = true;
+                // the cells of this row that the host shows (inside the host, not under a window
+                // above); null: all of them
+                $visible = null;
+                if ($clipL > $x0 || $clipR < $x0 + $w) {
+                    $visible = array_fill(0, $w, false);
+                    for ($i = $clipL - $x0; $i < $clipR - $x0; $i++) {
+                        $visible[$i] = true;
+                    }
                 }
                 foreach ($covers as [$cx, $cy, $cw, $ch]) {
-                    if ($ty >= $cy && $ty < $cy + $ch) {
+                    if ($ty >= $cy && $ty < $cy + $ch && $cx < $x0 + $w && $cx + $cw > $x0) {
+                        $visible ??= array_fill(0, $w, true);
                         for ($x = max($x0, $cx); $x < min($x0 + $w, $cx + $cw); $x++) {
                             $visible[$x - $x0] = false;
                         }
@@ -691,15 +707,28 @@ final class Viewport
      * @param list<string>                          $chars
      * @param list<Style>                           $styles
      * @param array{list<string>, list<Style>}|null $old
-     * @param list<bool>                            $visible
+     * @param list<bool>|null                       $visible null: every cell
      */
-    private static function diffAnsi(array $chars, array $styles, ?array $old, array $visible, int $x0, int $ty): string
+    private static function diffAnsi(array $chars, array $styles, ?array $old, ?array $visible, int $x0, int $ty): string
     {
         $n = \count($chars);
-        $write = [];
-        for ($i = 0; $i < $n; $i++) {
-            if ($visible[$i] && ($old === null || $old[0][$i] !== $chars[$i] || $old[1][$i] !== $styles[$i])) {
-                $write[$i] = true;
+        if ($old === null) {
+            $write = $visible === null ? array_fill(0, $n, true) : array_filter($visible);
+        } elseif ($old[1] === $styles) {
+            if ($old[0] === $chars) {
+                return '';      // (the row as painted last)
+            }
+            // only characters changed: the cells that differ, found at once
+            $write = array_fill_keys(array_keys(array_diff_assoc($chars, $old[0])), true);
+            if ($visible !== null) {
+                $write = array_intersect_key($write, array_filter($visible));
+            }
+        } else {
+            $write = [];
+            for ($i = 0; $i < $n; $i++) {
+                if (($visible === null || $visible[$i]) && ($old[0][$i] !== $chars[$i] || $old[1][$i] !== $styles[$i])) {
+                    $write[$i] = true;
+                }
             }
         }
         if ($write === []) {
@@ -707,9 +736,9 @@ final class Viewport
         }
         // a wide character is written whole: both halves when either changed
         foreach (array_keys($write) as $i) {
-            if ($chars[$i] === '' && $i > 0 && $visible[$i - 1]) {
+            if ($chars[$i] === '' && $i > 0 && ($visible === null || $visible[$i - 1])) {
                 $write[$i - 1] = true;
-            } elseif (($chars[$i + 1] ?? null) === '' && ($visible[$i + 1] ?? false)) {
+            } elseif (($chars[$i + 1] ?? null) === '' && ($visible === null ? $i + 1 < $n : $visible[$i + 1] ?? false)) {
                 $write[$i + 1] = true;
             }
         }

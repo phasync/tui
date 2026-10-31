@@ -30,6 +30,7 @@ use phasync\Tui\Text;
 class ProgressBar extends Component
 {
     private int $tick = 0;
+    private bool $animating = false;
 
     /**
      * @param float|null $value from 0 to 1 (clamped), null for indeterminate
@@ -56,16 +57,25 @@ class ProgressBar extends Component
         $this->requestRender();
     }
 
-    protected function run(): void
+    /**
+     * An indeterminate bar moves by itself, ten steps a second, for as long as it is
+     * indeterminate; a determinate one has no coroutine (it renders when its value changes).
+     */
+    private function animate(): void
     {
-        // an indeterminate bar moves by itself (a determinate one renders only when its value changes)
-        while ($this->isMounted()) {
-            if ($this->value === null) {
-                $this->tick++;
-                $this->requestRender();
-            }
-            \fiber\sleep(0.1);
+        if ($this->value !== null || $this->animating) {
+            return;
         }
+        $this->animating = true;
+        $this->go(function (): void {
+            try {
+                while ($this->value === null && $this->sleep(0.1)) {
+                    $this->tick++;
+                }
+            } finally {
+                $this->animating = false;
+            }
+        });
     }
 
     public function measure(int $cols, int $rows): ?array
@@ -75,6 +85,7 @@ class ProgressBar extends Component
 
     protected function render(): null
     {
+        $this->animate();       // (every value it gets, by props or setValue(), comes with a render)
         $cols = $this->surface->cols();
         $label = $this->labelText();
         $room = intdiv($cols, 2) - 1;           // (and the space before it)
@@ -94,8 +105,8 @@ class ProgressBar extends Component
         $base = Ansi::style($this->style()->text);
         $bar = Ansi::style($this->style('bar')->text);
         // (no autowrap: nothing goes past the last column, whatever the label holds)
-        $out = "\e[?25l\e[?7l\e[2J\e[H" . $base . str_repeat('░', $from) . $bar . str_repeat('█', $n) . $base . str_repeat('░', max(0, $width - $from - $n));
-        $this->surface->write($out . ($label === '' ? '' : ' ' . $label) . "\e[?7h");
+        $out = "\e[?7;25l" . $base . "\e[2J\e[H" . str_repeat('░', $from) . $bar . str_repeat('█', $n) . $base . str_repeat('░', max(0, $width - $from - $n));
+        $this->surface->write($out . ($label === '' ? '' : ' ' . $label));
         return null;
     }
 

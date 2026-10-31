@@ -436,6 +436,7 @@ final class Host
                 }
             }
             $out = '';
+            $rects = null;
             $count = \count($this->viewports);
             foreach ($this->viewports as $index => $v) {
                 if ($own === [] && !isset($stale[spl_object_id($v)])) {
@@ -466,9 +467,14 @@ final class Host
                 }
                 // a window writes no cell that a window above it covers, so it never has to
                 // repaint the windows above
+                $rects ??= array_map(fn(Viewport $v) => $v->rect(), $this->viewports);
+                [$vx, , $vw] = $rects[$index];
                 $covers = [];
                 for ($j = $index + 1; $j < $count; $j++) {
-                    $covers[] = $this->viewports[$j]->rect();
+                    [$cx, $cy, $cw, $ch] = $rects[$j];
+                    if ($cy < $vy + $vh && $cy + $ch > $vy && $cx < $vx + $vw && $cx + $cw > $vx) {
+                        $covers[] = $rects[$j];
+                    }
                 }
                 $out .= $v->paint($set, $cols, $rows, $covers);
             }
@@ -488,13 +494,17 @@ final class Host
      * The compositor's drawing, wrapped so the producer of the host keeps its state: its cursor,
      * pen (with the hyperlink it is in) and character sets are saved (DECSC) and restored
      * (DECRC), and what would bend the drawing (origin mode, insert mode, a shifted character
-     * set, a hyperlink the producer left open) is off in between.
+     * set, a hyperlink the producer left open) is off in between, written only when it is on.
      */
     private function wrap(string $drawing): string
     {
-        $insert = $this->vt->insertMode;
-        $link = $this->vt->pen->link !== '' ? "\e]8;;\e\\" : '';
-        return "\e7\e[?6l\x0f\e(B" . $link . ($insert ? "\e[4l" : '') . $drawing . "\e[0m" . ($insert ? "\e[4h" : '') . "\e8";
+        $vt = $this->vt;
+        $insert = $vt->insertMode;
+        $off = (($vt->modes[6] ?? false) ? "\e[?6l" : '') . ($vt->gl !== 0 ? "\x0f" : '')
+            . ($vt->charsets[0] !== 'B' ? "\e(B" : '') . ($vt->pen->link !== '' ? "\e]8;;\e\\" : '')
+            . ($insert ? "\e[4l" : '');
+        // (the drawing sets its pen at its first cell; DECRC gives the producer's back)
+        return "\e7" . $off . $drawing . ($insert ? "\e[4h" : '') . "\e8";
     }
 
     // ------------------------------------------------------------------------------------------

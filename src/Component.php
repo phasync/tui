@@ -1177,15 +1177,20 @@ abstract class Component extends Element
     }
 
     /**
-     * Sleep up to $seconds, less if the component is disposed meanwhile; returns `isMounted()`.
+     * Sleep about $seconds, less if the component is disposed meanwhile; returns `isMounted()`.
      * The loop of a component's coroutine: `while ($this->sleep(0.5)) { ... }`. What the
      * coroutine changed before it sleeps shows in the next frame (a render follows).
+     *
+     * The sleep ends at a tick of the frame clock (60 a second): the first one after the time
+     * asked for, or one at most 2 ms before it. So the coroutines of many components that sleep
+     * about the same time wake together and are one frame, and a `sleep(0.1)` loop still makes
+     * ten steps a second. For timing to the millisecond use `fiber\sleep()`.
      */
     final protected function sleep(float $seconds): bool
     {
         if ($this->mounted) {
             $this->markDirty();     // what the coroutine did until now shows in the next frame
-            $this->wake->wait($seconds);
+            $this->wake->wait($seconds, inStep: true);
         }
         return $this->mounted;
     }
@@ -1203,7 +1208,8 @@ abstract class Component extends Element
         $this->asked = false;
         try {
             // the pen is the component's style: what render() clears (ESC [2J) or writes plainly is in its colours
-            $pen = $this->style()->text;
+            $style = $this->style();
+            $pen = $style->text;
             if ($this->surface->pen() !== $pen) {
                 $this->surface->write("\e[0m" . Ansi::style($pen));
             }
@@ -1212,7 +1218,7 @@ abstract class Component extends Element
             }
             $result = $this->render();
             // the same tree as the last render's, in the same style and focus: what it laid out stands
-            $same = $this->showsAgain($result);
+            $same = $this->showsAgain($result, $style);
             if ($same) {
                 $layout = null;
                 $used = $this->used + $this->placed;
@@ -1267,14 +1273,14 @@ abstract class Component extends Element
      * Then the layout, the windows and the paint of the last render stand as they are, and a
      * render that changed nothing costs the render() call and the comparison.
      */
-    private function showsAgain(Layout|Element|null $result): bool
+    private function showsAgain(Layout|Element|null $result, ComputedStyle $style): bool
     {
         $last = $this->shownWith;
         if (!$result instanceof Element || $this->shown === null || $last === null || $this->relayout
             || $this->overlays !== [] || $this->floating !== [] || $this->tree?->showsHelp !== false) {
             return false;
         }
-        return $last[0] === $this->stylesheet() && $last[1] === $this->style() && $last[2] === Surface::focusVersion()
+        return $last[0] === $this->stylesheet() && $last[1] === $style && $last[2] === Surface::focusVersion()
             && self::sameElement($result, $this->shown);
     }
 
