@@ -158,9 +158,13 @@ second formatting for `println()`:
 // in the component's coroutine, when a job ends
 $this->state->done[$job] = 1.0;
 $this->device()?->println("copied $job");
-$this->device()?->freeze($this->child("job:$job")->surface);    // the row as it shows 100%
+Tui::freeze($this->child("job:$job"));            // the row as it shows 100%
 unset($this->state->done[$job]);                  // the next render leaves it out
 ```
+
+`Tui::freeze($component)` is `$component->device()?->freeze($component->surface)`, for the
+instance a closure render made anew too (`$bars[$i] = new ProgressBar(...)` in the closure:
+the one running in its place is frozen).
 
 `freeze()` takes the rows as the root shows them after the renders that are pending ran, so
 the row it keeps is the one the last state change drew (100%, not the 75% of the frame before).

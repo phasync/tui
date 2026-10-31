@@ -140,12 +140,13 @@ class Tabs extends Component
         ];
         $keys += [
             'escape' => ['focusBar', 'tab bar'],
-            'ctrl+tab' => ['nextTab', 'next tab', 'first' => true],
-            'ctrl+shift+tab' => ['previousTab', 'first' => true],
+            'ctrl+tab' => ['nextTab', 'next tab', 'first' => true, 'anywhere' => true],
+            'ctrl+shift+tab' => ['previousTab', 'first' => true, 'anywhere' => true],
         ];
-        // Alt-1 to Alt-9: before the content, wherever the focus is in it (a list it opened included)
+        // Alt-1 to Alt-9: before the content, wherever the focus is in it (a list it opened
+        // included), and anywhere on the screen when this is the only Tabs there
         foreach (range(1, 9) as $n) {
-            $keys["alt+$n"] = [fn() => $this->selectAt($n - 1), 'first' => true];
+            $keys["alt+$n"] = [fn() => $this->selectAt($n - 1), 'first' => true, 'anywhere' => true];
         }
         return $keys;
     }

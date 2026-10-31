@@ -15,9 +15,12 @@ README.md and docs/.
 - [x] 3. ScrollView brings what becomes selected into view (Tree::selectedSurfaces(),
       Component::selectedSurfaces()); the `focused:` attribute (an edge, as focus() in a
       render); tests/Release/SelectedBeta6Test.php
-- [ ] 4. Help() follows the running instance (fresh Tree in a tab)
-- [ ] 5. small: Alt-n anywhere, 'quit' on elements doc, Tui::freeze()
-- [ ] CHANGELOG, docs, README
+- [x] 4. Help() and keys: Component::bubbling() (owners, and before each owner the components
+      the focused one is shown in below it); Tabs' bar keys only on the bar;
+      tests/Release/HelpBeta6Test.php (fresh and kept, Help(for:))
+- [x] 5. small: `'anywhere' => true` bindings (Tabs' Alt-n, Ctrl-Tab), 'quit' on elements in
+      docs/components.md, Tui::freeze(); tests/Release/SmallBeta6Test.php
+- [x] CHANGELOG, docs (components.md, widgets.md, terminal.md, surface.md), README
 
 ## Design decisions (0.0.3-beta6)
 
@@ -77,6 +80,21 @@ README.md and docs/.
   into view when it is another than the one brought last (`keptSelected`), with the same
   minimal scroll as the focus (bringIntoView()); the wheel may scroll away until the
   selection changes. Only the ScrollView's own tree is looked at (its content as given).
+- **Keys go through where a component is shown** (Component::bubbling()): before, a key the
+  focused component did not take went up its owner chain only; a Tree the owner kept with
+  child() and gave a Tabs skipped the Tabs, a fresh one (started by the Tabs' pane) went
+  through it. Now from each component to its owner, the components it is shown in below that
+  owner come first (found by walking up its surfaces until the owner's). An overlay's content
+  is not shown inside its opener, so it goes to the opener as before. Help walks the same list.
+  The item 4 report ("the Help line shows the tab bar's keys") was the fresh shape: the Tree
+  has no described keys, so Help showed the next ones up, the bar's; and the bar's Left did
+  apply in the tree. Hence also: Tabs::bindings() gives the bar's keys only while the focus is
+  not in the content.
+- **`anywhere` bindings** (item 5): index 4 of a normalized binding. Components that may have
+  one are noted in a WeakMap (start() after mount(), bind()); a key nobody on the way took
+  goes to the one shown component on the root that binds it anywhere (none when two do, none
+  while a modal overlay is open). Chosen over documenting `keys:` because a second Tabs makes
+  a `keys:` binding wrong silently, and other widgets (a command palette's Ctrl-P) want it.
 - Measured (this machine): Tab + settle, 160x50 rows of Text+2 Buttons: 2 rows 1.2 ms, 200 rows
   1.8 ms (11.8 before); the bench's 50-row monitor 2.5 ms median (bars moving). What is left
   per frame when all 50 bars move is the emulator parse at each nesting level (bar, row, root,

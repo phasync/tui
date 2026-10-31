@@ -475,7 +475,10 @@ anything that may be longer than the room it gets: a `Column` alone is cut at it
 fields past the cut are out of the Tab walk. The content
 is laid out at the view's width and as high as it needs, behind the view. The focused element
 in it is kept in view (Tab through a long form scrolls along; so do Shift-Tab, `focus()` on a
-component out of view, and the next Tab after the user scrolled away from the focused field);
+component out of view, and the next Tab after the user scrolled away from the focused field),
+and so is the element that becomes selected (`selected: $s->sel === $i` on the cards of a lane
+moved by arrow keys in `keys:`: the view scrolls as little as shows the selected card, one row
+at a time at its edge; the wheel may scroll away until another is selected);
 the wheel scrolls it, and Up/Down,
 Page Up/Page Down and Home/End do when nothing in it takes them (at the end they go on, to move
 to the next field). Without a size it is as high as its content, so it only scrolls when its box
@@ -559,7 +562,9 @@ component in it gives the focus to the bar. So Ctrl-Tab from a shell in tab B to
 
 **Keys.** On the bar: Left/Right, Home/End change tab (not around), Tab or Enter move the
 focus into the shown content (a content with nothing to focus keeps it on the bar), Delete
-closes the current tab when it is closable. In the content: Escape moves the focus back to the
+closes the current tab when it is closable. These are the bar's only: in the content they are
+not in force (Left in a `Tree` at a closed node does not change the tab, and `Help` does not
+list them there), whichever owner made the content. In the content: Escape moves the focus back to the
 bar, but only when the content did not take it (an `Editor` with a selection clears it first),
 and never for a `Terminal`, which keeps Escape and all other keys. Before the content sees them,
 and from the bar or the content alike: Ctrl-Tab and Ctrl-Shift-Tab (around; actions `nextTab`
@@ -568,8 +573,10 @@ rule for these:** they work wherever the focus is inside the tabs: on the bar, i
 of the content however deep (an `Editor` in a `Box` in a `Row`, a `Terminal`, the editor of an
 inner `Tabs`), and in a list a component of the content opened (a dropdown `Select`'s list, an
 `Editor`'s completions), and the focus follows into the new tab's content when it was in the
-content. A component of the content that binds one of these keys itself does not get it (they
-come first); rebind them on the tabs with `bind()` to free a key. Escape is a plain binding: it
+content; and outside the tabs too (a sidebar, a status line) when this is the only `Tabs` on
+the screen (they are marked `anywhere`, see "Key bindings" in docs/components.md; with two,
+each switches only while the focus is inside it). A component of the content that binds one of
+these keys itself does not get it (they come first); rebind them on the tabs with `bind()` to free a key. Escape is a plain binding: it
 comes after the content. Rebind the keys with `bind()`; `Help` lists them.
 
 **Mouse.** A click on a tab selects it and gives the bar the focus; a click on its `×` or a

@@ -200,6 +200,25 @@ final class Tui
     }
 
     /**
+     * Inline mode: keep what $component shows now above the live region, in the terminal's
+     * scrollback, never to change again (a finished job's progress row), as
+     * `TerminalDevice::freeze()` does with its surface; the program then leaves it out of its
+     * next render. The instance a render made anew (`new ProgressBar(...)` in a closure) is
+     * frozen as the one running in its place. Nothing happens for a component that is not on a
+     * terminal.
+     *
+     *     Tui::go(function () use ($s, $bar, $i) {
+     *         ... $s->done[$i] = true;
+     *         Tui::freeze($bar);      // its row stays as it is now, above the region
+     *     });
+     */
+    public static function freeze(Component $component): void
+    {
+        $running = $component->running() ?? $component;
+        $running->device()?->freeze($running->surface);
+    }
+
+    /**
      * Run $root (an element, a component, or a closure returning either) full screen on the
      * terminal (`Tty`) until it quits, then restore the terminal. Returns the root component,
      * ended.

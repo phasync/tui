@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.0.3-beta6 (2026-11-01)
+
+A key costs the same at 200 rows as at 2, switching to a Markdown tab costs what any tab does,
+the selected card of a long lane comes into view, and the Help line is the same whoever made
+the focused component. Everything from 0.0.3-beta5 works as before, except where an entry says
+what changed.
+
+**The cost of a key**
+
+- Tab (and any focus change) in a screen of many rows no longer grows with the rows. Measured
+  as a program measures it, `press('tab')` and `settle()` under `Tui::headless()` at 160x50,
+  rows of a `Text` and two `Button`s with `onFocus:`: 2 rows 1.2 ms, 200 rows 1.8 ms (11.8 ms
+  in 0.0.3-beta5 on the same machine). The 50-row monitor of `tools/monitor-bench.php keys`,
+  bars moving at 10 Hz: 2.5 ms median. What changed:
+  - The focus coming to or leaving an element no longer renders the component whose tree holds
+    it: a closure program's `render()` is not called for a Tab. The elements the focus left and
+    entered are laid out again from the last tree, and only when their look changes with the
+    focus (`focus:` classes, `:focused` rules); `onFocus:`/`onBlur:` run as before, and a
+    `Help` line follows the focus the same way. A closure program whose `onFocus:` writes state
+    it does not read is no longer rendered at all for a Tab (beta5: once).
+  - Equal styles are one object, so an element whose state changed but whose look did not
+    keeps everything laid out for it.
+  - The Tab walk looks at the windows from the focused one on instead of ordering the whole
+    screen; a focus request settles only the windows above it; the children that are not
+    shown are found once.
+- `tools/monitor-bench.php keys` measures `press()` and `settle()`, as a program does, so its
+  number and the one a program sees agree.
+
+**Switching tabs**
+
+- Switching to a tab holding a kept `Markdown` (or any content that fills the pane) from a tab
+  of one row cost 18 ms more than to a `Text` tab at 120x40: the tabs laid the new content out
+  in the old tab's one row first, the `Markdown` was resized to one row, drawn, resized back
+  and drawn again, and switching away shrank it the same way (losing its rows). A component
+  whose size changes with its render is now laid out once, at the size its parent gives it
+  next. A window shown again writes only the cells that differ from what its host shows there.
+- A component the program gave as a tab's content in a render and that the tab then started
+  (the first render's own `new Tree(...)`) was stopped by the next `setTabs()` with a new
+  instance, when the program re-rendered while its tab was hidden: it is the tab's, and stays.
+
+**Selection, focus and Help**
+
+- A `ScrollView` brings the element that becomes selected into view (`selected: $s->sel === $i`
+  on the 200 cards of a lane moved by arrow keys in `keys:`), scrolling as little as shows it,
+  as it does for the focus: select card 50 and it shows, select 0 and the view is at the top,
+  one step at the edge scrolls one row. The wheel may scroll away until another is selected.
+- Every element takes `focused:` (and a component `->with(focused: ...)`): the render where it
+  becomes true gives it the focus, so a program without classes moves the keys with its state
+  (`new Text($card, onKey: [...], focused: $s->sel === $i)`). A render that keeps it true does
+  not take the focus back after Tab moved it.
+- With a fresh `new Tree(...)` in a tab's content (an owner calling `setTabs()` in every render)
+  focused, the `Help` line showed the tab bar's keys ("left previous tab right next tab ..."),
+  and Left in the tree at a closed node switched the tab; with the tree kept by `child()` it
+  did not. A key a component does not take now goes on through the components it is shown in
+  (the tabs and their pane), then its owner, whoever made it, so both shapes have the same keys
+  and the same `Help` line. The bar's own keys of `Tabs` (Left/Right, Home/End, Tab, Enter,
+  Delete) are in force only on the bar; in the content Escape (to the bar), Ctrl-Tab and
+  Alt-number are.
+
+**Small**
+
+- Alt-1..9 and Ctrl-Tab switch the tabs from anywhere on the screen when there is one `Tabs`
+  on it (a sidebar has the focus); with two, each only while the focus is inside it. They are
+  bindings marked `'anywhere' => true`, which any component may use for a key that should work
+  wherever the focus is (not while a modal dialog is open).
+- docs/components.md says next to `onKey:` that an element's keys, `'quit'` among them, work
+  only while the focus is in that element, and where to bind a key that must work everywhere.
+- `Tui::freeze($component)` freezes the rows a component shows above the inline region, also
+  the instance a closure render made anew (`$bar->device()->freeze($bar->surface)` still works).
+
 ## 0.0.3-beta5 (2026-11-01)
 
 A program never hangs without saying why, `'quit'` works on an element, a key costs the rows it

@@ -119,8 +119,10 @@ it stops with the program when it waits with `Tui::sleep()`; both must be called
 
 Such a program takes input without a class too: `keys:` on the runner binds keys to closures
 (`Tui::run($screen, keys: ['ctrl+n' => [fn() => add($s), 'new card']])`), every element takes
-`onKey:` (keys that apply while the focus is in it; an element with nothing focusable inside is a stop of the Tab walk itself) and `onMouse:` (presses, drags and the
-release of a drag, with what it was dropped on), and a handler may await a dialog:
+`onKey:` (keys that apply while the focus is in it; an element with nothing focusable inside is a stop of the Tab walk itself), `onMouse:` (presses, drags and the
+release of a drag, with what it was dropped on) and `focused:` (the focus follows the state:
+`focused: $s->sel === $i`; a `ScrollView` keeps the focused, and the `selected:`, card in view),
+and a handler may await a dialog:
 `fiber\await(Confirm::ask('Delete', 'Delete the card?'))`, `Dialog::open(new Dialog(...))`. See
 [docs/components.md](docs/components.md#without-a-class).
 

@@ -98,7 +98,16 @@ open, as in a class.
 
   A key goes to the focused component first (a `Button` keeps Enter), then to the `onKey:` of
   the elements around it, innermost first, then to the component that placed them and its
-  parents (the program's `keys:` come before everything).
+  parents (the program's `keys:` come before everything). So an element's keys, `'quit'`
+  among them (`onKey: ['q' => 'quit']`), work **only while the focus is in that element**: a
+  key that must work wherever the focus is belongs in `Tui::run(..., keys: [...])` (or the
+  root's `bindings()`), not on an element.
+- `focused:` gives the element the focus from the program's state, the way `selected:` gives
+  it the `selected` look: `new Text($card, onKey: [...], focused: $s->sel === $i)` moves the
+  keys with the selection. It takes effect in the render where it becomes true (shown with it
+  for the first time, or changed from false): a render that keeps it true does not take the
+  focus back after the user moved it with Tab or a click. On a component, `->with(focused:
+  ...)` calls its `focus()` the same way.
 - `onMouse:` (`fn(Mouse $m, Element $element)`) gets the presses, drags and releases over the element, in its coordinates
   (`$m->x`, `$m->y`, 0 at its top-left). An element that took the press (anything but `false`
   returned) gets the drag and the release wherever the pointer goes, with coordinates that may
@@ -337,11 +346,14 @@ a `ScrollView` when it may be longer than its box (a list of jobs, a long form, 
 grows with the data): `new ScrollView(new Column($rows))`. The view shows part of it, scrolls
 with the wheel and the arrow and page keys, and keeps the focus in view: Tab, Shift-Tab, a
 click and `focus()` on a component or an element with `onKey:` out of view scroll it into view,
-also after the user scrolled away from the focused one. See docs/widgets.md, "ScrollView".
+also after the user scrolled away from the focused one; and the element that becomes
+`selected:` (a card the arrow keys select) comes into view the same way, scrolled as little as
+shows it. See docs/widgets.md, "ScrollView".
 
 **Attributes.** Every element takes `key`, `id`, `class`, `style` (inline style properties),
 `width`, `height`, `disabled`, `selected`, `state` (states of its own for the stylesheet:
-`state: 'error'` matches `'Text:error'`), `onFocus` and `onBlur` as named arguments; a
+`state: 'error'` matches `'Text:error'`), `onFocus`, `onBlur`, `onKey`, `onMouse` and
+`focused` (it takes the focus when this becomes true) as named arguments; a
 component takes them with `with()` (`$this->child('name', fn() => new Editor())->with(id:
 'name', height: 1)`). Read them with `attribute('class')`. A `style:` given beside
 `padding:`/`align:` wins over them. `onFocus` and `onBlur` are called with no arguments when
@@ -654,7 +666,10 @@ protected function bindings(): array
 **Order.** A key goes down the focus path, the root first: each component on the way may take
 it with its bindings marked `first` and its `onKey()`. At the component it ends at (the
 focused one): its own bindings, then its `onKey()`, then the bindings of its parents, nearest
-first. A key nobody takes goes to the focused surface's program (a `Terminal`'s shell). So a
+first; before an owner, the components the focused one is shown in below that owner (a
+`Tabs` and its pane around a `Tree` the owner made and gave the tabs). So a component has the
+same keys, and `Help` the same line, whether its owner kept it with `child()` or makes it anew
+in every render. A key nobody takes goes to the focused surface's program (a `Terminal`'s shell). So a
 focused text field types every letter an application binds, the application's Ctrl-Q works
 wherever the focus is, and a method that returns `false` did not take the key (an editor's Up
 on its first row), which goes on.
@@ -674,6 +689,13 @@ protected function bindings(): array
     ];
 }
 ```
+
+**Keys that work anywhere.** A binding marked `'anywhere' => true` also works while the focus is
+outside the component, when nothing on the way took the key and no other component on the
+screen binds that key `anywhere`; not while a modal dialog is open. `Tabs` marks Alt-1..9 and
+Ctrl-Tab so: with one `Tabs` on the screen they switch tabs from a sidebar too, with two each
+does it only while the focus is inside it (add `keys: ['alt+1' => fn() => $tabs->select('a')]`
+to say which one then).
 
 `Help` lists both kinds (those with a description). `onKey()` follows the same order as a
 `first` binding on the way down and comes after the bindings at the focused component: keep it

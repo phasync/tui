@@ -276,6 +276,8 @@ abstract class Component extends Element
     private static ?\WeakMap $helpShown = null;
     /** @var \WeakMap<Component, string>|null components following the mouse (`:hover` rules, `hover:` classes, theirs or their elements'), and what the mouse was over then (hoverKey()) */
     private static ?\WeakMap $hoverAware = null;
+    /** @var \WeakMap<Component, true>|null components whose bindings may have `anywhere` ones (see anywhere()) */
+    private static ?\WeakMap $anywhere = null;
     /** @var array{\WeakReference<Surface>, int, int}|null where the mouse was last: the root and the cell on it */
     private static ?array $pointer = null;
 
@@ -366,7 +368,12 @@ abstract class Component extends Element
      * given the `Key`), or `[method, description]` for a key that `Help` lists, with optional
      * flags: `'first' => true` runs it
      * before the focused component inside this one gets the key (a container's Ctrl-Tab),
-     * `'always' => true` keeps it working while a modal dialog this component opened is open.
+     * `'always' => true` keeps it working while a modal dialog this component opened is open,
+     * `'anywhere' => true` makes it work wherever the focus is, also outside this component,
+     * when nothing on the way took the key and no other component on the screen binds that key
+     * `anywhere` (a `Tabs`' Alt-1..9: with one `Tabs` on the screen they switch tabs from the
+     * sidebar too; with two, each only while the focus is inside it; not while a modal dialog
+     * is open).
      * The application changes them with `bind()`. A bound method runs when the key reaches the
      * component (see the class description on the order); one that returns false did not take
      * the key, which goes on. A render follows. `onKey()` is for what a map cannot say (any
@@ -497,6 +504,13 @@ abstract class Component extends Element
             $s->on('close', fn() => $this->stop()),
         ];
         $this->guard($this->mount(...));
+        foreach ($this->mounted ? self::normalizeBindings($this->bindings()) : [] as $binding) {
+            if ($binding[4] ?? false) {
+                self::$anywhere ??= new \WeakMap();
+                self::$anywhere[$this] = true;
+                break;
+            }
+        }
         if ($this->focusOnStart && $this->mounted) {
             $this->focusOnStart = false;
             $this->focus();
@@ -2389,6 +2403,10 @@ abstract class Component extends Element
                 return true;
             }
         }
+        $modal = array_filter($this->rootComponent()->floating, fn(Overlay $o) => $o->modal) !== [];
+        if ($mine && !$modal && ($c = self::anywhere($this->surface->root(), (string) $key)) !== null && $c !== $this && !\in_array($c, $this->bubbling(), true)) {
+            return $c->runBinding($key);    // (a key bound `anywhere` by one component on the screen)
+        }
         $root = $this->rootComponent();
         if ($root->quitKey !== null && (string) $key === $root->quitKey) {
             $root->dispose();       // (Tui::run(): nothing bound the key)
@@ -2582,6 +2600,8 @@ abstract class Component extends Element
     final public function bind(array $bindings, ?string $for = null, bool $first = false): static
     {
         $normal = self::normalizeBindings($bindings, $first);
+        self::$anywhere ??= new \WeakMap();
+        self::$anywhere[$this] = true;      // (looked at on keys nobody took: see anywhere())
         if ($for === null) {
             $this->bound = [...$this->bound, ...$normal];
         } else {
@@ -2595,9 +2615,9 @@ abstract class Component extends Element
 
     /**
      * The keys in force for this component: `bindings()` with what `bind()` changed, as
-     * [method name or closure, description or null, always, first] by key notation (`ctrl+s`).
+     * [method name or closure, description or null, always, first, anywhere] by key notation (`ctrl+s`).
      *
-     * @return array<string, array{string|\Closure, ?string, bool, bool}>
+     * @return array<string, array{string|\Closure, ?string, bool, bool, bool}>
      */
     final public function bindingsInForce(): array
     {
@@ -2618,11 +2638,11 @@ abstract class Component extends Element
 
     /**
      * @internal Bindings in the notation of `bindings()` as [action, description or null,
-     * always, first] by key notation; an action is a method name or a closure. $first is what
+     * always, first, anywhere] by key notation; an action is a method name or a closure. $first is what
      * a binding that does not say is (`Tui::run()`'s keys run before the focused component's).
      *
      * @param array<string, mixed> $bindings
-     * @return array<string, array{string|\Closure, ?string, bool, bool}|null>
+     * @return array<string, array{string|\Closure, ?string, bool, bool, bool}|null>
      * @throws \InvalidArgumentException for an unknown key or an action that is neither
      */
     final public static function normalizeBindings(array $bindings, bool $first = false): array
@@ -2639,8 +2659,8 @@ abstract class Component extends Element
                 throw new \InvalidArgumentException("The key '$spec' is bound to " . get_debug_type($do) . ': bind a method name or a closure');
             }
             $out[$key] = \is_array($action)
-                ? [$do, isset($action[1]) ? (string) $action[1] : null, (bool) ($action['always'] ?? false), (bool) ($action['first'] ?? $first)]
-                : [$do, null, false, $first];
+                ? [$do, isset($action[1]) ? (string) $action[1] : null, (bool) ($action['always'] ?? false), (bool) ($action['first'] ?? $first), (bool) ($action['anywhere'] ?? false)]
+                : [$do, null, false, $first, false];
         }
         return $out;
     }
@@ -2679,6 +2699,26 @@ abstract class Component extends Element
             }
         }
         return array_map(fn($k, $d) => [(string) $k, $d], array_keys($out), $out);
+    }
+
+    /**
+     * The one component shown on $root that binds $key `anywhere` (see `bindings()`), or null
+     * when none does or more than one does.
+     */
+    private static function anywhere(Surface $root, string $key): ?Component
+    {
+        $found = null;
+        foreach (self::$anywhere ?? [] as $c => $_) {
+            if (!$c->mounted || $c->attribute('disabled') || $c->surface->root() !== $root || $c->surface->viewport() === null
+                || $c->shownFrom() !== $c || !(($c->bindingsInForce()[$key] ?? null)[4] ?? false)) {
+                continue;
+            }
+            if ($found !== null) {
+                return null;
+            }
+            $found = $c;
+        }
+        return $found;
     }
 
     /** The component the keys go to from $root down. */

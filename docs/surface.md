@@ -229,7 +229,9 @@ Measured on PHP 8.5 without JIT, FakeTerminal 120x60, phasync adapter
 | 50 such rows, each with its coroutine ticking at 10 Hz (500 steps a second), one row in twenty changing per tick | about 12-15% of a core (about 8% with the garbage collector off); every row changing on every tick: about 50-57% |
 | The same 50 coroutines sleeping with `fiber\sleep()` and drawing nothing | about 6.5% of a core: the runtime's part of the above (about 2.5% with the garbage collector off; the rest is phasync's idle garbage collection, which runs whenever the loop idles, up to 5% of the time) |
 | A key to the frame that shows it, with those 50 rows ticking | median 0.2 ms, at most about 2 ms |
-| A program without classes of 50 `Row([Text, ProgressBar, Button, Button])` with `onKey:` and `onFocus:`, the bars moved by 50 `Tui::go()` coroutines at 10 Hz: Tab to the frame that shows it | median about 10 ms with the CPU clocked down between keys (the closure builds its 250 elements again, the library matches them; what is measured, arranged and painted is the two rows the focus moved between); about 4 ms within a row, where the closure does not run |
+| A program without classes of 50 `Row([Text, ProgressBar, Button, Button])` with `onKey:` and `onFocus:`, the bars moved by 50 `Tui::go()` coroutines at 10 Hz: `press('tab')` and `settle()` | median about 2.5 ms with the CPU clocked down between keys: the closure does not run for a Tab (the rows the focus left and entered are laid out again from its last tree, and only when their look changes with the focus); a Tab that coincides with a tick of the bars pays that frame too (about 28 ms here, when all fifty bars move: the closure builds its 250 elements again and every bar is painted and composited) |
+| A Tab in rows of a `Text` and two `Button`s at 160x50, `press('tab')` and `settle()` | about 1.2 ms with 2 rows, 1.8 ms with 200: the Tab walk looks from the focused stop on, a focus request settles only the hosts above it |
+| Switching to a tab whose content fills the pane (a `Markdown`) | about what switching to a `Text` tab costs: the content is laid out once, at its size, and the windows shown again write only the cells that differ |
 
 A frame renders everything asked for since the last one (see "Frames" in
 [components.md](components.md#state-rendering-by-itself)), and `sleep()` ends on ticks of the
@@ -241,7 +243,8 @@ governors): on the machine these numbers come from, the same frames cost 2.5 tim
 time with 40 ms of idle between them as back to back. Compare the cost of a frame (as the
 first rows do) rather than a percentage when you tune a tree. In the repository,
 `php tools/monitor-bench.php [some|all|bare]` runs the monitor of the table, and
-`php tools/monitor-bench.php keys` the program without classes and its keys.
+`php tools/monitor-bench.php keys` the program without classes and its keys (`press()` and
+`settle()`, as a test or a program measures it).
 
 **Budget.** A few hundred elements of which a few change make a frame of one or two
 milliseconds. What costs is what changed, times the levels of surfaces it is composited
