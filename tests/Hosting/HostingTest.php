@@ -29,7 +29,7 @@ describe('compositing', function () {
             ->and($host->needsCompose())->toBeFalse();
     });
 
-    it('composites by writing escape sequences to the host, keeping its producer\'s cursor and pen', function () {
+    it('composes without touching the host producer\'s cursor and pen', function () {
         $host = new Surface(10, 3);
         $host->write("\e[32m\e[3;5Hx");           // the host's own producer: green, cursor at (5, 2)
         $src = vt('ab', 2, 1);
@@ -391,75 +391,112 @@ it('shows a synchronized update that ends after its host\'s host composed (regre
 it('does not lose rows changed while a host reads them (regression)', function () {
     $host = new Surface(4, 2);
     $src = new Surface(4, 2);
-    $view = $host->host($src);
+    $host->host($src);
     $src->write('ab');
-    $host->compose();
+    $version = $host->version();
     $src->write("\r\ncd");
-    expect($view->damagedRows())->toBe([1])->and($host->line(1))->toBe('cd');
+    expect($host->damagedSince($version))->toBe([1])->and($host->line(1))->toBe('cd');
 });
 
-describe('always a diff', function () {
-    /** What the compositor writes to bring $view up to date (the bytes it writes to the host). */
-    function compositorBytes(Surface $host, phasync\Tui\Viewport $view): string
+describe('one diff, at the end', function () {
+    /** $test($terminal, $root) on a FakeTerminal of $cols x $rows, with what the first frame wrote taken. */
+    function onDevice(int $cols, int $rows, Closure $test): void
     {
-        return $view->paint(array_flip($view->damagedRows()), $host->cols(), $host->rows());
+        fiber\run(function () use ($cols, $rows, $test) {
+            $t = new phasync\Tui\FakeTerminal($cols, $rows);
+            $root = new Surface($cols, $rows);
+            $t->run(function (phasync\Tui\FakeTerminal $t) use ($root, $test) {
+                $t->attach($root);
+                $t->refresh();
+                $t->takeOutput();
+                $test($t, $root);
+            });
+        });
     }
 
-    it('writes only the cells that changed, not the row', function () {
-        $host = new Surface(40, 5);
-        $src = vt(str_repeat('x', 30) . "\r\n" . str_repeat('y', 30), 30, 3);
-        $view = $host->host($src, 2, 1);
-        $host->compose();
-        $src->write("\e[1;10HZ");
-        $bytes = compositorBytes($host, $view);
-        expect($bytes)->toContain('Z')->not->toContain('x')
-            ->and(\strlen($bytes))->toBeLessThan(20);
+    it('writes only the cells that changed, whatever the depth of the window', function () {
+        onDevice(40, 8, function ($t, Surface $root) {
+            $mid = new Surface(36, 6);
+            $leaf = vt(str_repeat('x', 30) . "\r\n" . str_repeat('y', 30), 30, 3);
+            $root->host($mid, 2, 1);
+            $mid->host($leaf, 1, 1, 32, 5)->setBorder(true);
+            $t->refresh();
+            $t->takeOutput();
+            $leaf->write("\e[1;10HZ");
+            $t->refresh();
+            $bytes = $t->takeOutput();
+            expect($bytes)->toContain('Z')->not->toContain('x')
+                ->and(\strlen($bytes))->toBeLessThan(40)
+                ->and($t->text())->toBe($root->text());
+        });
     });
 
     it('writes runs of changed cells with one style change each', function () {
-        $host = new Surface(40, 2);
-        $src = new Surface(30, 1);
-        $view = $host->host($src);
-        $host->compose();
-        $src->write("\e[1;3H\e[31mabc\e[1;20H\e[32mdef");
-        $bytes = compositorBytes($host, $view);
-        expect(substr_count($bytes, 'H'))->toBe(2)->and($bytes)->toContain('abc')->toContain('def');
+        onDevice(40, 2, function ($t, Surface $root) {
+            $src = new Surface(30, 1);
+            $root->host($src);
+            $t->refresh();
+            $t->takeOutput();
+            $src->write("\e[1;3H\e[31mabc\e[1;20H\e[32mdef");
+            $t->refresh();
+            $bytes = $t->takeOutput();
+            expect(substr_count($bytes, 'H'))->toBe(2)->and($bytes)->toContain('abc')->toContain('def');
+        });
     });
 
     it('costs nothing for an idle window', function () {
         $host = new Surface(20, 3);
         $host->host(vt('idle', 10, 2));
-        $host->compose();
         $version = $host->version();
         $host->compose();
-        expect($host->version())->toBe($version);
+        expect($host->version())->toBe($version)->and($host->needsCompose())->toBeFalse();
     });
 
-    it('writes nothing under a window above', function () {
-        $host = new Surface(10, 1);
-        $below = vt('aaaaaaaaaa', 10, 1);
-        $above = vt('BB', 2, 1);
-        $view = $host->host($below);
-        $host->host($above, 4, 0);
-        $host->compose();
-        $below->write("\e[1;1Hcccccccccc");
-        $bytes = $view->paint(array_flip($view->damagedRows()), 10, 1, [$host->viewport($above)->rect()]);
-        expect(substr_count($bytes, 'c'))->toBe(8);
-        // in place: the window above is not repainted, so it would show if it had been overwritten
-        $below->write("\e[1;1Hdddddddddd");
-        $host->compose();
-        expect($host->line(0))->toBe('ddddBBdddd');
+    it('writes nothing for a change under a window above', function () {
+        onDevice(10, 1, function ($t, Surface $root) {
+            $below = vt('aaaaaaaaaa', 10, 1);
+            $above = vt('BB', 2, 1);
+            $root->host($below);
+            $root->host($above, 4, 0);
+            $t->refresh();
+            $t->takeOutput();
+            $below->write("\e[1;5Hcc");
+            $t->refresh();
+            expect($t->takeOutput())->not->toContain('c')->and($root->line(0))->toBe('aaaaBBaaaa');
+            $below->write("\e[1;1Hdddddddddd");
+            $t->refresh();
+            expect(substr_count($t->takeOutput(), 'd'))->toBe(8)->and($t->text())->toBe('ddddBBdddd');
+        });
     });
 
-    it('repaints in full only when the geometry changes', function () {
-        $host = new Surface(20, 3);
-        $src = vt('hello', 10, 1);
-        $view = $host->host($src);
-        $host->compose();
-        $view->setTitle('t');           // a border was not set: nothing to write
-        expect(compositorBytes($host, $view))->toBe('');
-        $view->move(1, 0);
-        expect(compositorBytes($host, $view))->toContain('hello');
+    it('writes nothing when a frame looks the same: a blank\'s invisible colours do not count', function () {
+        onDevice(20, 2, function ($t, Surface $root) {
+            $src = new Surface(20, 2);
+            $root->host($src);
+            $src->write("\e[31mab   \e[44m  \e[0m");
+            $t->refresh();
+            $t->takeOutput();
+            // the same glyphs and attributes: blanks in another foreground, bold or italic
+            $src->write("\e[H\e[31mab\e[1;32;3m   \e[0;44;33m  \e[0m");
+            $t->refresh();
+            expect($t->takeOutput())->toBe('');
+            // a background, an underline or inverse on a blank does show
+            $src->write("\e[1;4H\e[4m \e[0m");
+            $t->refresh();
+            expect($t->takeOutput())->toContain(' ');
+        });
+    });
+
+    it('moves a window by writing the cells that look different', function () {
+        onDevice(20, 3, function ($t, Surface $root) {
+            $view = $root->host(vt('hello', 10, 1));
+            $t->refresh();
+            $t->takeOutput();
+            $view->move(1, 0);
+            $t->refresh();
+            $bytes = $t->takeOutput();
+            expect($t->text())->toBe(" hello\n\n")->and($bytes)->toContain(' hello')->and(\strlen($bytes))->toBeLessThan(50);
+        });
     });
 });
 

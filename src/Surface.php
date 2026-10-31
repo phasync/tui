@@ -33,12 +33,16 @@ use function fiber\go;
  *
  * A Surface can host other Surfaces (`host()`), each shown through a `Viewport`, to any depth:
  * the screen of a program is a root Surface hosting windows, and a terminal device (`Tty`, or
- * `FakeTerminal` for tests) attached to the root shows it on a real terminal. The host repaints
- * what changed in its hosted surfaces into its own cells by writing escape sequences to itself,
- * and passes input events (`dispatch()`) down to the focused one.
+ * `FakeTerminal` for tests) attached to the root shows it on a real terminal. What a host shows
+ * (what its `cell()`, `line()`, `text()` and the rest read) is its own cells with its windows
+ * copied over them, in z-order and clipped, to any depth (`copyArea()`/`drawArea()` are the
+ * primitives); it passes input events (`dispatch()`) down to the focused one.
  */
 final class Surface implements \Stringable
 {
+    /** How long a hosted surface may hold back what it shows with synchronized output (mode 2026). */
+    private const SYNC_TIMEOUT = 0.5;
+
     /** The bytes the producer of this surface reads: keys, mouse reports, pastes, replies. */
     public readonly Input $input;
 
@@ -124,7 +128,6 @@ final class Surface implements \Stringable
         if ($bytes === '') {
             return;
         }
-        $this->host?->beforeWrite();
         $vt = $this->vt;
         $vt->version++;
         $data = $this->utf8Tail . $bytes;
@@ -155,7 +158,9 @@ final class Surface implements \Stringable
         if ($source !== '') {
             $this->parser->parse($source, ['vt' => $vt]);
         }
-        $this->host?->wrote();
+        if ($this->host !== null) {
+            $this->host->dirty = true;
+        }
         $this->emit('change', null);
     }
 
@@ -196,6 +201,7 @@ final class Surface implements \Stringable
         $this->vt->version++;
         $this->vt->resize($cols, $rows);
         if ($this->host !== null) {
+            $this->host->dirty = true;
             $this->changeTree(fn() => $this->host->arrange());
         }
         $this->emit('resize', new Resize($this->vt->cols, $this->vt->rows));
@@ -264,10 +270,66 @@ final class Surface implements \Stringable
         return $runs;
     }
 
+    /**
+     * Row $y as runs of cells that look the same: as `runs()`, a blank in the style of the text
+     * before it when it looks the same in that, else in that of the text after it, else in the
+     * style it looks like (`Style::blank()`); blanks to the end of the row that look like empty
+     * cells are plain. Two rows that look the same give the same runs.
+     *
+     * @return list<Run>
+     */
+    private function looks(int $y): array
+    {
+        $line = $this->row($y);
+        $chars = $line->chars;
+        $n = \count($chars);
+        // the next cell that is not a blank, from each cell on
+        $next = [];
+        for ($x = $n - 1, $at = null; $x >= 0; $x--) {
+            $next[$x] = $at;
+            if ($chars[$x] !== ' ') {
+                $at = $x;
+            }
+        }
+        $runs = [];
+        $start = 0;
+        $text = '';
+        $style = null;
+        $plain = Style::plain();
+        foreach ($chars as $x => $ch) {
+            $s = $line->styles[$x];
+            if ($ch === ' ') {
+                $look = $s->blank();
+                if ($next[$x] === null && $look === $plain) {
+                    $s = $plain;        // (blank to the end of the row: nothing there)
+                } elseif ($style !== null && $style->blank() === $look) {
+                    $s = $style;
+                } elseif (($j = $next[$x]) !== null && $line->styles[$j]->blank() === $look) {
+                    $s = $line->styles[$j];
+                } else {
+                    $s = $look;
+                }
+            }
+            if ($s !== $style) {
+                if ($style !== null) {
+                    $runs[] = new Run($start, $text, $x - $start, $style);
+                }
+                $style = $s;
+                $start = $x;
+                $text = '';
+            }
+            $text .= $ch;
+        }
+        if ($style !== null) {
+            $runs[] = new Run($start, $text, $n - $start, $style);
+        }
+        return $runs;
+    }
+
     /** True if row $y continues on the next row because the text wrapped there. */
     public function isWrapped(int $y): bool
     {
-        return $this->row($y)->wrapped;
+        return $this->row($y, false)->wrapped;
     }
 
     /** The visible screen as text: every row without trailing blanks, joined with "\n". */
@@ -291,13 +353,18 @@ final class Surface implements \Stringable
      * The visible screen as text with styles marked up, for tests and debugging:
      * `[bold fg=1]error[/] in line 3`. A style is written as in `Style::__toString()`; a literal
      * `[` in the text is doubled. Trailing unstyled blanks are left out.
+     *
+     * With $looks, it shows what a person sees: a blank (a space has a background, but no
+     * foreground, bold or italic: `Style::blank()`) is shown in the style of the text next to
+     * it when it looks the same in that, else as it looks. Two screens that look the same give
+     * the same dump, however they were drawn. `FakeTerminal::dump()` shows this.
      */
-    public function dump(): string
+    public function dump(bool $looks = false): string
     {
         $this->compose();
         $out = [];
         for ($y = 0; $y < $this->vt->rows; $y++) {
-            $runs = $this->runs($y);
+            $runs = $looks ? $this->looks($y) : $this->runs($y);
             $line = '';
             $last = \count($runs) - 1;
             foreach ($runs as $i => $run) {
@@ -418,7 +485,7 @@ final class Surface implements \Stringable
     {
         $this->compose();
         $rows = [];
-        foreach ($this->vt->rowVersion as $y => $v) {
+        foreach ($this->host?->frameVersions() ?? $this->vt->rowVersion as $y => $v) {
             if ($v > $version) {
                 $rows[] = $y;
             }
@@ -443,8 +510,8 @@ final class Surface implements \Stringable
     /**
      * Listen to an event of this surface; returns a closure that removes the listener.
      *
-     * - `change`: after every `write()` and `resize()`, and when a hosted surface changed (the
-     *   cells catch up when they are read, or with `compose()`)
+     * - `change`: after every `write()`, `drawArea()` and `resize()`, and when what it shows
+     *   changed otherwise (a hosted surface or a window; the cells catch up when they are read)
      * - `resize`: receives a `Resize`
      * - `title`: receives the new title
      * - `bell`: the program rang the bell (BEL)
@@ -579,11 +646,11 @@ final class Surface implements \Stringable
      * geometry). Of its windows, the host focuses the one focused most recently (`focus()`, also
      * when called before it was shown), or the first one when none was ever focused.
      *
-     * The child's changes show on this surface (and on its host, up to the root): this surface
-     * repaints them into its own cells by writing escape sequences to itself, when its cells are
-     * read or `compose()` is called. What this surface's own producer writes under a window is
-     * painted over by the window. Its title (while focused), bell and clipboard requests are
-     * passed up the same way.
+     * The child's changes show on this surface (and on its host, up to the root): what this
+     * surface shows is its own cells with the windows' cells copied over them, made again when
+     * it is read after a change (see `compose()`). What this surface's own producer writes stays
+     * in its own cells, under the windows; it shows where no window covers it. The child's title
+     * (while focused), bell and clipboard requests are passed up to this surface's listeners.
      *
      * The surfaces form a tree: the child's `parent()` is now this surface. A surface shown on
      * several hosts at once (a mirror) belongs to the one that hosted it last.
@@ -595,7 +662,7 @@ final class Surface implements \Stringable
         return $this->changeTree(fn() => $this->hosting()->host($child, $x, $y, $width, $height));
     }
 
-    /** Stop showing $child; the area it covered is blanked. Nothing happens if it is not hosted here. */
+    /** Stop showing $child; what this surface has under it shows again. Nothing happens if it is not hosted here. */
     public function unhost(Surface $child): void
     {
         if ($this->host !== null) {
@@ -1076,17 +1143,16 @@ final class Surface implements \Stringable
     }
 
     /**
-     * Repaint what changed in the hosted surfaces into this surface now. Happens by itself
-     * whenever this surface's cells, damage or version are read, and a terminal device does it
-     * every frame; call it only to force the work at a moment of your choosing. While a hosted
-     * program is in the middle of a synchronized update (mode 2026) its window keeps the previous
-     * frame, for at most half a second.
+     * Make what this surface shows from its own cells and its windows now (they are copied in
+     * z-order, clipped, to any depth: about a millisecond for a screen of 160x50). Happens by
+     * itself whenever this surface's cells, damage or version are read after a change, and a
+     * terminal device does it every frame; call it only to force the work at a moment of your
+     * choosing. While a hosted program is in the middle of a synchronized update (mode 2026)
+     * its window shows the cells it had when the update began, for at most half a second.
      */
     public function compose(): void
     {
-        if ($this->host !== null && $this->host->dirty) {
-            $this->host->compose();
-        }
+        $this->host?->compose();
     }
 
     /**
@@ -1113,10 +1179,13 @@ final class Surface implements \Stringable
         self::$flushers[] = $flusher;
     }
 
-    /** True when a hosted surface changed and this surface's cells have not caught up yet. */
+    /**
+     * True when something it shows changed since it was composed (a hosted surface, a window),
+     * or a window holds back a synchronized update (so it is to be composed again soon).
+     */
     public function needsCompose(): bool
     {
-        return $this->host !== null && $this->host->dirty;
+        return $this->host !== null && ($this->host->dirty || $this->host->holding());
     }
 
     /**
@@ -1130,7 +1199,6 @@ final class Surface implements \Stringable
         if ($view === null) {
             return $this->cursor();
         }
-        $this->compose();
         $c = $view->source->activeCursor();
         $at = $view->toHost($c->x, $c->y);
         if ($at === null) {
@@ -1209,55 +1277,125 @@ final class Surface implements \Stringable
     }
 
     /**
-     * @internal Seconds since the program began the synchronized update it is in (mode 2026), or
-     * null when it is not in one. Hosts hold its window back meanwhile, for a limited time.
+     * @internal The rows of this surface's own cells as they were when its program began the
+     * synchronized update it is in (mode 2026), for at most half a second; null when it is in
+     * none (or took longer). A host shows them meanwhile.
+     *
+     * @return list<Line>|null
      */
-    public function syncAge(): ?float
+    public function heldLines(): ?array
     {
-        return ($this->vt->modes[2026] ?? false) ? microtime(true) - $this->vt->syncStarted : null;
+        $vt = $this->vt;
+        return $vt->synced !== null && microtime(true) - $vt->syncStarted < self::SYNC_TIMEOUT ? $vt->synced : null;
+    }
+
+    /**
+     * @internal The rows of this surface's own cells (what its producer wrote, without the
+     * windows it hosts), for the compositor.
+     *
+     * @return list<Line>
+     */
+    public function ownLines(): array
+    {
+        return $this->vt->lines;
+    }
+
+    /** @internal Scrollback row $y (negative), or null beyond the oldest one kept. */
+    public function scrollbackLine(int $y): ?Line
+    {
+        return $this->vt->scrollback[$this->vt->scrollbackEnd + $y] ?? null;
+    }
+
+    /**
+     * @internal Tell this surface's listeners of $event (`title`, `bell`, `clipboard`) as if its
+     * own producer had caused it: how a host passes a hosted surface's up. A title becomes this
+     * surface's title.
+     */
+    public function relay(string $event, mixed $data = null): void
+    {
+        if ($event === 'title') {
+            $this->vt->title = $data;
+        }
+        $this->emit($event, $data);
     }
 
     /**
      * @internal The cells of row $y as parallel arrays of graphemes ('' for a continuation) and
-     * styles, for renderers in this library (Viewport). Not part of the public API.
+     * styles, for renderers in this library. Not part of the public API.
      *
      * @return array{list<string>, list<Style>}
      */
     public function rowData(int $y): array
     {
-        $this->compose();
         $line = $this->row($y);
         return [$line->chars, $line->styles];
     }
 
     /**
-     * @internal The cells of row $y from column $x, $width of them (blank where the row has none),
-     * as [chars, styles], as they are now: nothing is composed first. What a host compares a
-     * window it shows anew with (its cells there may be the same already).
-     *
-     * @return array{list<string>, list<Style>}
+     * The cells of the rectangle at column $x, row $y, $width wide and $height high, as this
+     * surface shows them (its windows included): to show them somewhere else with
+     * `drawArea()` (a snapshot of a pane, a frame to keep). Negative rows are the scrollback;
+     * what lies outside the surface and its scrollback is blank. A wide character cut by the
+     * rectangle's edge is a blank in the copy.
      */
-    public function cellsAt(int $y, int $x, int $width): array
+    public function copyArea(int $x, int $y, int $width, int $height): Area
     {
-        $line = $this->vt->lines[$y] ?? null;
-        if ($line !== null && $x >= 0 && $x + $width <= \count($line->chars)) {
-            return [\array_slice($line->chars, $x, $width), \array_slice($line->styles, $x, $width)];
-        }
+        $width = max(0, $width);
+        $height = max(0, $height);
         $chars = $styles = [];
-        $plain = Style::plain();
-        for ($i = $x; $i < $x + $width; $i++) {
-            $chars[] = $line?->chars[$i] ?? ' ';
-            $styles[] = $line?->styles[$i] ?? $plain;
+        $rows = $this->vt->rows;
+        for ($r = $y; $r < $y + $height; $r++) {
+            $line = $r >= 0 ? ($r < $rows ? $this->row($r) : null) : $this->scrollbackLine($r);
+            if ($line === null) {
+                $chars[] = array_fill(0, $width, ' ');
+                $styles[] = array_fill(0, $width, Style::plain());
+            } else {
+                [$chars[], $styles[]] = Area::cut($line->chars, $line->styles, $x, $width);
+            }
         }
-        return [$chars, $styles];
+        return new Area($width, $height, $chars, $styles);
     }
 
-    private function row(int $y): Line
+    /**
+     * Put the cells of $area (from `copyArea()` of this or another surface) on this surface
+     * with their top-left corner at column $x, row $y; what falls outside is left out, and a wide
+     * character cut by an edge becomes a blank, as does one half of a wide character this
+     * surface had where the area ends. The cursor and the pen stay as they are, as for a
+     * terminal's rectangular copy. The cells are this surface's own, as if its producer had
+     * written them.
+     */
+    public function drawArea(Area $area, int $x, int $y): void
+    {
+        $vt = $this->vt;
+        $left = max(0, $x);
+        $right = min($vt->cols, $x + $area->width);
+        if ($left >= $right) {
+            return;
+        }
+        $vt->version++;
+        for ($r = max(0, $y), $end = min($vt->rows, $y + $area->height); $r < $end; $r++) {
+            [$c, $s] = Area::cut($area->chars[$r - $y], $area->styles[$r - $y], $left - $x, $right - $left);
+            $line = $vt->lines[$r];
+            Area::put($line->chars, $line->styles, $left, $c, $s);
+            $vt->rowVersion[$r] = $vt->version;
+        }
+        if ($this->host !== null) {
+            $this->host->dirty = true;
+        }
+        $this->emit('change', null);
+    }
+
+    /** Row $y as it shows ($shown: windows included), or of its own cells; negative rows read the scrollback. */
+    private function row(int $y, bool $shown = true): Line
     {
         $vt = $this->vt;
         if ($y >= 0) {
             if ($y >= $vt->rows) {
                 throw new \OutOfRangeException("Row $y is outside 0.." . ($vt->rows - 1));
+            }
+            if ($shown && $this->host !== null) {
+                $this->host->compose();
+                return $this->host->frameLine($y);
             }
             return $vt->lines[$y];
         }

@@ -81,6 +81,8 @@ final class Emulator
     public int $modifyOtherKeys = 0;
     /** When the current synchronized update (mode 2026) began. */
     public float $syncStarted = 0.0;
+    /** @var list<Line>|null the rows as they were when the synchronized update began (what a host shows meanwhile) */
+    public ?array $synced = null;
     /** @var array{int,int} default foreground and background, as reported to OSC 10/11 queries */
     public array $colors;
 
@@ -126,6 +128,7 @@ final class Emulator
         $this->resetTabs(0);
         $mouse = isset($this->modes[9]) || isset($this->modes[1000]) || isset($this->modes[1002]) || isset($this->modes[1003]);
         $this->modes = [7 => true, 25 => true];
+        $this->synced = null;
         if ($mouse) {
             ($this->emit)('mouse', null);
         }
@@ -1200,6 +1203,9 @@ final class Emulator
                     // a synchronized update begins (a host shows it when it ends); BSU twice keeps the start
                     if ($on && !($this->modes[2026] ?? false)) {
                         $this->syncStarted = microtime(true);
+                        $this->synced = array_map(fn(Line $line) => clone $line, $this->lines);
+                    } elseif (!$on) {
+                        $this->synced = null;
                     }
                     $this->modes[2026] = $on;
                     break;

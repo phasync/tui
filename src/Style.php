@@ -36,6 +36,8 @@ final class Style
     /** @var array<string, Style> */
     private static array $interned = [];
     private static ?Style $plain = null;
+    /** What blank() returns, once asked. */
+    private ?Style $blank = null;
 
     private function __construct(
         /** Foreground color (see `Color`). */
@@ -98,6 +100,21 @@ final class Style
     public function withLink(string $uri, string $id = ''): Style
     {
         return self::of($this->fg, $this->bg, $this->attrs, $uri, $id);
+    }
+
+    /**
+     * The style a blank cell (a space) in this style looks the same as: the background and the
+     * hyperlink alone, since a space shows no foreground, bold, dim, italic or blink; the style
+     * itself when it underlines, strikes through or inverts (those draw in the foreground colour).
+     * Two blanks look the same exactly when their `blank()` styles are `===`, and a blank on the
+     * default background looks like an empty cell (`Style::plain()`). A terminal device compares
+     * frames this way, so a space that only changed its invisible colour costs nothing to draw.
+     */
+    public function blank(): Style
+    {
+        return $this->blank ??= ($this->attrs & (self::INVERSE | self::UNDERLINE | self::STRIKE)) !== 0
+            ? $this
+            : self::of(Color::DEFAULT, $this->bg, 0, $this->link, $this->linkId);
     }
 
     /**

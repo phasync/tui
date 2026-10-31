@@ -48,7 +48,7 @@ it('hosts itself: split-shells inside split-shells inside split-shells', functio
             $inner = fn() => region($t, 3, 3, 9, 21);
             $t->type("stty size\n");
             expect($t->waitFor(fn() => str_contains($inner(), '21 9'), 5))->toBeTrue();
-            expect($t->surface->dump())->toBe($app->surface->dump());
+            expect(seen($t->surface))->toBe(seen($app->surface));
 
             // resizing goes down every level to the innermost pty
             $t->resize(120, 34);
@@ -80,7 +80,7 @@ it('hosts itself: split-shells inside split-shells inside split-shells', functio
             sleep(0.3);
             $t->type("echo r3\n");
             expect($t->waitFor(fn() => str_contains(region($t, 15, 3, 8, 21), 'r3'), 5))->toBeTrue();
-            expect($t->surface->dump())->toBe($app->surface->dump());
+            expect(seen($t->surface))->toBe(seen($app->surface));
         } finally {
             $app->dispose();
             $t->detach();
@@ -104,7 +104,7 @@ it('hosts Claude Code in a pane next to a shell', function () {
             // it negotiated what a modern terminal offers, and the Surface answered as one
             expect($s->mode(2004))->toBeTrue()->and($s->mode(1004))->toBeTrue()
                 ->and($s->keyboardFlags() > 0 || $s->modifyOtherKeys() > 0)->toBeTrue();
-            expect($t->surface->dump())->toBe($root->dump());
+            expect(seen($t->surface))->toBe(seen($root));
             if (str_contains($t->text(), 'trust this folder')) {
                 // arrow keys move the selection; "No, exit" ends it without touching any settings
                 $t->press('down');
@@ -154,7 +154,8 @@ it('hosts Claude Code\'s first-run screens: keys, redraws, colours and resizes, 
                 expect($t->waitFor(fn() => $selected() !== $first && $theme() !== $before, 5))->toBeTrue();
                 $t->press('up');
                 expect($t->waitFor(fn() => $selected() === $first && $theme() === $before, 5))->toBeTrue();
-                expect($t->dump())->toBe($root->dump());   // drawn now, then compared (no output in between)
+                $t->refresh();
+                expect(seen($t->surface))->toBe(seen($root));   // drawn now, then compared (no output in between)
                 // a resize reaches it (SIGWINCH) and it redraws its rules for the new width
                 $t->resize(100, 32);
                 $rule = fn() => preg_match('/^ (╌+)$/mu', $s->text(), $m) ? mb_strlen($m[1]) : 0;
@@ -164,7 +165,8 @@ it('hosts Claude Code\'s first-run screens: keys, redraws, colours and resizes, 
                 expect($t->waitFor(fn() => str_contains($s->text(), 'Select login method'), 10))->toBeTrue();
                 $t->press('down');
                 expect($t->waitFor(fn() => str_starts_with((string) $selected(), '2.'), 5))->toBeTrue();
-                expect($t->dump())->toBe($root->dump());   // drawn now, then compared (no output in between)
+                $t->refresh();
+                expect(seen($t->surface))->toBe(seen($root));   // drawn now, then compared (no output in between)
                 // the shell next to it still works
                 $shell->focus();
                 $t->type("echo shell-ok\n");

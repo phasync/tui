@@ -215,8 +215,8 @@ it('shows focus: classes on an element with onKey and calls a closure for every 
             $t->settle();
             $t->type('ab');
             $t->settle();
-            expect($s->typed)->toBe('ab')->and($t->dump())->toContain('typed: ab');
-            $dump = $t->dump();
+            expect($s->typed)->toBe('ab')->and(drawn($t))->toContain('typed: ab');
+            $dump = drawn($t);
             expect(preg_match('/\e\[[0-9;]*1[;m][^\n]*typed/', $t->output()))->toBe(1);
             $t->press('tab');                                  // the closure did not take Tab: the walk goes on
             $t->type('x');

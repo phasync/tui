@@ -78,7 +78,7 @@ describe('Log', function () {
             $log->append("\e[31mred line that wraps\e[0m\nplain\n");
             expect($log->lines())->toBe(["\e[31mred line that wraps\e[0m", 'plain']);
             $t->resize(10, 3);
-            expect($t->dump())->toBe("[fg=1]hat wraps[/]\nplain\n");
+            expect(drawn($t))->toBe("[fg=1]hat wraps[/]\nplain\n");
         });
     });
 
@@ -86,7 +86,7 @@ describe('Log', function () {
         onScreen(new Log(), 10, 3, function (FakeTerminal $t, Log $log) {
             $log->append("one\ntwo\n");
             $log->setLines(array_map(fn($l) => "\e[1m$l\e[0m", $log->lines()));
-            expect($t->dump())->toBe("[bold]one[/]\n[bold]two[/]\n")
+            expect(drawn($t))->toBe("[bold]one[/]\n[bold]two[/]\n")
                 ->and($log->lines())->toBe(["\e[1mone\e[0m", "\e[1mtwo\e[0m"]);
             $log->append('three');
             expect($t->text())->toBe("one\ntwo\nthree");
@@ -305,7 +305,7 @@ describe('ListView', function () {
             $events[] = "activate $key";
         });
         onScreen($list, 8, 3, function (FakeTerminal $t, ListView $list) use (&$events) {
-            expect($t->dump())->toBe("[inverse]item 1  [/]\nitem 2\nitem 3")->and($list->selected())->toBe('k1');
+            expect(drawn($t))->toBe("[inverse]item 1  [/]\nitem 2\nitem 3")->and($list->selected())->toBe('k1');
             $t->press('down', 'down', 'down');
             frame();
             expect($t->text())->toBe("item 2\nitem 3\nitem 4")->and($list->selected())->toBe('k4');
@@ -343,7 +343,7 @@ describe('ListView', function () {
         onScreen($list, 10, 3, function (FakeTerminal $t, ListView $list) {
             $list->select('y');
             frame();
-            expect($t->dump())->toBe("x\n[inverse fg=2]green[/][inverse] y   [/]\nz");
+            expect(drawn($t))->toBe("x\n[inverse fg=2]green[/][inverse] y   [/]\nz");
             $list->setItems(['new' => 'new', 'y' => 'y', 'z' => 'z']);
             expect($list->selected())->toBe('y');
             $list->setItems(['only' => 'only']);

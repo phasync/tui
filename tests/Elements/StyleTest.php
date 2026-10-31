@@ -125,8 +125,8 @@ it('inherits colours and attributes down the tree, spans included', function () 
     $app = new Styled(fn() => new Box(new Text(['a', new Span('b', class: 'hot')]), style: ['color' => 'green', 'border' => 'single']));
     $app->setStylesheet(new Stylesheet(['Span.hot' => ['bold' => true]]));
     mountOn($app, 6, 3, function (FakeTerminal $t) {
-        expect($t->dump())->toContain('│a[/][bold fg=2]b[/]')
-            ->and($t->dump())->toContain('[fg=2]┌────┐[/]');
+        expect(drawn($t))->toContain('│a[/][bold fg=2]b[/]')
+            ->and(drawn($t))->toContain('[fg=2]┌────┐[/]');
     });
 });
 
@@ -140,7 +140,7 @@ it('draws the border of a box around the focused field in the focused style', fu
         $app->get('a')->focus();
         frame();
         expect($t->text())->toStartWith("╔ a ═══╗\n║")->and($t->text())->toContain('┌ b ───┐')
-            ->and($t->dump())->toContain('[fg=1]╔ a ═══╗[/]');
+            ->and(drawn($t))->toContain('[fg=1]╔ a ═══╗[/]');
         $app->get('b')->focus();
         frame();
         expect($t->text())->toStartWith("┌ a ───┐")->and($t->text())->toContain('╔ b ═══╗');
@@ -152,13 +152,13 @@ it('follows the mouse for :hover', function () {
     $app->setStylesheet(new Stylesheet(['HoverCard:hover' => ['inverse' => true]]));
     mountOn($app, 10, 4, function (FakeTerminal $t) {
         frame();
-        expect($t->dump())->not->toContain('[inverse]card');
+        expect(drawn($t))->not->toContain('[inverse]card');
         $t->mouse(new Mouse(Mouse::MOVE, 1, 0));
         frame();
-        expect($t->dump())->toContain('[inverse]card');
+        expect(drawn($t))->toContain('[inverse]card');
         $t->mouse(new Mouse(Mouse::MOVE, 1, 3));
         frame();
-        expect($t->dump())->not->toContain('[inverse]card')
+        expect(drawn($t))->not->toContain('[inverse]card')
             ->and($t->output())->toContain("\e[?1003h");      // the device asked for motion reports
     });
 });
@@ -173,7 +173,7 @@ it('styles only through write(): there is no cell API, and a replay of the bytes
         $t->refresh();
         $replay = new Surface(12, 4);
         $replay->write($t->output());
-        expect($replay->dump())->toBe($app->surface->dump())
+        expect(seen($replay))->toBe(seen($app->surface))
             ->and($app->surface->dump())->toContain('[bold bg=#38bdf8]title[/][bg=#38bdf8]       [/]');     // (erased cells take the background only)
     });
 });

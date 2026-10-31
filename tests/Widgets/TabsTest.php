@@ -81,16 +81,16 @@ it('styles the current tab, the focused bar, the hover and the parts', function 
         $t->settle();
         $app->tabs->focus();
         $t->settle();
-        expect($t->dump())->toContain('fg=4 bg=0] One ')->toContain('fg=7 bg=0] Two ');     // focused bar: the current tab in blue
+        expect(drawn($t))->toContain('fg=4 bg=0] One ')->toContain('fg=7 bg=0] Two ');     // focused bar: the current tab in blue
         $t->press('tab');                                                                    // the focus in the content
         $t->settle();
-        expect($t->dump())->toContain('fg=2 bg=0] One ');
+        expect(drawn($t))->toContain('fg=2 bg=0] One ');
         $t->mouse(new Mouse(Mouse::MOVE, 7, 0));
         $t->settle();
-        expect($t->dump())->toContain('fg=1 bg=0] Two ');
+        expect(drawn($t))->toContain('fg=1 bg=0] Two ');
         $t->mouse(new Mouse(Mouse::MOVE, 7, 2));
         $t->settle();
-        expect($t->dump())->toContain('fg=7 bg=0] Two ');
+        expect(drawn($t))->toContain('fg=7 bg=0] Two ');
     });
 });
 

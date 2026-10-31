@@ -2,52 +2,47 @@
 
 namespace phasync\Tui\Surface;
 
-use phasync\Tui\Ansi;
+use phasync\Tui\Area;
 use phasync\Tui\Event;
 use phasync\Tui\Key;
 use phasync\Tui\Layout;
 use phasync\Tui\Mouse;
 use phasync\Tui\Paste;
+use phasync\Tui\Style;
 use phasync\Tui\Surface;
 use phasync\Tui\Viewport;
 
 /**
  * @internal The hosting state of a Surface: its viewports in z-order, focus, layout, and the
- * compositor that repaints hosted surfaces into the host by writing escape sequences to it.
- * `Surface` creates one when it hosts its first surface and delegates to it.
+ * compositor that makes its frame (what it shows: its own cells with the windows blitted over
+ * them, to any depth). `Surface` creates one when it hosts its first surface and delegates to it.
  */
 final class Host
 {
-    /** How long a hosted surface may hold back its output with synchronized output (mode 2026). */
-    private const SYNC_TIMEOUT = 0.5;
-
     /** @var list<Viewport> bottom first */
     public array $viewports = [];
     /** @var array<int, Viewport> the same viewports by the object id of their surface */
     private array $bySource = [];
-    /** @var array<int, Viewport> the viewports to look at in the next compose: their source or they changed */
-    private array $stale = [];
     public ?Viewport $focus = null;
-    /** A hosted surface changed (or a viewport did) since the last compose. */
-    public bool $dirty = false;
+    /** Something the frame shows changed since it was made: the host's own cells, a window, a hosted surface. */
+    public bool $dirty = true;
+    /** @var list<Line> the frame: what the host shows (see compose()) */
+    private array $frame = [];
+    /** @var array<int, int> the version at which each row of the frame last changed */
+    private array $rowVersion = [];
+    /** A window held back a synchronized update when the frame was made. */
+    private bool $holding = false;
     public ?Layout $layout = null;
     /** A press on a window focuses it; null: as the host's host says. */
     public ?bool $clickFocus = null;
     /** @var list<Surface> the surfaces made for layouts nested in this host's layout, in order */
     private array $nested = [];
 
-    private bool $composing = false;
-    /** The host's version after the last compose; rows changed after it were changed by its own producer. */
-    private int $composedVersion = -1;
     /** @var array<int, list<\Closure>> listener removers per viewport */
     private array $offs = [];
     /** @var array<int, true>|null surfaces placed by the layout being applied */
     private ?array $placed = null;
     private ?Viewport $capture = null;
-    /** @var list<array{int,int,int,int,int}> the shadows the windows cast at the last compose (Viewport::shadowRects()) */
-    private array $shadows = [];
-    /** @var list<array{int,int,int,int}> where windows were unhosted or moved away from since the last compose: blanked there, where no window paints anew */
-    private array $blanks = [];
     /** @var array{int,int}|null where a selection drag started, in source coordinates */
     private ?array $anchor = null;
     private bool $dragged = false;
@@ -55,7 +50,7 @@ final class Host
     public function __construct(
         public readonly Surface $surface,
         private readonly Emulator $vt,
-        /** Tells the host's own host (and a terminal device) that this surface needs composing. */
+        /** Tells the host's own host (and a terminal device) that what this surface shows changed. */
         private readonly \Closure $notify,
     ) {
     }
@@ -78,18 +73,18 @@ final class Host
             $this->bySource[spl_object_id($child)] = $view;
             $child->shownThrough($view, true);
             $this->offs[spl_object_id($view)] = [
-                $child->on('change', fn() => $this->touched($view)),
+                $child->on('change', fn() => $this->markDirty()),
                 $child->on('title', function (string $title) use ($view): void {
                     if ($this->focus === $view) {
-                        $this->surface->write(Ansi::title($title));
+                        $this->surface->relay('title', $title);
                     }
                 }),
-                $child->on('clipboard', fn(string $text) => $this->surface->write(Ansi::clipboard($text))),
-                $child->on('bell', fn() => $this->surface->write("\x07")),
+                $child->on('clipboard', fn(string $text) => $this->surface->relay('clipboard', $text)),
+                $child->on('bell', fn() => $this->surface->relay('bell')),
             ];
             // the focus settles when the change to the tree is complete (Surface::changeTree())
             Surface::focusMayMove($this->surface);
-            $this->touched($view);
+            $this->markDirty();
             Surface::geometryChanged();
         } else {
             if ($x !== null || $y !== null) {
@@ -131,15 +126,12 @@ final class Host
         foreach ($this->offs[$id] as $off) {
             $off();
         }
-        unset($this->offs[$id], $this->bySource[spl_object_id($child)], $this->stale[$id]);
+        unset($this->offs[$id], $this->bySource[spl_object_id($child)]);
         $this->viewports = array_values(array_filter($this->viewports, fn(Viewport $v) => $v !== $view));
         $child->shownThrough($view, false);
         if ($this->capture === $view) {
             $this->capture = $this->anchor = null;
         }
-        // (blanked at the next compose, except where a window shown there then paints anew:
-        // a tab's pane replaced by another's is written once, against what the host shows)
-        $this->blanks[] = $view->rect();
         if ($this->focus === $view) {
             $this->focus = null;    // settled again when the change to the tree is complete
         }
@@ -156,128 +148,25 @@ final class Host
         }
         $this->viewports = [...array_filter($this->viewports, fn(Viewport $v) => $v !== $view), $view];
         Surface::focusMayMove($this->surface);
-        $view->invalidate();
-        $this->touched($view);
-    }
-
-    /** A viewport moved or changed size: blank where it was, repaint it where it is. */
-    public function moved(Viewport $view, array $old): void
-    {
-        $this->blanks[] = $old;      // (at the next compose: see blankUncovered())
-        $this->touched($view);
-        Surface::geometryChanged();
-    }
-
-    /** A viewport's look or scroll position changed. */
-    public function changed(Viewport $view): void
-    {
-        $this->touched($view);
-        Surface::geometryChanged();
-    }
-
-    /**
-     * Erase rectangles of the host (with the default style), as when a window closes or moves
-     * away. What other windows had there is repainted in the compose, because the host's own
-     * writes count as damage under the viewports.
-     *
-     * @param array{int,int,int,int} ...$rects
-     */
-    private function blank(array ...$rects): void
-    {
-        $out = '';
-        foreach ($rects as [$x, $y, $w, $h]) {
-            $x1 = max(0, $x);
-            $x2 = min($this->vt->cols, $x + $w);
-            if ($x1 >= $x2) {
-                continue;
-            }
-            for ($r = max(0, $y); $r < min($this->vt->rows, $y + $h); $r++) {
-                $out .= Ansi::moveTo($x1, $r) . "\e[" . ($x2 - $x1) . 'X';
-            }
-        }
-        if ($out !== '') {
-            $this->surface->write($this->wrap("\e[0m" . $out));
-        }
-    }
-
-    /**
-     * Blank where windows were unhosted, except the cells a window that paints anew covers
-     * (it is compared with the cells the host has there, and writes what differs).
-     */
-    private function blankUncovered(): void
-    {
-        $fresh = [];
-        foreach ($this->viewports as $v) {
-            if ($v->paintsAnew()) {
-                $fresh[] = $v->rect();
-            }
-        }
-        $blanks = $this->blanks;
-        $this->blanks = [];
-        $out = [];
-        foreach ($blanks as [$x, $y, $w, $h]) {
-            for ($r = $y; $r < $y + $h; $r++) {
-                // the columns of row $r left uncovered, as runs
-                $spans = [[$x, $x + $w]];
-                foreach ($fresh as [$fx, $fy, $fw, $fh]) {
-                    if ($r < $fy || $r >= $fy + $fh) {
-                        continue;
-                    }
-                    $left = [];
-                    foreach ($spans as [$a, $b]) {
-                        if ($fx >= $b || $fx + $fw <= $a) {
-                            $left[] = [$a, $b];
-                            continue;
-                        }
-                        if ($a < $fx) {
-                            $left[] = [$a, $fx];
-                        }
-                        if ($fx + $fw < $b) {
-                            $left[] = [$fx + $fw, $b];
-                        }
-                    }
-                    $spans = $left;
-                }
-                foreach ($spans as [$a, $b]) {
-                    $out[] = [$a, $r, $b - $a, 1];
-                }
-            }
-        }
-        $this->blank(...$out);
-    }
-
-    /**
-     * The host's producer is about to write: the blanking still owed goes first, so it never
-     * erases what the producer draws (a split's separator over where a window was).
-     */
-    public function beforeWrite(): void
-    {
-        if ($this->blanks !== []) {
-            $this->blankUncovered();
-        }
-    }
-
-    /** The host was written to: what its producer wrote under a window is painted over again. */
-    public function wrote(): void
-    {
-        if (!$this->composing && $this->viewports !== []) {
-            $this->markDirty();
-        }
-    }
-
-    /** $view or its source changed: it is looked at in the next compose. */
-    private function touched(Viewport $view): void
-    {
-        $this->stale[spl_object_id($view)] = $view;
         $this->markDirty();
     }
 
+    /** A viewport moved, changed size or look, or scrolled. */
+    public function changed(): void
+    {
+        $this->markDirty();
+        Surface::geometryChanged();
+    }
+
+    /**
+     * What the frame shows changed: it is made again when it is read, and the host's host (up
+     * to the root, and the terminal device showing it) is told, every time (there is nothing
+     * to keep in step between levels: the root's frame is made from all of them at once).
+     */
     public function markDirty(): void
     {
-        if (!$this->dirty) {
-            $this->dirty = true;
-            ($this->notify)();
-        }
+        $this->dirty = true;
+        ($this->notify)();
     }
 
     // ------------------------------------------------------------------------------------------
@@ -351,16 +240,9 @@ final class Host
         if ($view === $this->focus) {
             return;
         }
-        // (a border shows the focus: both windows are painted again)
-        if ($this->focus !== null) {
-            $this->stale[spl_object_id($this->focus)] = $this->focus;
-        }
+        $this->focus = $view;      // (a border shows the focus)
         if ($view !== null) {
-            $this->stale[spl_object_id($view)] = $view;
-        }
-        $this->focus = $view;
-        if ($view !== null) {
-            $this->surface->write(Ansi::title($view->source->title()));
+            $this->surface->relay('title', $view->source->title());
         }
         $this->markDirty();
     }
@@ -469,130 +351,206 @@ final class Host
     // ------------------------------------------------------------------------------------------
     // Compositing
 
+    /**
+     * Make the frame: what the host shows. Its own cells, then every window in z-order with
+     * the windows it hosts in turn, to any depth, copied (`Area::cut()`/`Area::put()`) and
+     * clipped by every window on the way down; a shadow shades the windows below the one that
+     * casts it. Rows that differ from the previous frame get a new version (the host's damage).
+     * It costs the visible area, whatever the depth of the tree.
+     */
     public function compose(): void
     {
-        if ($this->composing) {
+        if (!$this->dirty) {
             return;
         }
-        $this->composing = true;
-        try {
-            // children first; one still holding back an update keeps this host dirty too, so
-            // the hosts above (and the terminal device) keep looking until it is shown
-            $this->dirty = false;
-            $stale = $this->stale;
-            $this->stale = [];
-            foreach ($stale as $v) {
-                $v->source->compose();
-                if ($v->source->needsCompose()) {
-                    $this->dirty = true;
-                    $this->stale[spl_object_id($v)] = $v;
-                }
-            }
-            $cols = $this->vt->cols;
-            $rows = $this->vt->rows;
-            if ($this->blanks !== []) {
-                $this->blankUncovered();
-            }
-            // rows the host's own producer changed: the windows over them are painted again
-            $own = [];
-            if ($this->vt->version > $this->composedVersion) {
-                foreach ($this->vt->rowVersion as $y => $version) {
-                    if ($version > $this->composedVersion) {
-                        $own[$y] = true;
-                    }
-                }
-            }
-            // shadows that moved, came or went: the windows on those rows are painted again
-            $shadows = [];
-            $casts = [];
-            foreach ($this->viewports as $index => $v) {
-                foreach ($v->shadowRects() as $rect) {
-                    $shadows[] = $rect;
-                    $casts[$index][] = $rect;
-                }
-            }
-            if ($shadows !== $this->shadows) {
-                foreach ([...$shadows, ...$this->shadows] as [, $sy, , $sh]) {
-                    for ($y = max(0, $sy); $y < min($rows, $sy + $sh); $y++) {
-                        $own[$y] = true;
-                    }
-                }
-                $this->shadows = $shadows;
-            }
-            $out = '';
-            $rects = null;
-            $count = \count($this->viewports);
-            foreach ($this->viewports as $index => $v) {
-                if ($own === [] && !isset($stale[spl_object_id($v)])) {
-                    continue;   // (neither it nor what is under it changed)
-                }
-                [, $vy, , $vh] = $v->rect();
-                $age = $v->source->syncAge();
-                if ($age !== null && $age < self::SYNC_TIMEOUT) {
-                    // the program is drawing a frame: show it once it is complete
-                    $this->dirty = true;
-                    $this->stale[spl_object_id($v)] = $v;
-                    continue;
-                }
-                $set = [];
-                foreach ($v->damagedRows() as $y) {
-                    $set[$y] = true;
-                }
-                $forget = [];
-                for ($y = max(0, $vy); $y < min($rows, $vy + $vh); $y++) {
-                    if (isset($own[$y])) {
-                        $set[$y] = true;
-                        $forget[] = $y;
-                    }
-                }
-                $v->forgetRows($forget);
-                if ($set === []) {
-                    continue;
-                }
-                // a window writes no cell that a window above it covers, so it never has to
-                // repaint the windows above
-                $rects ??= array_map(fn(Viewport $v) => $v->rect(), $this->viewports);
-                [$vx, , $vw] = $rects[$index];
-                $covers = [];
-                $shades = [];
-                for ($j = $index + 1; $j < $count; $j++) {
-                    [$cx, $cy, $cw, $ch] = $rects[$j];
-                    if ($cy < $vy + $vh && $cy + $ch > $vy && $cx < $vx + $vw && $cx + $cw > $vx) {
-                        $covers[] = $rects[$j];
-                    }
-                    foreach ($casts[$j] ?? [] as $shade) {
-                        $shades[] = $shade;     // (a window above casts its shadow on this one)
-                    }
-                }
-                $out .= $v->paint($set, $cols, $rows, $covers, $shades);
-            }
-            if ($out !== '') {
-                $this->surface->write($this->wrap($out));
-            }
-            $this->composedVersion = $this->vt->version;
-        } finally {
-            $this->composing = false;
+        $this->dirty = false;
+        $this->holding = false;
+        $vt = $this->vt;
+        $cols = $vt->cols;
+        $rows = $vt->rows;
+        $chars = $styles = [];
+        foreach ($vt->lines as $y => $line) {
+            $chars[$y] = $line->chars;
+            $styles[$y] = $line->styles;
         }
-        if ($this->dirty) {
-            ($this->notify)();
+        $this->blitAll($chars, $styles, $this->viewports, 0, 0, 0, 0, $cols, $rows);
+        if (\count($this->frame) !== $rows || \count($this->frame[0]->chars) !== $cols) {
+            // the first frame, or another size: what showed before is the host's own cells
+            $this->frame = array_map(fn(Line $line) => clone $line, $vt->lines);
+            $this->rowVersion = $vt->rowVersion;
+        }
+        $version = null;
+        foreach ($this->frame as $y => $line) {
+            $line->wrapped = $vt->lines[$y]->wrapped;
+            if ($line->chars !== $chars[$y] || $line->styles !== $styles[$y]) {
+                $line->chars = $chars[$y];
+                $line->styles = $styles[$y];
+                $this->rowVersion[$y] = $version ??= ++$vt->version;
+            }
         }
     }
 
     /**
-     * The compositor's drawing, wrapped so the producer of the host keeps its state: its cursor,
-     * pen (with the hyperlink it is in) and character sets are saved (DECSC) and restored
-     * (DECRC), and what would bend the drawing (origin mode, insert mode, a shifted character
-     * set, a hyperlink the producer left open) is off in between, written only when it is on.
+     * Blit $views (a host's windows, bottom first, placed at $ox,$oy of the frame) into the
+     * frame's rows, inside the clip rectangle $cx1,$cy1 - $cx2,$cy2 (exclusive).
+     *
+     * @param array<int, list<string>> $chars
+     * @param array<int, list<Style>>  $styles
+     * @param list<Viewport>           $views
      */
-    private function wrap(string $drawing): string
+    private function blitAll(array &$chars, array &$styles, array $views, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2): void
     {
-        $vt = $this->vt;
-        $insert = $vt->insertMode;
-        $off = (($vt->modes[6] ?? false) ? "\e[?6l" : '') . ($vt->gl !== 0 ? "\x0f" : '')
-            . ($vt->charsets[0] !== 'B' ? "\e(B" : '') . ($vt->pen->link !== '' ? "\e]8;;\e\\" : '')
-            . ($insert ? "\e[4l" : '');
-        // (the drawing sets its pen at its first cell; DECRC gives the producer's back)
-        return "\e7" . $off . $drawing . ($insert ? "\e[4h" : '') . "\e8";
+        $n = \count($views);
+        if ($n === 0) {
+            return;
+        }
+        // the shadows of the windows above each one, in frame coordinates
+        $above = [];
+        $shades = [];
+        for ($i = $n - 1; $i >= 0; $i--) {
+            $above[$i] = $shades;
+            if ($views[$i]->shadow() !== null) {
+                foreach ($views[$i]->shadowRects() as [$sx, $sy, $sw, $sh, $color]) {
+                    $shades[] = [$ox + $sx, $oy + $sy, $sw, $sh, $color];
+                }
+            }
+        }
+        foreach ($views as $i => $v) {
+            $this->blit($chars, $styles, $v, $ox, $oy, $cx1, $cy1, $cx2, $cy2, $above[$i]);
+        }
+    }
+
+    /**
+     * @param array<int, list<string>>              $chars
+     * @param array<int, list<Style>>               $styles
+     * @param list<array{int,int,int,int,int}>      $shades
+     */
+    private function blit(array &$chars, array &$styles, Viewport $v, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2, array $shades): void
+    {
+        [$x0, $y0, $w, $h] = $v->rect();
+        $x0 += $ox;
+        $y0 += $oy;
+        $left = max($x0, $cx1);
+        $right = min($x0 + $w, $cx2);
+        $top = max($y0, $cy1);
+        $bottom = min($y0 + $h, $cy2);
+        if ($left >= $right || $top >= $bottom) {
+            return;
+        }
+        $b = $v->hasBorder() ? 1 : 0;
+        if ($b) {
+            $style = $v->borderStyleNow();
+            foreach ([0, $h - 1] as $r) {
+                $y = $y0 + $r;
+                if ($y >= $top && $y < $bottom && ($r === 0 || $h > 1)) {
+                    [$bc, $bs] = $v->borderRow($r === 0, $style);
+                    [$c, $s] = Area::cut($bc, $bs, $left - $x0, $right - $left);
+                    Area::put($chars[$y], $styles[$y], $left, $c, $s);
+                }
+            }
+            $side = Viewport::BORDERS[$v->borderKind()][5];
+            $sides = [];
+            if ($x0 >= $left) {
+                $sides[] = $x0;
+            }
+            if ($w > 1 && $x0 + $w - 1 < $right) {
+                $sides[] = $x0 + $w - 1;
+            }
+            for ($y = max($top, $y0 + 1); $y < min($bottom, $y0 + $h - 1); $y++) {
+                foreach ($sides as $x) {
+                    Area::put($chars[$y], $styles[$y], $x, [$side], [$style]);
+                }
+            }
+        }
+        $ix = $x0 + $b;
+        $iy = $y0 + $b;
+        $il = max($ix, $left);
+        $ir = min($ix + $v->innerWidth(), $right);
+        $it = max($iy, $top);
+        $ib = min($iy + $v->innerHeight(), $bottom);
+        if ($il < $ir && $it < $ib) {
+            $source = $v->source;
+            $held = $source->heldLines();
+            if ($held !== null) {
+                $this->holding = true;
+            }
+            $lines = $held ?? $source->ownLines();
+            $sourceRows = \count($lines);
+            $firstRow = $v->top();
+            $firstCol = $v->left();
+            $selection = $v->selectionRange();
+            $n = $ir - $il;
+            $from = $firstCol + $il - $ix;
+            for ($y = $it; $y < $ib; $y++) {
+                $row = $firstRow + $y - $iy;
+                $line = $row >= 0 ? ($row < $sourceRows ? $lines[$row] : null) : $source->scrollbackLine($row);
+                if ($line === null) {
+                    $c = array_fill(0, $n, ' ');
+                    $s = array_fill(0, $n, Style::plain());
+                } else {
+                    [$c, $s] = Area::cut($line->chars, $line->styles, $from, $n);
+                }
+                Area::put($chars[$y], $styles[$y], $il, $c, $s);
+            }
+            // the windows the source hosts, clipped by this window and by the source's edges
+            $views = $source->viewports();
+            if ($views !== []) {
+                $sx = $ix - $firstCol;
+                $sy = $iy - $firstRow;
+                $this->blitAll($chars, $styles, $views, $sx, $sy, max($il, $sx), max($it, $sy),
+                    min($ir, $sx + $source->cols()), min($ib, $sy + $source->rows()));
+            }
+            // a selection shows in inverse, over all the window shows (its windows too)
+            if ($selection !== null) {
+                for ($y = $it; $y < $ib; $y++) {
+                    $row = $firstRow + $y - $iy;
+                    for ($x = $il; $x < $ir; $x++) {
+                        if ($chars[$y][$x] === '' && $x > $il) {
+                            $styles[$y][$x] = $styles[$y][$x - 1];   // (a wide character is shown in the style of its first half)
+                        } elseif (Viewport::inSelection($selection, $from + $x - $il, $row)) {
+                            $st = $styles[$y][$x];
+                            $styles[$y][$x] = $st->has(Style::INVERSE) ? $st->without(Style::INVERSE) : $st->with(Style::INVERSE);
+                        }
+                    }
+                }
+            }
+        }
+        foreach ($shades as [$sx, $sy, $sw, $sh, $color]) {
+            $x1 = max($left, $sx);
+            $x2 = min($right, $sx + $sw);
+            for ($y = max($top, $sy), $y2 = min($bottom, $sy + $sh); $y < $y2; $y++) {
+                $row = &$styles[$y];
+                for ($x = $x1; $x < $x2; $x++) {
+                    $row[$x] = Area::shade($row[$x], $color);
+                }
+                // (a wide character is shown in the style of its first half, also across the edge)
+                if ($x1 > 0 && $x1 < $x2 && $chars[$y][$x1] === '') {
+                    $row[$x1] = $row[$x1 - 1];
+                }
+                if ($x2 > $x1 && ($chars[$y][$x2] ?? null) === '') {
+                    $row[$x2] = $row[$x2 - 1];
+                }
+                unset($row);
+            }
+        }
+    }
+
+    /** The frame's row $y (compose() first). */
+    public function frameLine(int $y): Line
+    {
+        return $this->frame[$y];
+    }
+
+    /** @return array<int, int> the version at which each row of the frame last changed */
+    public function frameVersions(): array
+    {
+        return $this->rowVersion;
+    }
+
+    /** A window holds back a synchronized update: the frame shows its previous cells. */
+    public function holding(): bool
+    {
+        return $this->holding;
     }
 
     // ------------------------------------------------------------------------------------------
@@ -690,7 +648,7 @@ final class Host
         if ($m->action === Mouse::RELEASE) {
             $this->capture = $this->anchor = null;
             if ($this->dragged && ($text = $view->selectedText()) !== '') {
-                $this->surface->write(Ansi::clipboard($text));
+                $this->surface->relay('clipboard', $text);
             }
         }
         return true;

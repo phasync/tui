@@ -54,3 +54,16 @@ function screenRows(\phasync\Tui\FakeTerminal $t): array
 {
     return array_map('rtrim', explode("\n", $t->text()));
 }
+
+/** What $s looks like: `Surface::dump(true)` (each blank in the style it looks like). */
+function seen(Surface $s): string
+{
+    return $s->dump(true);
+}
+
+/** What the program drew: the root's cells as `Surface::dump()` shows them, once the terminal drew what is pending. */
+function drawn(\phasync\Tui\FakeTerminal $t): string
+{
+    $t->refresh();
+    return $t->root()->dump();
+}

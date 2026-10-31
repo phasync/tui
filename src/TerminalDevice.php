@@ -680,7 +680,7 @@ abstract class TerminalDevice
         for ($y = $root->rows() - 1; $y >= $min; $y--) {
             [$chars, $styles] = $root->rowData($y);
             foreach ($chars as $i => $ch) {
-                if ($ch !== ' ' || $styles[$i] !== $plain) {
+                if ($ch !== ' ' || $styles[$i]->blank() !== $plain) {
                     return $y + 1;
                 }
             }
@@ -778,10 +778,21 @@ abstract class TerminalDevice
         if ($chars === $oldChars && $styles === $oldStyles) {
             return '';      // (damaged, and the same again)
         }
+        // the cells that look different (Style::blank(): a space shows its background, not its
+        // foreground; one on the default background is an empty cell)
+        $same = static function (int $i) use ($chars, $styles, $oldChars, $oldStyles, $plain): bool {
+            $ch = $chars[$i] ?? ' ';
+            if ($ch !== ($oldChars[$i] ?? ' ')) {
+                return false;
+            }
+            $a = $styles[$i] ?? $plain;
+            $b = $oldStyles[$i] ?? $plain;
+            return $a === $b || ($ch === ' ' && $a->blank() === $b->blank());
+        };
         $out = '';
         $x = 0;
         while ($x < $cols) {
-            if (($chars[$x] ?? ' ') === ($oldChars[$x] ?? ' ') && ($styles[$x] ?? $plain) === ($oldStyles[$x] ?? $plain)) {
+            if ($same($x)) {
                 $x++;
                 continue;
             }
@@ -789,7 +800,7 @@ abstract class TerminalDevice
             $start = $x > 0 && ($chars[$x] ?? ' ') === '' ? $x - 1 : $x;
             $end = $x;
             for ($i = $x + 1, $gap = 0; $i < $cols && $gap <= 3; $i++) {
-                if (($chars[$i] ?? ' ') === ($oldChars[$i] ?? ' ') && ($styles[$i] ?? $plain) === ($oldStyles[$i] ?? $plain)) {
+                if ($same($i)) {
                     $gap++;
                 } else {
                     $gap = 0;
@@ -806,6 +817,18 @@ abstract class TerminalDevice
                     continue;
                 }
                 $style = $styles[$i] ?? $plain;
+                if ($ch === ' ' && $style !== $this->pen) {
+                    // a blank sets no foreground: the pen stays when the blank looks the same in
+                    // it, else it takes the style of the text after it if it looks the same there
+                    $look = $style->blank();
+                    if ($look === $this->pen?->blank()) {
+                        $style = $this->pen;
+                    } else {
+                        for ($j = $i + 1; ($chars[$j] ?? '') === ' '; $j++) {
+                        }
+                        $style = $j <= $end && ($chars[$j] ?? '') !== '' && $styles[$j]->blank() === $look ? $styles[$j] : $look;
+                    }
+                }
                 if ($style !== $this->pen) {
                     $out .= $this->sgr($style);
                     $this->pen = $style;

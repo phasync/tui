@@ -194,11 +194,17 @@ final class FakeTerminal extends TerminalDevice
         return $this->surface->text();
     }
 
-    /** The screen with styles marked up (see `Surface::dump()`), after drawing what is pending. */
+    /**
+     * The screen with styles marked up, as it looks (see `Surface::dump()` with `$looks`: a
+     * blank in the style it shows, its background), after drawing what is pending. The device
+     * draws what looks different, so the terminal's blanks may carry a foreground left from the
+     * text before them; this is the same for every way of drawing the same screen. Compare it
+     * with the root's `dump(true)`.
+     */
     public function dump(): string
     {
         $this->refresh();
-        return $this->surface->dump();
+        return $this->surface->dump(true);
     }
 
     /** The last text a program copied to the clipboard (OSC 52), as a real terminal would receive it. */

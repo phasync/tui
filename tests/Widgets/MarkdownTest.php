@@ -75,9 +75,9 @@ it('renders headings, paragraphs, emphasis and code spans with their parts style
         $rows = mdRows($t);
         expect($rows[0])->toBe('Heading one')
             ->and($rows[2])->toBe('Intro with bold, emphasis, gone and code')
-            ->and($t->dump())->toContain('[bold underline fg=#38bdf8]Heading [/][bold italic underline fg=#38bdf8]one[/]')
-            ->and($t->dump())->toContain('[bold]bold[/]')->toContain('[italic]emphasis[/]')->toContain('[strike]gone[/]')
-            ->and($t->dump())->toContain('[fg=#fbbf24]code[/]')->toContain('[bold fg=#38bdf8]Second level[/]');
+            ->and(drawn($t))->toContain('[bold underline fg=#38bdf8]Heading [/][bold italic underline fg=#38bdf8]one[/]')
+            ->and(drawn($t))->toContain('[bold]bold[/]')->toContain('[italic]emphasis[/]')->toContain('[strike]gone[/]')
+            ->and(drawn($t))->toContain('[fg=#fbbf24]code[/]')->toContain('[bold fg=#38bdf8]Second level[/]');
     });
 });
 
@@ -97,7 +97,7 @@ it('wraps paragraphs between words at 40 columns, every row within the width', f
 it('shows a link with its address dimmed after the text', function () {
     md(new Markdown('See [the docs](https://x.org/a) now, <https://y.org> too.'), 60, 2, function (FakeTerminal $t) {
         expect(mdRows($t)[0])->toBe('See the docs (https://x.org/a) now, https://y.org too.')
-            ->and($t->dump())->toContain('[underline fg=#38bdf8]the docs[/][dim fg=#64748b] (https://x.org/a)[/]');
+            ->and(drawn($t))->toContain('[underline fg=#38bdf8]the docs[/][dim fg=#64748b] (https://x.org/a)[/]');
     });
 });
 
@@ -129,19 +129,19 @@ it('wraps a long list item under its marker', function () {
 it('renders block quotes with a bar, nested blocks inside', function () {
     md(new Markdown("> quoted *text*\n> more\n>\n> - item\n\nafter"), 30, 8, function (FakeTerminal $t) {
         expect(mdRows($t))->toMatchArray(['│ quoted text more', '│', '│ • item', '', 'after'])
-            ->and($t->dump())->toContain('[fg=#64748b]│ [/]');
+            ->and(drawn($t))->toContain('[fg=#64748b]│ [/]');
     });
 });
 
 it('renders fenced code blocks filled across the width, highlighting php, js, sh and json', function () {
     md(new Markdown("```php\n<?php\n// c\n\$x = \"s\" . 42;\nreturn true;\n```"), 24, 6, function (FakeTerminal $t) {
-        $d = $t->dump();
+        $d = drawn($t);
         expect(mdRows($t)[2])->toBe(' $x = "s" . 42;')
             ->and($d)->toContain('[fg=5 bg=#1e293b]<?php[/]')->toContain('[italic fg=#64748b bg=#1e293b]// c[/]')->toContain('[fg=#38bdf8 bg=#1e293b]$x[/]')
             ->and($d)->toContain('[fg=#34d399 bg=#1e293b]"s"[/]')->toContain('[fg=#fbbf24 bg=#1e293b]42[/]')->toContain('[fg=5 bg=#1e293b]return[/]');
     });
     md(new Markdown("```js\nconst a = `x` + 1; // c\n```\n```sh\necho \$HOME --flag # c\n```\n```json\n{\"k\": [true, 2]}\n```\n``` weird\nplain\n```"), 40, 12, function (FakeTerminal $t) {
-        $d = $t->dump();
+        $d = drawn($t);
         expect($d)->toContain('[fg=5 bg=#1e293b]const[/]')->toContain('[fg=#34d399 bg=#1e293b]`x`[/]')
             ->and($t->text())->toContain(' echo $HOME --flag # c');
         expect($d)->toContain('[fg=#38bdf8 bg=#1e293b]$HOME[/]')->toContain('[fg=#fbbf24 bg=#1e293b]--flag[/]')
@@ -152,7 +152,7 @@ it('renders fenced code blocks filled across the width, highlighting php, js, sh
 
 it('keeps an unterminated fence as code running to the end', function () {
     md(new Markdown("text\n\n```js\nlet x = 1;"), 20, 5, function (FakeTerminal $t) {
-        expect(mdRows($t)[2])->toBe(' let x = 1;')->and($t->dump())->toContain('[fg=5 bg=#1e293b]let[/]');
+        expect(mdRows($t)[2])->toBe(' let x = 1;')->and(drawn($t))->toContain('[fg=5 bg=#1e293b]let[/]');
     });
 });
 
@@ -165,7 +165,7 @@ it('renders tables with alignment, borders, and shrinks cells to the width', fun
             '│ tea  │  2  │  3.50 │',
             '│ milk │ 10  │ 12.00 │',
             '└──────┴─────┴───────┘',
-        ])->and($t->dump())->toContain('[bold]Name[/]');
+        ])->and(drawn($t))->toContain('[bold]Name[/]');
     });
     md(new Markdown("| a | b |\n|---|---|\n| one two three four five six | x |"), 20, 12, function (FakeTerminal $t) {
         foreach (mdRows($t) as $row) {
@@ -201,7 +201,7 @@ it('is styled through the stylesheet, one selector per block kind', function () 
     $md = new Markdown("# H\n\ntext `c`\n\n```sh\nif x\n```");
     $md->setStylesheet(Stylesheet::default()->with(['Markdown::h1' => ['color' => 'red', 'underline' => false], 'Markdown::code' => ['color' => 'green'], 'Markdown::codeblock' => ['background' => 'blue'], 'Markdown::keyword' => ['color' => 'yellow']]));
     md($md, 20, 6, function (FakeTerminal $t) {
-        expect($t->dump())->toContain('[bold fg=1]H[/]')->toContain('[fg=2]c[/]')->toContain('[fg=3 bg=4]if[/]');
+        expect(drawn($t))->toContain('[bold fg=1]H[/]')->toContain('[fg=2]c[/]')->toContain('[fg=3 bg=4]if[/]');
     });
 });
 
@@ -303,7 +303,7 @@ it('renders an unfinished construct at the tail as well as the text so far allow
         $md->append("nk](http://u)\n\n```php\n\$a = ");
         frame();
         expect($t->text())->toContain('A bold and *emphasis done, a link (http://u)')->toContain(' $a =')
-            ->and($t->dump())->toContain('[fg=#38bdf8 bg=#1e293b]$a[/]');
+            ->and(drawn($t))->toContain('[fg=#38bdf8 bg=#1e293b]$a[/]');
     });
 });
 
@@ -322,13 +322,13 @@ it('streams a long document in random chunks to the same screen as set()', funct
                 }
             }
             frame();
-            $chunked = [$t->text(), $t->dump(), $md->rowCount()];
+            $chunked = [$t->text(), drawn($t), $md->rowCount()];
         });
         $whole = null;
         mountOn(new Markdown('', tail: true), 40, 25, function (FakeTerminal $t, Markdown $md) use ($doc, &$whole) {
             $md->set($doc);
             frame();
-            $whole = [$t->text(), $t->dump(), $md->rowCount()];
+            $whole = [$t->text(), drawn($t), $md->rowCount()];
         });
         expect($chunked)->toBe($whole)->and($chunked[2])->toBeGreaterThan(100);
     }

@@ -64,7 +64,7 @@ function themedScreen(string $theme, int $cols = 70, int $rows = 22): array
         $chars = $styles = [];
         for ($y = 0; $y < $rows; $y++) {
             for ($x = 0; $x < $cols; $x++) {
-                $cell = $t->surface->cell($x, $y);
+                $cell = $t->root()->cell($x, $y);
                 $chars[$y][$x] = $cell->char;
                 $styles[$y][$x] = $cell->style;
             }
@@ -128,11 +128,13 @@ it('casts a dialog\'s shadow on what is under it, right and below, and takes it 
         $area = $app->confirm->surface->area();
         $x = $area->x + $area->width + 1;
         $y = $area->y + 1;
-        expect($t->surface->cell($x, $y)->style->has(Style::DIM))->toBeTrue();
+        // (what the program shows; the terminal shows a shaded blank's background, not its dimming)
+        expect($t->root()->cell($x, $y)->style->has(Style::DIM))->toBeTrue()
+            ->and($t->surface->cell($x, $y)->style->bg)->toBe($t->root()->cell($x, $y)->style->bg);
         $app->confirm->close(false);
         $t->settle();
         expect($t->text())->not->toContain('Delete 3 files?')
-            ->and($t->surface->cell($x, $y)->style->has(Style::DIM))->toBeFalse()
+            ->and($t->root()->cell($x, $y)->style->has(Style::DIM))->toBeFalse()
             ->and($t->surface->cell($x, $y)->style->bg)->toBe(Color::DEFAULT);
         $t->detach();
     });

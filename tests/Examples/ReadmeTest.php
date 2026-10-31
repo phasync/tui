@@ -165,7 +165,7 @@ it('runs the README\'s Markdown pane: the answer arrives in chunks and renders w
             expect($t->waitFor('(https://phasync.dev).', 3))->toBeTrue()
                 ->and($t->text())->toContain('Hello')->toContain('This arrives in chunks: code, a link')
                 ->not->toContain('*')->not->toContain('`')
-                ->and($t->dump())->toContain('[italic]arrives[/]');
+                ->and(drawn($t))->toContain('[italic]arrives[/]');
         });
     });
 });

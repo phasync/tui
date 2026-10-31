@@ -34,7 +34,7 @@ function expectSameScreen(FakeTerminal $terminal, Surface $root): void
     $terminal->refresh();
     $c = $root->activeCursor();
     $t = $terminal->surface->cursor();
-    expect($terminal->surface->dump())->toBe($root->dump())
+    expect(seen($terminal->surface))->toBe(seen($root))
         ->and([$t->x, $t->y, $t->visible])->toBe([$c->x, $c->y, $c->visible]);
 }
 
@@ -85,7 +85,7 @@ it('shows exactly what the root holds: the library\'s output read back by its ow
         // the byte stream alone, written into a fresh Surface, gives the same cells
         $fresh = new Surface(30, 8, 0);
         $fresh->write($terminal->output());
-        expect($fresh->dump())->toBe($root->dump());
+        expect(seen($fresh))->toBe(seen($root));
     });
 });
 
@@ -119,7 +119,7 @@ it('costs a busy pane its changed cells per frame, whatever the byte volume', fu
         $terminal->refresh();
         $out = $terminal->takeOutput();
         expect($out)->toContain('*')->and(\strlen($out))->toBeLessThan(60)
-            ->and($terminal->surface->dump())->toBe($root->dump());
+            ->and(seen($terminal->surface))->toBe(seen($root));
     });
 });
 

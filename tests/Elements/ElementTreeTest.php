@@ -105,7 +105,7 @@ it('wraps and aligns text, cuts it when wrapping is off, and styles spans', func
     ]));
     mountOn($app, 12, 6, function (FakeTerminal $t) {
         expect($t->text())->toBe(" the quick\n brown fox\na long line…\nx\nplain bold\nplain")
-            ->and($t->dump())->toContain('[fg=1]plain [/][bold fg=1]bold[/]');
+            ->and(drawn($t))->toContain('[fg=1]plain [/][bold fg=1]bold[/]');
     });
 });
 
@@ -187,7 +187,7 @@ it('mixes elements with components that draw themselves with escape sequences', 
         $app->requestRender();
         frame();
         expect($t->text())->toBe("cpu\n########..\nend\n")
-            ->and($t->dump())->toContain('[fg=2]########[/]');
+            ->and(drawn($t))->toContain('[fg=2]########[/]');
     });
 });
 
@@ -213,8 +213,8 @@ it('paints only through write(): the device stream alone reproduces the screen',
         $t->refresh();
         $replay = new Surface(20, 6);
         $replay->write($t->output());
-        expect($replay->dump())->toBe($app->surface->dump())
-            ->and($t->dump())->toBe($app->surface->dump());
+        expect(seen($replay))->toBe(seen($app->surface))
+            ->and(seen($t->surface))->toBe(seen($app->surface));
     });
 });
 
