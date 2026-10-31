@@ -370,15 +370,19 @@ mode (4.1); `Tui::headless($root, cols, rows)` returns the `FakeTerminal`. A clo
 component: it is rendered again whenever state it reads changes, so
 
 ```php
-$s = new State(['done' => 0]);
-fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
-Tui::inline(fn() => new Column([
-    new Text("Working… {$s->done}%"),
-    new ProgressBar($s->done / 100),
-]));
+fiber\run(function () {
+    $s = new State(['done' => 0]);
+    fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
+    Tui::inline(fn() => new Column([
+        new Text("Working… {$s->done}%"),
+        new ProgressBar($s->done / 100),
+    ]));
+});
 ```
 
-is a whole program. Element content may be a closure (`new Text(fn() => ...)`) so a single
+is a whole program (`fiber\run()` is the one entry point of `fiber\`; `go()` outside it throws, and
+`run()` returns when the program's own coroutines have finished, so a coroutine that should stop
+with the screen checks a flag or the runner's result). Element content may be a closure (`new Text(fn() => ...)`) so a single
 element can be dynamic without the tree around it being rebuilt. Classes stay for anything with
 behaviour of its own; a closure component is the same thing without a name.
 
@@ -399,9 +403,13 @@ Tailwind vocabulary (as symfony/tui spells it, so what people know works here):
   `truncate`, `wrap`/`nowrap`;
 - size and layout: `w-{n}`, `h-{n}`, `w-1/2`, `w-full`, `grow`, `grow-{n}` (fr), `shrink-0`,
   `items-start/center/end`, `justify-start/center/end/between`, `hidden`;
-- variants: `focus:`, `hover:`, `disabled:`, `selected:` prefixes for states, and `sm:`, `md:`,
-  `lg:` for the root's width (under 60, under 100, 100 and more columns), so
-  `class: "flex-col md:flex-row"` is a responsive layout.
+- variants: `focus:`, `hover:`, `disabled:`, `selected:` prefixes for states, on elements as well
+  as components (an element enters `selected` through a `selected:` argument or a `state:` list,
+  `hover` through the pointer over it, `focus` through the focused component containing it); and
+  `sm:`, `md:`, `lg:`, `xl:` for the root's width with Tailwind's min-width meaning: the base
+  class applies at every width, `sm:` from 60 columns, `md:` from 80, `lg:` from 100, `xl:` from
+  140, later breakpoints overriding earlier ones, so `class: "flex-col md:flex-row"` is a column
+  under 80 columns and a row from 80 on.
 
 Order in the cascade: stylesheet rules, then utility classes (later ones win), then `style:`.
 Everything a utility class does is a stylesheet property too, so themes and utilities compose.
