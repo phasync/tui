@@ -176,7 +176,8 @@ class ProgressBar extends Component
                 }
             }
             if ($label !== $oldLabel) {
-                $out .= "\e[1;" . ($width + 1) . 'H' . $base . "\e[K" . ($label === '' ? '' : ' ' . $label);
+                // (of the same width: the bar's width is what the label leaves)
+                $out .= "\e[1;" . ($width + 2) . 'H' . $base . $label;
             }
             return $out;        // (on the cells of the drawing before: no autowrap, no cursor)
         }

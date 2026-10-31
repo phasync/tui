@@ -399,7 +399,10 @@ final class Tree
         $this->focused = $this->focusing;
         $this->wanted = $this->wanting;
         if ($restyle) {
-            $this->builtFrom = null;     // (the next build looks at everything again)
+            // (what a build of the same elements would leave: it stands for the next build too)
+            if ($this->builtFrom !== null) {
+                $this->builtFrom[2] = Component::styleCounters();
+            }
             return $layout;
         }
         $this->builtFrom = [$sheet, $base, Component::styleCounters(), $inline];
@@ -508,7 +511,9 @@ final class Tree
             return false;
         }
         if ($a instanceof Component) {
-            return $a === $b || (!$a->isMounted() && !$b->isMounted() && self::sameAttributes($a->attributes(), $b->attributes()));
+            // (a new instance hands its props to the one at its place, the last one or the one it
+            // handed them to; reuse() checks it is the same component)
+            return $a === $b || (!$a->isMounted() && self::sameAttributes($a->attributes(), $b->attributes()));
         }
         if ($a !== $b && !self::sameAttributes($a->attributes(), $b->attributes())) {
             return false;
