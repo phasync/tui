@@ -59,8 +59,7 @@ final class Jobs extends Component
         }
         while ($this->sleep(0.05)) {
             if (min($this->done) >= 1) {
-                $this->sleep(0.2);
-                $this->dispose();       // the last frame stays
+                $this->dispose();       // the last frame stays, at 100%
             }
         }
     }

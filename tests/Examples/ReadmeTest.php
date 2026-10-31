@@ -82,3 +82,46 @@ function readmeProfile(FakeTerminal $t): void
     $t->press('ctrl+q');
     expect($t->isAttached())->toBeFalse();
 }
+
+/** The README's php block that holds $needle, with its `fiber\run(...)` line taken out. */
+function readmeBlock(string $needle): string
+{
+    $readme = (string) file_get_contents(__DIR__ . '/../../README.md');
+    preg_match('/```php\n((?:(?!```).)*' . preg_quote($needle, '/') . '.*?)```/s', $readme, $m);
+    expect($m)->not->toBeEmpty();
+    return 'use phasync\Tui\{Component, Element, TerminalDevice, Tty};
+        use phasync\Tui\Component\{Markdown, ProgressBar};
+        use phasync\Tui\Element\{Box, Row, Text};
+        ' . preg_replace('/^(\$tty = |fiber\\\\run\().*$/m', '', $m[1]);
+}
+
+it('runs the README\'s Markdown pane: the answer arrives in chunks and renders whole', function () {
+    eval(readmeBlock('final class Answer'));
+    run(function () {
+        $app = (new Answer())->start($t = new FakeTerminal(50, 8));
+        $t->run(function (FakeTerminal $t) {
+            expect($t->waitFor('(https://phasync.dev).', 3))->toBeTrue()
+                ->and($t->text())->toContain('Hello')->toContain('This arrives in chunks: code, a link')
+                ->not->toContain('*')->not->toContain('`')
+                ->and($t->dump())->toContain('[italic]arrives[/]');
+        });
+    });
+});
+
+it('runs the README\'s inline example: lines printed above a progress bar that stays', function () {
+    eval(readmeBlock('final class Copy'));
+    run(function () {
+        $t = FakeTerminal::inline(40, 10);
+        $t->surface->write("$ php copy.php\r\n");
+        (new Copy($t))->start($t);
+        $t->run(function (FakeTerminal $t) {
+            expect($t->waitFor('copied d.txt', 3))->toBeTrue();
+            $t->wait();                                 // until the program ends
+        });
+        expect($t->isAttached())->toBeFalse();
+        $lines = explode("\n", rtrim($t->text()));
+        expect(\array_slice($lines, 0, 5))->toBe(['$ php copy.php', 'copied a.txt', 'copied b.txt', 'copied c.txt', 'copied d.txt'])
+            ->and($lines[5])->toStartWith('copying')->toEndWith('100%')
+            ->and($t->surface->cursor()->y)->toBe(6);
+    });
+});

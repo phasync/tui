@@ -234,6 +234,68 @@ field, or on the Save button, which has no `onPress` of its own). Without a name
 stays, with its message and the field marked `:invalid`; with one, `Confirm` asks, and the
 answer arrives in the coroutine that awaits it. `examples/form.php` is a larger form.
 
+**Markdown, as it arrives.** A `Markdown` pane renders CommonMark (headings, lists, code with
+highlighting, tables, links) and takes text in chunks that end anywhere, as a model's answer
+does; with `tail` it follows the end until the user scrolls back.
+
+```php
+final class Answer extends Component
+{
+    protected function render(): Element
+    {
+        return new Box($this->doc(), 'answer');
+    }
+
+    private function doc(): Markdown
+    {
+        return $this->child('doc', fn() => new Markdown(tail: true, scrollbar: true));
+    }
+
+    protected function run(): void
+    {
+        foreach (["# Hel", "lo\n\nThis *arri", "ves* in chunks: `code`, ", "[a link](https://phasync.dev)."] as $chunk) {
+            $this->doc()->append($chunk);
+            $this->sleep(0.2);
+        }
+    }
+}
+```
+
+**Inline, under the shell's output.** `Tty::inline()` shows the same components as a live
+region at the bottom of the terminal instead of taking it over; `println()` writes lines above
+it into the terminal's scrollback, and when the program ends the last frame stays with the
+prompt under it.
+
+```php
+final class Copy extends Component
+{
+    private float $done = 0.0;
+
+    public function __construct(private readonly TerminalDevice $tty) {}
+
+    protected function render(): Element
+    {
+        return new Row([new Text('copying', width: 8), new ProgressBar($this->done)]);
+    }
+
+    protected function run(): void
+    {
+        foreach (['a.txt', 'b.txt', 'c.txt', 'd.txt'] as $i => $file) {
+            $this->sleep(0.2);
+            $this->tty->println("copied $file");        // above the region, scrolled out with the rest
+            $this->done = ($i + 1) / 4;
+            $this->requestRender();
+        }
+        $this->dispose();                               // the last frame stays
+    }
+}
+
+$tty = Tty::inline();
+fiber\run(fn() => (new Copy($tty))->start($tty));
+```
+
+`examples/inline-progress.php` runs five jobs this way, or full screen with `--fullscreen`.
+
 **How a program ends.** `fiber\run()` returns once nothing runs any more. Quitting (disposing
 the root component, closing the root surface, or detaching the device; each leads to the others)
 disposes the component tree: `Terminal`s hang their programs up with everything those started
@@ -267,6 +329,10 @@ Renders come in the next frame: read the screen after `settle()`, not right afte
 - `examples/coroutine-pane.php`: a shell next to a PHP coroutine printing progress bars and
   colours (with `echo` under ext-phasync).
 - `examples/dashboard.php`: graphs and boxes drawn with escape sequences from coroutines.
+- `examples/inline-progress.php`: five progress bars and a total under the shell's output
+  (inline mode), finished jobs printed above them; `--fullscreen` for the same full screen.
+- `examples/markdown.php [file.md]`: a Markdown document streamed in chunks, followed as it
+  arrives, scrolled with the keys and the wheel.
 - `examples/form.php`: a form built from elements: one-line and multi-line editors, a pick list
   with filtering and marks, a confirmation dialog, the keys in a footer.
 

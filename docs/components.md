@@ -239,6 +239,27 @@ itself. Two remedies: pass the changing value as a prop (`new Counter(label: $th
 a new value is new props, and the child renders), or give both the same `State` object (a
 write renders every component that has it as its `$state`).
 
+### The conventions of a widget's constructor
+
+The library's widgets, and a component of yours that others place with `new`, follow these:
+
+- **Props** are the constructor's parameters promoted to `public` (not `readonly`) properties:
+  `public bool $tail = false`. They are what a parent may change by rendering the widget anew
+  with other values; the kept instance takes them, then `propsChanged()` runs, then it renders.
+  A widget whose props need more than a render (laying out again, following the end) does it in
+  `propsChanged()`. Everything else it keeps is `private` (or `readonly`): a parent changes that
+  through the widget's methods (`append()`, `setValue()`), never by rendering.
+- **Callbacks** (`?Closure $onPress = null`) are not props: they are taken from the first
+  instance only, and each also has an event (`press`) for code that is not the creator.
+- **`...attributes`** in a signature (docs/widgets.md) means the named arguments `key`, `id`,
+  `class` and `style`, after the widget's own parameters, plus `disabled` on a widget that takes
+  input (a `Button`, a `Checkbox`): `new ProgressBar(0.4, class: 'slim')`. They are passed with
+  their names, never by position. The others (`width`, `height`), and these too, go through
+  `with()`, which every component has: `(new Log())->with(height: '1fr')`. The elements
+  (`Column`, `Row`, `Layers`, `Box`, `Text`, `Help`) take all seven as named arguments.
+- The attributes count as props: a parent's render that gives another `class:` restyles the kept
+  instance.
+
 ## State: rendering by itself
 
 `$this->state` is the component's `State`: an object whose writes render the component again.

@@ -229,3 +229,15 @@ it('reports the mouse in inline mode only while a surface asks for it', function
         $t->detach();
     });
 });
+
+it('leaves the frame a program asked for just before it disposed itself', function () {
+    \fiber\run(function () {
+        $t = FakeTerminal::inline(30, 8);
+        $app = (new Builds())->start($t);
+        $t->settle();
+        $app->done = [100, 100, 100, 100, 100];
+        $app->requestRender();
+        $app->dispose();                // in the same tick: no frame came between
+        expect($t->isAttached())->toBeFalse()->and(allLines($t->surface)[5])->toBe('total 500/500');
+    });
+});

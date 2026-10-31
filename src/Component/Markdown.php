@@ -98,9 +98,20 @@ class Markdown extends Component
      *                           with its address after it; for terminals that support them,
      *                           `$device->supportsHyperlinks()` (a prop)
      * @param bool   $scrollbar  show a scrollbar in the last column (a prop)
+     * @param string|list<string>|null $class
+     * @param array<string, mixed>|null $style
      */
-    public function __construct(string $text = '', public bool $tail = false, public bool $hyperlinks = false, public bool $scrollbar = false)
-    {
+    public function __construct(
+        string $text = '',
+        public bool $tail = false,
+        public bool $hyperlinks = false,
+        public bool $scrollbar = false,
+        ?string $key = null,
+        ?string $id = null,
+        string|array|null $class = null,
+        ?array $style = null,
+    ) {
+        $this->with($key, $id, $class, $style);
         $this->text = $text;
         $this->followTail($tail);
     }

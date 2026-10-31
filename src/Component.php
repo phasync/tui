@@ -405,9 +405,11 @@ abstract class Component extends Element
      * `stopped()` and wake `sleep()`, so its coroutines know they are to end, and wait for its
      * end: `unmount()` runs when its last coroutine has returned and its children have ended
      * (each the same way), or after $timeout seconds at the latest if a coroutine does not
-     * listen. When `dispose()` returns, `unmount()` has run. For a root, the surface is closed
-     * first, which detaches a terminal device attached to it. The surface keeps its last
-     * content. Safe to call twice; children are disposed by their parent.
+     * listen. When `dispose()` returns, `unmount()` has run. For a root, the renders asked for
+     * until now are done first (what the program changed last shows in the last frame, which
+     * an inline device leaves on the terminal), then the surface is closed, which detaches a
+     * terminal device attached to it. The surface keeps its last content. Safe to call twice;
+     * children are disposed by their parent.
      *
      * Called from one of the component's own coroutines (its `run()`, a `go()`, a `Terminal`'s
      * `$onExit`) or from one of a descendant's (a child quitting the program by disposing the
@@ -422,6 +424,9 @@ abstract class Component extends Element
     {
         if (!$this->mounted) {
             return;
+        }
+        if ($this->parent === null && self::$dirty !== []) {
+            self::renderFrame();        // the last frame shows what was asked last
         }
         $me = current();
         $fromInside = $me === null || $this->runs($me);

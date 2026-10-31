@@ -110,7 +110,6 @@ it('submits a Form in a Dialog with Enter in a field: validated, then answered w
         $t->settle();
         $t->press('enter');                       // empty name: refused, with the message
         $t->settle();
-        fwrite(STDERR, $t->text() . "\n" . json_encode($app->answers) . "\n");
         expect($app->answers)->toBe([])->and($t->text())->toContain('A name, please.')->and($submitted)->toBe([]);
         $t->type("Ada\n");                        // the name field has the focus again
         $t->settle();
