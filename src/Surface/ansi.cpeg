@@ -24,17 +24,27 @@
 
 Stream = Item* $
 
+# The order of the items is the order in which the generated parser looks at them, and it is
+# chosen for speed: the alternatives are disjoint by their first character. The sequences that
+# start with ESC and the C0 controls come first because their first byte is known from their
+# patterns (written in ASCII for that reason), so the compiler guards each with a comparison of
+# one byte; then text; then what starts with a C1 control, behind one look at that character.
+# At the end of a chunk the loop costs one failed match of Text and one of that look.
+Item = Escape
+     | Control
+     | Text
+     | C1Item
+
 # The sequence rules start differently after ESC (CSI "[", OSC "]", DCS "P", the strings "X^_",
 # Esc everything else), so their order only decides how soon the common ones are found.
-Item = Text
-     | Control
-     | Csi
-     | Esc
-     | Osc
-     | Dcs
-     | Str
-     | C1
-     | Incomplete
+Escape = Csi
+       | Esc
+       | Osc
+       | Dcs
+       | Str
+       | Incomplete
+
+C1Item = &/[\x{80}-\x{9f}]/ (CsiC1 | OscC1 | DcsC1 | StrC1 | C1 | IncompleteC1)
 
 # A run of printable characters: everything except the C0 controls, DEL and the C1 controls.
 Text = /[^\x00-\x1f\x7f-\x{9f}]+/                   <? $state['vt']->print($_0); return true; ?>
@@ -59,7 +69,8 @@ Embedded = /[\x00-\x17\x19\x1c-\x1f\x7f]/
 # sequence the general rule takes, matched as one terminal and handed over as it stands.
 Csi = /\x1b\[[<=>?]?[0-9:;]*[\x20-\x2f]*[\x40-\x7e]/   <? $state['vt']->csiSequence($_0); return true; ?>
     | /\x1b/ pre:Embedded* "[" body:CsiChar* end:CsiEnd   <? $state['vt']->csi($pre, $body, $end); return true; ?>
-    | /\x{9b}/ body:CsiChar* end:CsiEnd                   <? $state['vt']->csi([], $body, $end); return true; ?>
+
+CsiC1 = /\x{9b}/ body:CsiChar* end:CsiEnd               <? $state['vt']->csi([], $body, $end); return true; ?>
 
 CsiChar = /[\x20-\x3f]+/
         | Embedded
@@ -76,7 +87,8 @@ CsiEnd = /[\x40-\x7e]/
 # Control characters inside the string are ignored. CAN and SUB cancel it; ESC followed by
 # anything but a backslash, or a C1 control other than ST, aborts it without dispatching.
 Osc = /\x1b/ pre:Embedded* "]" text:OscText end:OscEnd    <? $state['vt']->osc($pre, $text, $end); return true; ?>
-    | /\x{9d}/ text:OscText end:OscEnd                    <? $state['vt']->osc([], $text, $end); return true; ?>
+
+OscC1 = /\x{9d}/ text:OscText end:OscEnd                  <? $state['vt']->osc([], $text, $end); return true; ?>
 
 OscText = /[^\x07\x18\x1a\x1b\x{80}-\x{9f}]*/
 
@@ -87,12 +99,14 @@ OscEnd = /\x07|\x1b\\|\x{9c}/
 # --- DCS: ESC P or U+0090, a header and data up to ST -----------------------------------------
 # Parsed and ignored (sixel, tmux pass-through, XTGETTCAP and DECRQSS requests).
 Dcs = /\x1b/ pre:Embedded* "P" StrText StrEnd             <? $state['vt']->ignoredString($pre); return true; ?>
-    | /\x{90}/ StrText StrEnd                             <? return true; ?>
+
+DcsC1 = /\x{90}/ StrText StrEnd                           <? return true; ?>
 
 # --- SOS, PM and APC: ESC X, ESC ^, ESC _ or U+0098, U+009E, U+009F, data up to ST ------------
 # Parsed and ignored.
 Str = /\x1b/ pre:Embedded* /[X^_]/ StrText StrEnd         <? $state['vt']->ignoredString($pre); return true; ?>
-    | /[\x{98}\x{9e}\x{9f}]/ StrText StrEnd               <? return true; ?>
+
+StrC1 = /[\x{98}\x{9e}\x{9f}]/ StrText StrEnd             <? return true; ?>
 
 StrText = /[^\x18\x1a\x1b\x{80}-\x{9f}]*/
 
@@ -127,11 +141,14 @@ EscOther = /[\x{a0}-\x{10ffff}]/                    <? return ''; ?>
          | &/[\x1b\x{80}-\x{9f}]/                   <? return ''; ?>
 
 # --- C1 controls in the ground state (IND, NEL, HTS, RI; the rest are ignored) ----------------
-# The C1 forms of CSI, OSC, DCS, SOS, PM and APC are not listed: they start the rules above, and
-# when their sequence is cut off they are left to Incomplete.
+# The C1 forms of CSI, OSC, DCS, SOS, PM and APC are not listed: they start the *C1 rules above,
+# and when their sequence is cut off they are left to IncompleteC1.
 C1 = /[\x{80}-\x{8f}\x{91}-\x{97}\x{99}\x{9a}\x{9c}]/   <? $state['vt']->c1($_0); return true; ?>
 
 # --- A sequence cut off by the end of the chunk -----------------------------------------------
-# Only reached when every rule above failed, which (the rules being total) means the input ended
-# inside a sequence. The tail is kept and parsed again together with the next chunk.
-Incomplete = /[\x1b\x{90}\x{98}\x{9b}\x{9d}-\x{9f}][\s\S]*/ $   <? $state['vt']->incomplete($_0); return true; ?>
+# Only reached when every rule before it failed (the last alternative of Escape and of C1Item),
+# which (the rules being total) means the input ended inside a sequence. The tail is kept and
+# parsed again together with the next chunk.
+Incomplete = /\x1b[\s\S]*/ $                               <? $state['vt']->incomplete($_0); return true; ?>
+
+IncompleteC1 = /[\x{90}\x{98}\x{9b}\x{9d}-\x{9f}][\s\S]*/ $    <? $state['vt']->incomplete($_0); return true; ?>

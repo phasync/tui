@@ -134,6 +134,7 @@ abstract class Element
             $this->elementAttributes['class'] = \is_array($class) ? array_values($class) : preg_split('/\s+/', trim($class), -1, \PREG_SPLIT_NO_EMPTY);
         }
         if ($this instanceof Component && $this->elementAttributes !== $before) {
+            Component::stylesMayChange();
             $this->markDirty();     // (its look may depend on them)
         }
         return $this;

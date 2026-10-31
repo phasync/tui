@@ -233,6 +233,10 @@ abstract class Component extends Element
     private ?Stylesheet $stylesheet = null;
     /** The style a parent's element tree gives this component to inherit. */
     private ?ComputedStyle $inherited = null;
+    /** @var array{int, int, int, int, array<string, ComputedStyle>}|null the answers of style() and the counters they stand at */
+    private ?array $styleMemo = null;
+    /** Counts changes to what styles depend on (see stylesMayChange()). */
+    private static int $styleVersion = 0;
     /** @var array<string, array{int, int, ?array}> the rooms parents' layouts measured this component in since its last render, and the answers */
     private array $measured = [];
     /** @var array<string, array{int,int}|null> measureFor() by room, until the next markDirty() or render */
@@ -2141,6 +2145,9 @@ abstract class Component extends Element
     {
         $fresh->handedTo = \WeakReference::create($this);
         $changed = $this->adoptAttributes($fresh);
+        if ($changed) {
+            self::$styleVersion++;
+        }
         foreach (self::props(static::class) as $name) {
             $value = $fresh->$name;
             if ($value !== $this->$name) {
@@ -2246,6 +2253,7 @@ abstract class Component extends Element
 
     private function renderSubtree(): void
     {
+        self::$styleVersion++;
         $this->markDirty();
         foreach ($this->owned() as $child) {
             $child->renderSubtree();
@@ -2274,13 +2282,37 @@ abstract class Component extends Element
      */
     final public function style(string|array|null $part = null, string ...$states): ComputedStyle
     {
+        // (asked for every component of every frame, several times: an answer stands while
+        // nothing a style depends on changed anywhere, see stylesMayChange(); a render asking
+        // another component computes it, so that a focus it reads subscribes it as hasFocus() does)
+        $key = $part === null && $states === [] ? '' : (\is_array($part) ? implode('>', $part) : "$part") . ':' . implode(':', $states);
+        $memo = $this->styleMemo;
+        if ($memo !== null && isset($memo[4][$key]) && $memo[0] === self::$styleVersion && $memo[1] === Surface::focusVersion()
+            && $memo[2] === self::$treeVersion && $memo[3] === Surface::geometryVersion() && (self::$reader === null || self::$reader === $this)) {
+            return $memo[4][$key];
+        }
         $sheet = $this->stylesheet();
         $own = $this->states();
         $style = $sheet->compute($this, $own, $this->inherited ?? $this->parent?->style(), $part, array_values($states));
         if ($style->hoverAware && !isset(self::$hoverAware[$this])) {
             $this->followPointer();
         }
+        if ($memo === null || $memo[0] !== self::$styleVersion || $memo[1] !== Surface::focusVersion() || $memo[2] !== self::$treeVersion || $memo[3] !== Surface::geometryVersion()) {
+            $memo = [self::$styleVersion, Surface::focusVersion(), self::$treeVersion, Surface::geometryVersion(), []];
+        }
+        $memo[4][$key] = $style;
+        $this->styleMemo = \count($memo[4]) > 32 ? null : $memo;
         return $style;
+    }
+
+    /**
+     * @internal Something a component's style may depend on changed (attributes, own states, a
+     * stylesheet or theme, the style inherited, the mouse): the answers `style()` keeps are
+     * computed again. The focus, the tree and the geometry have their own counters.
+     */
+    public static function stylesMayChange(): void
+    {
+        self::$styleVersion++;
     }
 
     /**
@@ -2391,6 +2423,7 @@ abstract class Component extends Element
     {
         if ($parent != $this->inherited) {
             $this->inherited = $parent;
+            self::$styleVersion++;
             $this->markDirty();
         }
     }
@@ -2409,6 +2442,7 @@ abstract class Component extends Element
             return false;
         }
         self::$pointer = [\WeakReference::create($root), $x, $y];
+        self::$styleVersion++;
         foreach (self::$hoverAware ?? [] as $component => $was) {
             $now = $component->hoverKey();
             if ($now !== $was) {
@@ -2472,6 +2506,7 @@ abstract class Component extends Element
         } else {
             unset($this->styleStates[$state]);
         }
+        self::$styleVersion++;
         $this->parent?->relayout();       // (a Box around it in the parent's tree shows it too)
         $this->markDirty();
     }

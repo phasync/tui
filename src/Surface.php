@@ -75,6 +75,8 @@ final class Surface implements \Stringable
     /** Counts the changes of focus requests and focus paths, for those who keep an answer about the focus. */
     private static int $focusVersion = 0;
     private static int $hostingVersion = 0;
+    /** Counts the changes of geometry (see geometryChanged()). */
+    private static int $geometryVersion = 0;
     /** @var array<int, Surface> the surfaces focus() or takeFocus() was called on since the focus last settled */
     private static array $requested = [];
     /** Something other than a focus request changed the focus of a tree since it last settled. */
@@ -944,10 +946,21 @@ final class Surface implements \Stringable
      */
     public static function geometryChanged(): void
     {
+        self::$geometryVersion++;
         self::$geometryChanged = true;
         if (self::$treeChanges === 0) {
             self::checkAreas();
         }
+    }
+
+    /**
+     * @internal A number that changes whenever a window moves, changes size, scrolls, is hosted
+     * or unhosted, or a surface is resized: an answer about where things are computed at the same
+     * number is still right.
+     */
+    public static function geometryVersion(): int
+    {
+        return self::$geometryVersion;
     }
 
     /** Tell the `area` listeners whose surface's area differs from the one they were told last. */
