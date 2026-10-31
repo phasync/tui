@@ -196,7 +196,7 @@ abstract class Component extends Element
     private ?array $shownWith = null;
     /** @var array<string, true> the keys of the children the last layout of $shown placed */
     private array $placed = [];
-    /** @var array<int, true> the started components it placed as themselves, by object id */
+    /** @var array<int, Component> the started components it placed as themselves (another owner's, a kept instance), by object id */
     private array $placedSelf = [];
     /** The next render lays the tree out again, also when it is the same (see relayout()). */
     private bool $relayout = false;
@@ -878,7 +878,7 @@ abstract class Component extends Element
             if (self::keyEnd($root->surface)?->canFocus()) {
                 continue;
             }
-            $first = self::focusables($root->surface)[0] ?? null;
+            $first = self::focusOrder($root->surface)[0] ?? null;
             if ($first !== null) {
                 unset(self::$unfocused[$root]);
                 $first->focus();
@@ -887,13 +887,16 @@ abstract class Component extends Element
     }
 
     /**
-     * The components below $surface that take keys themselves (`canFocus()`), enabled, and the
-     * surfaces of the elements with `onKey`, in the order they show: by their windows top to
-     * bottom, left to right, depth first.
+     * The stops of the Tab walk below $surface, in the order Tab visits them: the components
+     * that take keys themselves (`canFocus()`) and are enabled, and the surfaces of the elements
+     * with `onKey:` that hold no such stop (an element with `onKey:` around fields is not a
+     * stop: its keys apply while the focus is inside it). In the order they show: by their
+     * windows top to bottom, left to right, depth first. For a container widget that moves the
+     * focus itself (the first field of a pane: `self::focusOrder($pane->surface)[0]?->focus()`).
      *
      * @return list<Component|Surface>
      */
-    private static function focusables(Surface $surface): array
+    final protected static function focusOrder(Surface $surface): array
     {
         $views = array_filter($surface->viewports(), fn(Viewport $v) => $v->width() > 0 && $v->height() > 0);
         usort($views, fn(Viewport $a, Viewport $b) => [$a->y(), $a->x()] <=> [$b->y(), $b->x()]);
@@ -907,10 +910,12 @@ abstract class Component extends Element
                 $out[] = $c;
             } elseif ($c === null && !$v->source->isFocusable()) {
                 continue;
-            } elseif ($c === null && Tree::takesKeys($v->source)) {
+            }
+            $inner = self::focusOrder($v->source);
+            if ($c === null && $inner === [] && Tree::takesKeys($v->source)) {
                 $out[] = $v->source;
             }
-            array_push($out, ...self::focusables($v->source));
+            array_push($out, ...$inner);
         }
         return $out;
     }
@@ -930,7 +935,7 @@ abstract class Component extends Element
                 break;
             }
         }
-        $all = self::focusables($scope);
+        $all = self::focusOrder($scope);
         $n = \count($all);
         $at = array_search($this->focusedElement() ?? $this, $all, true);
         if ($n === 0 || ($n === 1 && $at !== false)) {
@@ -1045,10 +1050,7 @@ abstract class Component extends Element
             }
         }
         // not shown yet: the nearest ancestor that is joins the focus path and passes keys down
-        $c = $this;
-        while ($c->parent !== null && $c->surface->viewport() === null) {
-            $c = $c->parent;
-        }
+        $c = $this->shownFrom();
         if ($c !== $this) {
             $c->surface->focus();
         }
@@ -1134,10 +1136,7 @@ abstract class Component extends Element
             }
         }
         // keys come down from the root of the tree the nearest shown component is in
-        $c = $this;
-        while ($c->surface->viewport() === null && $c->parent !== null) {
-            $c = $c->parent;
-        }
+        $c = $this->shownFrom();
         // and take the way dispatch() gives them: at a component, to the child not shown yet it
         // passes them to (see toUnshown()), else to the window its surface focuses
         for ($s = $c->surface->root(); $s !== null; $s = $next?->surface ?? $s->focused()) {
@@ -1148,6 +1147,25 @@ abstract class Component extends Element
             $next = $on !== null && $on->mounted ? $on->unshownFocus() : null;
         }
         return false;
+    }
+
+    /**
+     * The nearest component from this one up that is shown in its root's tree: this one when
+     * it is (or when it is a root), else the nearest ancestor that is. A component is not shown
+     * when its surface is in no window, and also when it is in the windows of a component that
+     * is not shown (inside the pane of a hidden tab).
+     */
+    private function shownFrom(): Component
+    {
+        $c = $this;
+        while ($c->parent !== null) {
+            $top = self::$onSurface[$c->surface->root()] ?? null;
+            if ($top === null || $top->parent === null) {
+                break;      // (in the tree of the program's root, or of a surface of its own)
+            }
+            $c = $top->parent;
+        }
+        return $c;
     }
 
     /**
@@ -1423,8 +1441,9 @@ abstract class Component extends Element
                 $this->parent?->relayout();     // it needs another size: the parent lays it out again
             }
         }
-        // children shown for the first time draw now, at the size the layout gave them
-        foreach ($this->children as $child) {
+        // children shown for the first time draw now, at the size the layout gave them (also
+        // another owner's that this tree shows, which its owner's render did not lay out)
+        foreach ([...$this->children, ...$this->placedSelf] as $child) {
             if (!$child->rendered && $child->surface->viewport() !== null) {
                 $child->firstRender();
             }
@@ -1619,7 +1638,7 @@ abstract class Component extends Element
         if ($fresh->mounted) {
             // started already (an instance the program kept, or another component's): itself
             if ($create) {
-                $this->placedSelf[spl_object_id($fresh)] = true;
+                $this->placedSelf[spl_object_id($fresh)] = $fresh;
             }
             return $fresh;
         }

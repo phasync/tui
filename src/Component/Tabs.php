@@ -10,6 +10,7 @@ use phasync\Tui\Element\Layers;
 use phasync\Tui\Element\Row;
 use phasync\Tui\Element\Span;
 use phasync\Tui\Element\Text as TextElement;
+use phasync\Tui\Internal\Live;
 use phasync\Tui\Key;
 use phasync\Tui\Mouse;
 use phasync\Tui\Text;
@@ -178,10 +179,14 @@ class Tabs extends Component
     {
         $old = $this->current;
         $oldIndex = $old === null ? 0 : (int) array_search($old, array_keys($this->tabs), true);
-        $went = $this->childKeys();
+        $held = $this->heldKeys();
+        $panes = $this->tabs;
         $this->tabs = self::check($tabs);
-        foreach (array_diff_key($went, $this->childKeys()) as $childKey => $_) {
-            $this->child($childKey)?->stop();      // the tab went (or has another component now)
+        foreach (array_diff_key($held, $this->heldKeys()) as $childKey => $_) {
+            $this->child($childKey)?->stop();      // a component of another owner's left its tab (or the tab went)
+        }
+        foreach (array_diff_key($panes, $this->tabs) as $key => $_) {
+            $this->child('tab:' . $key)?->stop();  // the tab went: its pane and what it made
         }
         $keys = array_keys($this->tabs);
         if ($current !== null && isset($this->tabs[$current])) {
@@ -224,21 +229,29 @@ class Tabs extends Component
         return $this->tabs[$key]['content'] ?? null;
     }
 
-    /** @return array<string, true> the keys of the children that are the components of the tabs */
-    private function childKeys(): array
+    /**
+     * The keys under which this component holds the components of other owners that the tabs
+     * show (started already: an owner's `child()`, a kept instance), so that a hidden tab keeps
+     * them alive: by object id, which is unique while they run.
+     *
+     * @return array<string, true>
+     */
+    private function heldKeys(): array
     {
         $out = [];
         foreach ($this->tabs as $key => $_) {
             foreach ($this->tabComponents((string) $key) as $c) {
-                $out[$this->childKey((string) $key, $c)] = true;
+                if ($c->isMounted()) {
+                    $out['held:' . spl_object_id($c)] = true;
+                }
             }
         }
         return $out;
     }
 
     /**
-     * The components of tab $key: its content when it is one, else those its element tree
-     * holds, in the order they show (not those inside them).
+     * The components of tab $key's content as given: the content when it is one, else those
+     * its element tree holds, in the order they show (not those inside them).
      *
      * @return list<Component>
      */
@@ -352,39 +365,26 @@ class Tabs extends Component
     // ------------------------------------------------------------------------------------------
     // Focus
 
-    /** The component of the current tab, when its content is one. */
-    private function currentComponent(): ?Component
+    /**
+     * The pane of the current tab: a component of this one, kept while the tab exists, that
+     * shows the tab's content as its element tree. So the components in a content are laid out
+     * like those of any render (a `new Tree()` made by every render of the owner is the same
+     * tree, with the new props), and those of a hidden tab keep running.
+     */
+    private function currentPane(): ?Live
     {
-        if ($this->current === null) {
-            return null;
-        }
-        $content = $this->tabs[$this->current]['content'];
-        return $content instanceof Component ? $this->child($this->childKey($this->current, $content)) : null;
+        return $this->current === null ? null : $this->child('tab:' . $this->current);
     }
 
-    /** @return list<Component> the components of the current tab (see tabComponents()), as they run */
-    private function contentComponents(): array
-    {
-        if ($this->current === null) {
-            return [];
-        }
-        $out = [];
-        foreach ($this->tabComponents($this->current) as $c) {
-            $out[] = $this->child($this->childKey($this->current, $c)) ?? $c;
-        }
-        return $out;
-    }
-
-    private function childKey(string $key, Component $content): string
-    {
-        return 'tab:' . $key . ':' . spl_object_id($content);
-    }
-
-    /** True while the focus is in the shown content (in a component of it), false on the bar. */
+    /** True while the focus is in the shown content, false on the bar. */
     public function inContent(): bool
     {
-        foreach ($this->contentComponents() as $c) {
-            if ($c->hasFocus()) {
+        if ($this->currentPane()?->hasFocus()) {
+            return true;
+        }
+        // (a component of another owner's that was focused before its pane showed it)
+        foreach ($this->current === null ? [] : $this->tabComponents($this->current) as $c) {
+            if ($c->isMounted() && $c->hasFocus()) {
                 return true;
             }
         }
@@ -393,22 +393,30 @@ class Tabs extends Component
 
     /**
      * Move the focus into the shown content (Tab, Enter on the bar): to its first component
-     * that takes keys, else its first component, whatever elements wrap it (a component not
-     * shown yet gets it when it starts). False when the content has no component or the focus
-     * is there already.
+     * that takes keys (or element with `onKey:`), else its first component, whatever elements
+     * wrap it (a component not shown yet gets it when it starts). False when the content has
+     * nothing to focus or the focus is there already.
      */
     public function focusContent(): bool
     {
-        $components = $this->contentComponents();
-        if ($components === [] || $this->inContent()) {
+        $pane = $this->currentPane();
+        if ($pane === null || $this->inContent()) {
             return false;
         }
-        $target = $components[0];
-        foreach ($components as $c) {
-            if ($c->canFocus()) {
-                $target = $c;
-                break;
+        // (laid out already: what it shows; else the content as given, which it will show)
+        $target = self::focusOrder($pane->surface)[0] ?? null;
+        if ($target === null) {
+            $components = $this->tabComponents($this->current);
+            foreach ($components as $c) {
+                if ($c->canFocus()) {
+                    $target = $c;
+                    break;
+                }
             }
+            $target ??= $components[0] ?? ($pane->surface->viewports() !== [] ? $pane : null);
+        }
+        if ($target === null) {
+            return false;
         }
         $target->focus();
         return true;
@@ -420,8 +428,8 @@ class Tabs extends Component
         if (!$this->inContent()) {
             return false;
         }
-        foreach ($this->contentComponents() as $c) {
-            if ($c instanceof Terminal && $c->hasFocus()) {
+        for ($s = $this->currentPane()->surface; $s !== null; $s = $s->focused()) {
+            if (Component::of($s) instanceof Terminal) {
                 return false;
             }
         }
@@ -595,18 +603,23 @@ class Tabs extends Component
 
     protected function render(): Element
     {
+        // the components of other owners in every tab stay alive while it is hidden
         $content = null;
         foreach ($this->tabs as $key => $tab) {
             $key = (string) $key;
-            // the components of every tab stay alive while it is hidden; only the current tab is in the tree
             foreach ($this->tabComponents($key) as $c) {
-                $this->keep($this->childKey($key, $c), fn() => $c);
+                if ($c->isMounted()) {
+                    $this->keep('held:' . spl_object_id($c), fn() => $c);
+                }
             }
+            // every tab has a pane, kept while the tab exists; only the current one is in the tree
+            $pane = $this->keep('tab:' . $key, fn() => new Live($tab['content']));
             if ($key === $this->current) {
-                $c = $tab['content'];
-                $content = $c instanceof Component
-                    ? $this->child($this->childKey($key, $c))->with(height: '1fr')
-                    : $c->with(key: 'tab:' . $key, height: '1fr');
+                if ($pane->show !== $tab['content']) {
+                    $pane->show = $tab['content'];
+                    $pane->markDirty();
+                }
+                $content = $pane->with(height: '1fr');
             }
         }
         $bar = $this->bar();
