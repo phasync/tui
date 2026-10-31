@@ -155,6 +155,14 @@ final class Surface implements \Stringable
         if (!mb_check_encoding($data, 'UTF-8')) {
             $data = self::scrub($data);
         }
+        if ($vt->pending !== '' && \strlen($vt->pending) + \strlen($data) <= Emulator::MAX_PENDING
+            && !str_ends_with($vt->pending, "\e") && !str_ends_with($vt->pending, "\xc2")
+            && strpbrk($data, "\x07\x18\x1a\x1b\xc2") === false && preg_match('/^(?:\e[\]_P^X]|\xc2[\x90\x98\x9d\x9e\x9f])/', $vt->pending) === 1) {
+            // (the middle of a long string, an image in an OSC or APC: nothing in this chunk can
+            // end it, so it is kept for the chunk that does instead of being parsed again)
+            $vt->pending .= $data;
+            return;
+        }
         $source = $vt->pending . $data;
         $vt->pending = '';
         if ($source !== '') {
@@ -460,6 +468,29 @@ final class Surface implements \Stringable
     public function setDefaultColors(int $fg, int $bg): void
     {
         $this->vt->colors = [$fg, $bg];
+    }
+
+    /**
+     * A cell's size in pixels as [width, height]: what images are measured in (a Kitty image
+     * without a cell count, an iTerm2 image of `auto` size, a `Canvas` drawing in pixels) and
+     * what a program asking with `CSI 16 t` is told. 8x16 until set; a terminal device sets
+     * its root's to the real terminal's when the terminal tells it, and a hosted surface takes
+     * its host's.
+     *
+     * @return array{int, int}
+     */
+    public function cellSize(): array
+    {
+        return $this->vt->cellSize;
+    }
+
+    /** Set the size of a cell in pixels (see `cellSize()`), for this surface and the surfaces it hosts. */
+    public function setCellSize(int $width, int $height): void
+    {
+        $this->vt->cellSize = [max(1, $width), max(1, $height)];
+        foreach ($this->viewports() as $view) {
+            $view->source->setCellSize($width, $height);
+        }
     }
 
     /** Whether the program switched the keypad to application mode (DECKPAM, ESC =). */

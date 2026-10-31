@@ -476,6 +476,9 @@ abstract class TerminalDevice
         if ($this->colors >= Color::DEPTH_TRUECOLOR) {
             return Ansi::style($style);
         }
+        if ($style->image !== null) {
+            $style = $style->withImage(null);
+        }
         $id = spl_object_id($style);
         if (!isset($this->sgr[$id])) {
             $fg = Color::nearest($style->fg, $this->colors);

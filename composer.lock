@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "035f60308adc90f06a7a2fb9a5ab458d",
+    "content-hash": "79636eeb462576032eb31a42705e6ee1",
     "packages": [
         {
             "name": "fiber-interop/api",
@@ -113,6 +113,46 @@
                 "source": "https://github.com/fiber-interop/scope/tree/v0.5.0"
             },
             "time": "2026-10-30T08:24:00+00:00"
+        },
+        {
+            "name": "phasync/canvas",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../canvas",
+                "reference": "cec2f3648b0029a569f934cef03304b8e43c6e51"
+            },
+            "require": {
+                "php": ">=8.2"
+            },
+            "require-dev": {
+                "phpunit/phpunit": "^11.0"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "phasync\\Canvas\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "phasync\\Canvas\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Frode Børli",
+                    "email": "frode@ennerd.com"
+                }
+            ],
+            "description": "The browser's 2D canvas API for PHP, over GD or Imagick",
+            "transport-options": {
+                "symlink": true,
+                "relative": true
+            }
         }
     ],
     "packages-dev": [

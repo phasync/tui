@@ -25,7 +25,7 @@ final class Emulator
     public const NAME = 'phasync-tui(0.0.1)';
 
     /** Largest pending tail kept for an unterminated sequence before it is dropped. */
-    private const MAX_PENDING = 1 << 20;
+    public const MAX_PENDING = 64 << 20;
 
     public int $cols;
     public int $rows;
@@ -86,6 +86,11 @@ final class Emulator
     /** @var array{int,int} default foreground and background, as reported to OSC 10/11 queries */
     public array $colors;
 
+    /** @var array{int,int} a cell's size in pixels [width, height]: what images are measured in, and what CSI 16 t reports */
+    public array $cellSize = [8, 16];
+    /** The image protocols (Kitty graphics, iTerm2 inline images). */
+    public Graphics $graphics;
+
     public int $version = 0;
     /** @var array<int, int> version at which each row last changed */
     public array $rowVersion = [];
@@ -102,6 +107,7 @@ final class Emulator
         $this->emit = $emit;
         $this->pen = Style::plain();
         $this->colors = [Color::rgb(229, 229, 229), Color::rgb(0, 0, 0)];
+        $this->graphics = new Graphics($this);
         $this->reset();
     }
 
@@ -142,6 +148,7 @@ final class Emulator
         $this->modifyOtherKeys = 0;
         $this->lastChar = null;
         $this->lastX = $this->lastY = -1;
+        $this->graphics->reset();
         $this->touchAll();
     }
 
@@ -752,9 +759,13 @@ final class Emulator
                 }
                 break;
             case 't':
-                if (($p[0] ?? 0) === 18) {
-                    $this->reply(sprintf("\e[8;%d;%dt", $this->rows, $this->cols));
-                }
+                // window reports: the text area in characters (18) and in pixels (14), a cell (16)
+                match ($p[0] ?? 0) {
+                    18 => $this->reply(sprintf("\e[8;%d;%dt", $this->rows, $this->cols)),
+                    14 => $this->reply(sprintf("\e[4;%d;%dt", $this->rows * $this->cellSize[1], $this->cols * $this->cellSize[0])),
+                    16 => $this->reply(sprintf("\e[6;%d;%dt", $this->cellSize[1], $this->cellSize[0])),
+                    default => null,
+                };
                 break;
             case 'u':
                 if ($raw === '') {
@@ -882,6 +893,9 @@ final class Emulator
             $id = preg_match('/(?:^|:)id=([^:]*)/', $parts[0], $m) ? $m[1] : '';
             $this->pen = $this->pen->withLink($parts[1] ?? '', $id);
         }
+        if ($code === '1337') {
+            $this->graphics->iterm($value);
+        }
         if ($code === '52') {
             // clipboard write: "52;<selections>;<base64>"; reading the clipboard is not offered
             $parts = explode(';', $value, 2);
@@ -895,10 +909,24 @@ final class Emulator
         }
     }
 
-    /** DCS, SOS, PM or APC: ignored apart from controls embedded before the introducer. */
+    /** DCS: ignored apart from controls embedded before the introducer. */
     public function ignoredString(array $pre): void
     {
         $this->executeAll($pre);
+    }
+
+    /**
+     * SOS (X), PM (^) or APC (_) with its text; $end is '' when cancelled or aborted. An APC
+     * that starts with G is a Kitty graphics command; the rest are ignored.
+     *
+     * @param list<string> $pre
+     */
+    public function string(array $pre, string $kind, string $text, string $end): void
+    {
+        $this->executeAll($pre);
+        if ($end !== '' && $kind === '_' && ($text[0] ?? '') === 'G') {
+            $this->graphics->kitty($text);
+        }
     }
 
     /** A C1 control in the ground state (not one that introduces a sequence). */
@@ -934,7 +962,7 @@ final class Emulator
         return $this->pen->bg === Color::DEFAULT ? Style::plain() : Style::of(Color::DEFAULT, $this->pen->bg);
     }
 
-    private function reply(string $bytes): void
+    public function reply(string $bytes): void
     {
         ($this->emit)('reply', $bytes);
     }

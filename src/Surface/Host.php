@@ -73,6 +73,9 @@ final class Host
                 throw new \InvalidArgumentException('A surface cannot host itself or a surface that hosts it');
             }
             $view = new Viewport($child, $this, $x ?? 0, $y ?? 0, $width ?? $child->cols(), $height ?? $child->rows());
+            if ($child->cellSize() !== $this->surface->cellSize()) {
+                $child->setCellSize(...$this->surface->cellSize());
+            }
             if ($child->viewport() === null) {
                 $child->joinTree();
             }

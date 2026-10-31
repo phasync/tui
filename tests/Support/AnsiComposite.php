@@ -170,6 +170,12 @@ final class AnsiComposite
             }
             $st = $styles[$i];
             $out .= Ansi::moveTo($x, $y) . Ansi::style($st) . Ansi::link($st->link, $st->linkId) . $ch;
+            if ($st->image !== null) {
+                // (the pixels the cell shows, placed over it alone)
+                [$px, $py, $pw, $ph] = $st->image->pixels();
+                $out .= Ansi::moveTo($x, $y) . Ansi::kitty(['a' => 'T', 'q' => 2, 'x' => $px, 'y' => $py, 'w' => $pw, 'h' => $ph, 'c' => 1, 'r' => 1, 'C' => 1]
+                    + Ansi::kittyFormat($st->image->image), $st->image->image->data);
+            }
         }
         $f->write($out . "\e[0m" . Ansi::link());
     }

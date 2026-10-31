@@ -55,7 +55,11 @@ final class Ansi
      */
     public static function style(Style $style): string
     {
-        // (styles are interned and live as long as the process: their sequence is made once)
+        // (styles are interned and live as long as the process: their sequence is made once; one
+        // with an image lives only while cells have it, and is written as its style without it)
+        if ($style->image !== null) {
+            $style = $style->withImage(null);
+        }
         return self::$styles[spl_object_id($style)] ??= self::styleNow($style);
     }
 
@@ -202,6 +206,62 @@ final class Ansi
     public static function hyperlink(string $text, string $uri, string $id = ''): string
     {
         return self::link($uri, $id) . $text . self::link();
+    }
+
+    /**
+     * An image shown at the cursor over $cols x $rows cells, stretched to fill them, the cursor
+     * left where it is: a Kitty graphics transmit-and-display (`a=T`, `C=1`, replies off). Every
+     * Surface understands it, and a terminal device shows the cells with the protocol the real
+     * terminal has (or as quarter blocks when it has none), so this is how a producer puts a
+     * picture in its cells. $image is PNG bytes or an `Image`.
+     *
+     *     $surface->write(Ansi::moveTo(2, 1) . Ansi::image(file_get_contents('logo.png'), 20, 8));
+     */
+    public static function image(string|Image $image, int $cols, int $rows): string
+    {
+        $image = \is_string($image) ? Image::of($image) : $image;
+        if ($image === null) {
+            return '';
+        }
+        $keys = ['a' => 'T', 'q' => 2, 'c' => max(1, $cols), 'r' => max(1, $rows), 'C' => 1];
+        return self::kitty($keys + self::kittyFormat($image), $image->format === 'png' || $image->format === 'rgb' || $image->format === 'rgba' ? $image->data : (string) $image->png());
+    }
+
+    /**
+     * A Kitty graphics command with these keys (`['a' => 'p', 'i' => 7, 'c' => 4]`) and payload
+     * (the raw bytes; base64-encoded here and sent in chunks of 4096 as the protocol asks), for
+     * a producer that uses the protocol beyond `image()`: ids, placements, deletes.
+     *
+     * @param array<string, int|string> $keys
+     */
+    public static function kitty(array $keys, string $payload = ''): string
+    {
+        $control = [];
+        foreach ($keys as $k => $v) {
+            $control[] = "$k=$v";
+        }
+        $control = implode(',', $control);
+        if ($payload === '') {
+            return "\e_G$control\e\\";
+        }
+        $chunks = str_split(base64_encode($payload), 4096);
+        $last = \count($chunks) - 1;
+        $out = '';
+        foreach ($chunks as $i => $chunk) {
+            $head = $i === 0 ? $control . ($last > 0 ? ',m=1' : '') : ($i < $last ? 'm=1' : 'm=0');
+            $out .= "\e_G$head;$chunk\e\\";
+        }
+        return $out;
+    }
+
+    /** @internal The Kitty keys of $image's format: f=100 for PNG, f=24/f=32 with the size for raw pixels. @return array<string, int> */
+    public static function kittyFormat(Image $image): array
+    {
+        return match ($image->format) {
+            'rgb' => ['f' => 24, 's' => $image->width, 'v' => $image->height],
+            'rgba' => ['f' => 32, 's' => $image->width, 'v' => $image->height],
+            default => ['f' => 100],
+        };
     }
 
     /** Switch to the alternate screen, saving the cursor (mode 1049), or back with false. */

@@ -47,7 +47,11 @@ function blitScenario(int $seed, bool $own, int $steps = 120, ?Closure $debug = 
         }
     };
     $grow($root, 1);
-    $pieces = ['ab', 'X', ' ', '  ', '中', '👍', 'é', "\e[1m", "\e[0m", "\e[31m", "\e[44m", "\e[7m", "\e[4m", "\e[38;2;1;2;3m",
+    // (images: a PNG over 3x2 cells, raw pixels moving the cursor, an iTerm2 file)
+    $png = \phasync\Tui\Image::encodePng(str_repeat("\xff\x00\x00\x00\xff\x00", 24 * 16), 24, 32, false);
+    $raw = str_repeat("\x10\x20\x30", 16 * 16);
+    $pieces = [Ansi::image($png, 3, 2), Ansi::kitty(['a' => 'T', 'f' => 24, 's' => 16, 'v' => 16, 'q' => 2], $raw),
+        "\e]1337;File=inline=1;width=2;height=1;preserveAspectRatio=0:" . base64_encode($png) . "\x07", 'ab', 'X', ' ', '  ', '中', '👍', 'é', "\e[1m", "\e[0m", "\e[31m", "\e[44m", "\e[7m", "\e[4m", "\e[38;2;1;2;3m",
         "\r\n", "\r\n\r\n", "\e[K", "\e[2;2H", "\e[H", "\e[1L", "\e[2P", "\e[3@", Ansi::hyperlink('ln', 'http://x', 'k'), '中文字'];
     $writers = $own ? [...$leaves, ...$hosts] : $leaves;
     $oracle = new AnsiComposite($twins, $border, $focus);
@@ -118,9 +122,13 @@ function blitScenario(int $seed, bool $own, int $steps = 120, ?Closure $debug = 
 }
 
 it('composes random window trees exactly as the ANSI compositor did (property)', function () {
+    $images = 0;
     foreach (range(1, 40) as $seed) {
-        blitScenario($seed, false);
+        blitScenario($seed, false, debug: function (Surface $root) use (&$images): void {
+            $images += substr_count($root->dump(), 'img=');
+        });
     }
+    expect($images)->toBeGreaterThan(100);     // (image cells were composed, clipped and covered)
 });
 
 it('composes them so when the hosts\' own producers write too: their cells show where no window covers them (property)', function () {

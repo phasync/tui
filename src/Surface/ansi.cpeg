@@ -106,16 +106,17 @@ Dcs = /\x1b/ pre:Embedded* "P" StrText StrEnd             <? $state['vt']->ignor
 DcsC1 = /\x{90}/ StrText StrEnd                           <? return true; ?>
 
 # --- SOS, PM and APC: ESC X, ESC ^, ESC _ or U+0098, U+009E, U+009F, data up to ST ------------
-# Parsed and ignored.
-Str = /\x1b/ pre:Embedded* /[X^_]/ StrText StrEnd         <? $state['vt']->ignoredString($pre); return true; ?>
+# The text goes to the emulator, which reads Kitty graphics commands (APC G) and ignores the rest.
+Str = /\x1b/ pre:Embedded* kind:/[X^_]/ text:StrText end:StrEnd   <? $state['vt']->string($pre, $kind, $text, $end); return true; ?>
 
-StrC1 = /[\x{98}\x{9e}\x{9f}]/ StrText StrEnd             <? return true; ?>
+StrC1 = kind:/[\x{98}\x{9e}\x{9f}]/ text:StrText end:StrEnd      <? $state['vt']->string([], ["\u{98}" => 'X', "\u{9e}" => '^', "\u{9f}" => '_'][$kind], $text, $end); return true; ?>
 
 StrText = /[^\x18\x1a\x1b\x{80}-\x{9f}]*/
 
+# The terminator, or '' when the string is cancelled (CAN, SUB) or aborted (ESC, a C1 control).
 StrEnd = /\x1b\\|\x{9c}/
-       | /[\x18\x1a]/
-       | &/\x1b[^\\]|[\x{80}-\x{9b}\x{9d}-\x{9f}]/
+       | /[\x18\x1a]/                               <? return ''; ?>
+       | &/\x1b[^\\]|[\x{80}-\x{9b}\x{9d}-\x{9f}]/  <? return ''; ?>
 
 # --- Other escape sequences: ESC, intermediates [\x20-\x2f]*, a final character ----------------
 #
