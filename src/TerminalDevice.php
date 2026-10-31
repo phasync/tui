@@ -271,8 +271,8 @@ abstract class TerminalDevice
         $this->probing = microtime(true);
         $this->probe = '';
         $this->send(($this->inline ? self::INLINE_TAKEOVER : self::TAKEOVER) . ($root->title() !== '' ? Ansi::title($root->title()) : '') . "\e[?u\e[>0q\e]11;?\e\\\e[c");
-        go($this->frames(...));
-        go($this->inputs(...));
+        go(fn() => $this->loop($this->frames(...)));
+        go(fn() => $this->loop($this->inputs(...)));
         // the code that attached fails: give the terminal back, so the exception ends fiber\run()
         Internal\Runtime::watch(function () use ($root): void {
             if ($this->root === $root) {
@@ -977,6 +977,8 @@ abstract class TerminalDevice
             if ($this->dispatcher === $token) {
                 $this->events = [];
             }
+            // nothing contained it: the program has failed, and ends (a hung screen would hide it)
+            $this->detach();
             if ($this->waiting === 0) {
                 throw $e;       // (nobody waits for these events: fiber\run() reports it)
             }
@@ -1049,6 +1051,21 @@ abstract class TerminalDevice
     {
         $this->damaged = true;
         $this->wake?->notify();
+    }
+
+    /**
+     * Run a loop of the device; an exception that escapes it (a failure nothing in the
+     * program contained) ends the program: the terminal is given back and the exception goes
+     * on to `fiber\run()`, instead of the screen standing with nobody drawing or reading.
+     */
+    private function loop(\Closure $loop): void
+    {
+        try {
+            $loop();
+        } catch (\Throwable $e) {
+            $this->detach();
+            throw $e;
+        }
     }
 
     /** The frame loop: draw when damaged, at most 60 times a second. */

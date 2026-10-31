@@ -47,9 +47,12 @@ namespace phasync\Tui;
  *   of `Button`s) is not a stop itself: Tab visits the components inside it as without
  *   `onKey`, and its keys apply while one of them has the focus (`p` pauses the row whose
  *   button is focused). Either a
- *   map of keys to closures in the notation of `Component::bindings()`
+ *   map of keys to actions in the notation of `Component::bindings()`
  *   (`['enter' => fn() => $s->open = $id, 'delete' => [fn() => $s->remove($id), 'remove']]`:
- *   a bound key is taken), or one closure for every key, `fn(Key $key, Element $element):
+ *   a bound key is taken), whose actions do what they do there: a closure (given the key and
+ *   the element), the name of a public method of the component whose render made the element,
+ *   or `'quit'` to end the program (`['q' => 'quit']`, `['q' => ['quit', 'quit']]`); or one
+ *   closure for every key, `fn(Key $key, Element $element):
  *   bool`, that returns true when it took the key (`fn(Key $k) => $k->isText() && $s->find($k->text)`).
  *   A key nobody takes goes on to the component that placed the element and its parents.
  * - `onMouse`: `fn(Mouse $mouse, Element $element)`, called for the mouse over the element:

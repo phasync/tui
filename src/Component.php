@@ -2164,15 +2164,19 @@ abstract class Component extends Element
         return $this->keyElements()[0][1] ?? null;
     }
 
-    /** The focused elements' `onKey`, innermost first; true when one took $key. */
+    /**
+     * The focused elements' `onKey`, innermost first; true when one took $key. A bindings array
+     * runs its actions as the component's own bindings do (see runAction()): a method name is a
+     * method of this component (the one whose render made the element), `'quit'` ends the
+     * program, a closure is given the key and the element.
+     */
     private function elementKeys(Key $key): bool
     {
         foreach ($this->keyElements() as [$element]) {
             $on = $element->attribute('onKey');
             if (\is_array($on)) {
                 $binding = self::normalizeBindings($on)[(string) $key] ?? null;
-                if ($binding !== null) {
-                    $this->runElementHandler($binding[0], $key, $element);
+                if ($binding !== null && $this->runAction($binding[0], $key, $element)) {
                     return true;
                 }
             } elseif ($this->runElementHandler($on, $key, $element) === true) {
@@ -2229,20 +2233,33 @@ abstract class Component extends Element
         if ($binding === null || ($always && !$binding[2]) || ($first !== null && $binding[3] !== $first)) {
             return false;
         }
-        $method = $binding[0];
-        if ($method === 'quit' && !method_exists($this, 'quit')) {
-            $method = static fn() => Tui::quit();      // (the library's: the program ends)
+        return $this->runAction($binding[0], $key);
+    }
+
+    /**
+     * Run the action of a key binding, the same wherever it was bound (`bindings()`, `bind()`,
+     * `Tui::run(keys:)`, an element's `onKey:` array): a closure runs as a handler of this
+     * component's, given $key (and the element, for an element's), and takes the key whatever
+     * it returns (`fn() => $s->open = false` gives false and took it); a method name calls that
+     * public method of this component, which takes the key unless it returns false; `'quit'`
+     * ends the program (`Tui::quit()`) when the component has no `quit()` of its own. A failure
+     * is contained as in the component's hooks. True if the key was taken.
+     */
+    private function runAction(string|\Closure $action, Key $key, ?Element $element = null): bool
+    {
+        if ($action === 'quit' && !method_exists($this, 'quit')) {
+            $action = static fn() => Tui::quit();      // (the library's: the program ends)
         }
-        if ($method instanceof \Closure) {
-            // (a closure: run as a handler of this component's, given the key; a bound key is
-            // taken, whatever it returns: `fn() => $s->open = false` gives false and took it)
-            $this->guard(fn() => $this->call($method, $key));
+        if ($action instanceof \Closure) {
+            $args = $element === null ? [$key] : [$key, $element];
+            $this->guard(fn() => $this->call($action, ...$args));
             $this->markDirty();
             return true;
         }
-        $public = method_exists($this, $method) ? new \ReflectionMethod($this, $method) : null;
+        $public = method_exists($this, $action) ? new \ReflectionMethod($this, $action) : null;
         if ($public === null || !$public->isPublic()) {
-            throw new \LogicException(static::class . ": the key '$key' is bound to '$method', which is not a public method");
+            throw new \LogicException(static::class . ": the key '$key' is bound to '$action', which is not a public method"
+                . ($element === null ? '' : ' of the component that rendered the element (bind a closure for anything else)'));
         }
         // (the method of the component's class: called from here, a name that Component uses
         // privately, such as key(), would be Component's own)
