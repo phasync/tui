@@ -76,40 +76,109 @@ final class Tui
      */
     private static ?array $failure = null;
 
+    /** @var \WeakMap<object, Internal\Job>|null the coroutines of go(), by the handle fiber\go() gave */
+    private static ?\WeakMap $jobs = null;
+    /** @var list<Internal\Job> coroutines of go() started while no program ran: the next program's */
+    private static array $unclaimed = [];
+
     /**
-     * Start a coroutine of the program, as `fiber\go()` does, except that an exception in it
-     * ends the program at once: the screen is disposed, the terminal restored, and the
-     * exception comes out of `Tui::run()` (and so out of your `fiber\run()`), readable on the
-     * restored terminal. Started before `Tui::run()` (a job the screen shows) or from a
-     * handler. Make it end with the screen as any coroutine: check a flag the program clears
-     * when `Tui::run()` returns.
+     * Start a coroutine of the program, as `fiber\go()` does, except that it belongs to the
+     * program (the one running, or the next one to start when none runs yet: start your jobs,
+     * then call `Tui::run()`):
+     *
+     * - **It stops when the program ends.** Wait in it with `Tui::sleep()`: once the program has
+     *   ended (Ctrl-Q, `Tui::quit()`), the sleep throws `Quit` at once, which ends the coroutine
+     *   (or is caught, to clean up). So `fiber\run()` returns when the screen is gone, without a
+     *   flag of yours. (`fiber\sleep()` cannot be cut short: fiber-interop/api has no
+     *   cancellation yet. A coroutine that waits with it runs on until it returns, and
+     *   `fiber\run()` waits for it.)
+     * - **Its exception ends the program** at once: the screen is disposed, the terminal
+     *   restored, and the exception comes out of `Tui::run()` (and so out of your
+     *   `fiber\run()`), readable on the restored terminal.
      *
      *     fiber\run(function () use ($s) {
-     *         $running = true;
-     *         Tui::go(function () use ($s, &$running) {
-     *             while ($running) { fiber\sleep(0.1); $s->done = fetchProgress(); }
+     *         Tui::go(function () use ($s) {
+     *             while (true) { Tui::sleep(0.1); $s->done = fetchProgress(); }
      *         });
-     *         try { Tui::run(fn() => new ProgressBar($s->done)); } finally { $running = false; }
+     *         Tui::run(fn() => new ProgressBar($s->done));     // Ctrl-Q: the loop ends with it
      *     });
      *
      * A coroutine started with `fiber\go()` itself is not seen by the library: an exception in
      * it is kept by `fiber\run()` until everything inside it has ended (the screen too), and
-     * only then thrown. A coroutine of a component (`$this->go()` in a class) is contained by
-     * the component's error boundary instead: the component shows the error in its rectangle
-     * and the rest of the program goes on.
+     * only then thrown, and it is not stopped (end it with a flag the program clears when
+     * `Tui::run()` returns). A coroutine of a component (`$this->go()` in a class) is contained
+     * by the component's error boundary instead: the component shows the error in its rectangle
+     * and the rest of the program goes on, and it ends with the component.
      */
     public static function go(\Closure $task): void
     {
-        \fiber\go(static function () use ($task): void {
+        $job = new Internal\Job();
+        $root = Component::runningRoot();
+        if ($root !== null) {
+            self::claim($job, $root);
+        } else {
+            self::$unclaimed[] = $job;
+        }
+        self::$jobs ??= new \WeakMap();
+        $handle = \fiber\go(static function () use ($task, $job): void {
+            $me = \fiber\current();
+            if ($me !== null) {
+                self::$jobs[$me] = $job;      // (known from the start: a runtime that runs it before go() returns)
+            }
             try {
                 $task();
+            } catch (Quit) {
+                // (its program ended: the coroutine's end)
             } catch (\Throwable $e) {
-                $root = Component::runningRoot();
+                $root = $job->program?->get() ?? Component::runningRoot();
                 self::$failure ??= [$e, $root === null ? null : \WeakReference::create($root)];
                 $root?->dispose();
                 throw $e;
             }
         });
+        self::$jobs[$handle] = $job;
+    }
+
+    /**
+     * Sleep $seconds, as `fiber\sleep()` does, but end at once with a `Quit` exception when
+     * the program ends: the wait of a coroutine started with `Tui::go()`, which then stops
+     * with its program (see there). A `Tui::go()` coroutine whose program has ended gets `Quit`
+     * from every call. Elsewhere (a handler, a coroutine of `fiber\go()`) it ends early with
+     * `Quit` when the program running at the call ends during the sleep, and sleeps plainly
+     * when none runs.
+     *
+     * @throws Quit when the program has ended
+     */
+    public static function sleep(float $seconds): void
+    {
+        $me = \fiber\current();
+        $job = $me === null ? null : (self::$jobs[$me] ?? null);
+        if ($job === null) {
+            $root = Component::runningRoot();
+            if ($root === null) {
+                \fiber\sleep($seconds);
+                return;
+            }
+            $job = new Internal\Job();
+            self::claim($job, $root);
+        }
+        if (!$job->ended) {
+            $job->wake->wait($seconds);
+        }
+        if ($job->ended) {
+            throw new Quit();
+        }
+    }
+
+    /** $job belongs to the program $root: it ends when the root is disposed. */
+    private static function claim(Internal\Job $job, Component $root): void
+    {
+        $job->program = \WeakReference::create($root);
+        if (!$root->isMounted()) {
+            $job->end();
+            return;
+        }
+        $root->stopped()->then(static fn() => $job->end());
     }
 
     /**
@@ -296,6 +365,12 @@ final class Tui
         if ($theme !== null) {
             $app->setTheme($theme);
         }
-        return $app->start($device);
+        $app->start($device);
+        // the coroutines of go() started before it are this program's
+        [$jobs, self::$unclaimed] = [self::$unclaimed, []];
+        foreach ($jobs as $job) {
+            self::claim($job, $app);
+        }
+        return $app;
     }
 }
