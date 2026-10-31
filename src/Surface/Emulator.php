@@ -179,6 +179,8 @@ final class Emulator
 
     /** @var array<string, int> the width of each grapheme cluster printed so far */
     private static array $widths = [];
+    /** @var array<string, array{int, int, int, Style}> SGR parameter strings that start with a reset: the colours and attributes they set (and that style without a hyperlink) */
+    private static array $resetSgr = [];
 
     /** Print a run of printable characters at the cursor. */
     public function print(string $text): void
@@ -243,14 +245,14 @@ final class Emulator
             $this->wrapPending = false;
             $x = $this->x;
             $n = min($len - $i, $cols - $x);
+            $from = $i;
+            $last = null;
             if (!$autowrap && $n < $len - $i) {
                 // without autowrap everything that does not fit lands in the last column
                 $n = max(1, $n);
-                $chunk = \array_slice($cells, $i, $n - 1);
-                $chunk[] = $cells[$len - 1];
+                $last = $cells[$len - 1];
                 $i = $len;
             } else {
-                $chunk = \array_slice($cells, $i, $n);
                 $i += $n;
             }
             $line = $this->lines[$this->y];
@@ -261,10 +263,20 @@ final class Emulator
             if ($end < $cols && $line->chars[$end] === '') {
                 $line->chars[$end] = ' ';
             }
-            array_splice($line->chars, $x, $n, $chunk);
-            array_splice($line->styles, $x, $n, array_fill(0, $n, $this->pen));
+            // (cell by cell into the row as it is: O(the text), not O(the row) as a splice is)
+            $chars = &$line->chars;
+            $styles = &$line->styles;
+            $pen = $this->pen;
+            for ($k = 0; $k < $n; $k++) {
+                $chars[$x + $k] = $cells[$from + $k];
+                $styles[$x + $k] = $pen;
+            }
+            if ($last !== null) {
+                $chars[$end - 1] = $last;
+            }
+            unset($chars, $styles);
             $this->touch($this->y);
-            $this->lastChar = $chunk[$n - 1];
+            $this->lastChar = $line->chars[$end - 1];
             $this->lastX = $end - 1;
             $this->lastY = $this->y;
             if ($end >= $cols) {
@@ -491,9 +503,9 @@ final class Emulator
             return [];
         }
         $out = [];
+        $colons = str_contains($raw, ':');
         foreach (explode(';', $raw) as $p) {
-            $colon = strpos($p, ':');
-            if ($colon !== false) {
+            if ($colons && ($colon = strpos($p, ':')) !== false) {
                 $p = substr($p, 0, $colon);
             }
             $out[] = $p === '' ? null : min((int) $p, 65535);
@@ -503,6 +515,10 @@ final class Emulator
 
     private function dispatchCsi(string $prefix, string $raw, string $inter, string $final): void
     {
+        if ($final === 'm' && $prefix === '' && $inter === '') {
+            $this->sgr($raw);       // (the most frequent sequence: SGR reads the raw string itself)
+            return;
+        }
         $p = self::params($raw);
         $n = max(1, $p[0] ?? 1);   // count parameter: 0 and omitted mean 1
         if ($inter !== '') {
@@ -1298,6 +1314,14 @@ final class Emulator
     /** SGR: the raw parameter string, with ';' between parameters and ':' between sub-parameters. */
     private function sgr(string $raw): void
     {
+        // a sequence that starts with a reset (all a compositor sends: "0;1;38;2;r;g;b") sets
+        // the same colours and attributes whatever the pen was: worked out once per sequence
+        $reset = $raw === '' || $raw === '0' || str_starts_with($raw, '0;');
+        if ($reset && isset(self::$resetSgr[$raw])) {
+            [$fg, $bg, $attrs, $style] = self::$resetSgr[$raw];
+            $this->pen = $this->pen->link === '' ? $style : Style::of($fg, $bg, $attrs, $this->pen->link, $this->pen->linkId);
+            return;
+        }
         $fg = $this->pen->fg;
         $bg = $this->pen->bg;
         $attrs = $this->pen->attrs;
@@ -1404,6 +1428,12 @@ final class Emulator
             }
         }
         $this->pen = Style::of($fg, $bg, $attrs, $this->pen->link, $this->pen->linkId);     // (SGR leaves the hyperlink)
+        if ($reset) {
+            if (\count(self::$resetSgr) > 4096) {
+                self::$resetSgr = [];
+            }
+            self::$resetSgr[$raw] = [$fg, $bg, $attrs, Style::of($fg, $bg, $attrs)];
+        }
     }
 
     /**

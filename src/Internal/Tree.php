@@ -16,6 +16,7 @@ use phasync\Tui\Element\Text;
 use phasync\Tui\Layout;
 use phasync\Tui\Markup;
 use phasync\Tui\Mouse;
+use phasync\Tui\Rect;
 use phasync\Tui\Stylesheet;
 use phasync\Tui\Surface;
 use phasync\Tui\TerminalDevice;
@@ -233,13 +234,25 @@ final class Tree
     {
         $found = [];
         foreach (self::$shows ?? [] as $surface => [$tree, $path]) {
-            if (($tree->owner instanceof Live && $path === 'r') || !isset($tree->nodes[$path]) || $surface->root() !== $root) {
+            if (($tree->owner instanceof Live && $path === 'r') || !isset($tree->nodes[$path])) {
                 continue;       // (a live element is the element its component was placed for, in the tree around it)
             }
+            // (a container without a window of its own: by its rectangle on the host of its items)
+            $flat = ElementLayout::flatAt($surface);
+            $on = $flat === null ? $surface : $flat[0];
+            if ($on->root() !== $root) {
+                continue;
+            }
             $area = $surface->area();
+            if ($flat !== null) {
+                $host = $on->area();
+                $area = new Rect($host->x + $flat[1], $host->y + $flat[2], $flat[3], $flat[4]);
+            }
             if (!$area->isEmpty() && $area->contains($x, $y)) {
-                $depth = 0;
-                for ($p = $surface->parent(); $p !== null; $p = $p->parent()) {
+                // (a flat container is inside its host and around its items, the inner of two
+                // nested ones the one with the longer path)
+                $depth = $flat === null ? 0 : 0.5 + substr_count($path, '/') / 1000;
+                for ($p = $on->parent(); $p !== null; $p = $p->parent()) {
                     $depth++;
                 }
                 $found[] = [$depth, $tree->nodes[$path]];
@@ -631,7 +644,10 @@ final class Tree
                 $focusable = $focusable || $child->focusable;
             }
             $surface->setFocusable($focusable);
-            $sig = 'l' . ($keys ? 'k' : '') . spl_object_id($layout) . '|' . $a['width'] . ',' . $a['height'];
+            // (one whose look the focus does not change, the stylesheet being what it is now)
+            $flat = !$node instanceof Layers && self::onlyArranges($a) && !$style->hoverAware
+                && $sheet->compute($node, ['focused', ...$this->states($node, $surface, $path)], $parent) === $style;
+            $sig = 'l' . ($keys ? 'k' : '') . ($flat ? 'f' : '') . spl_object_id($layout) . '|' . $a['width'] . ',' . $a['height'];
             if (($item = $this->kept($path, $sig, $style)) !== null) {
                 return $item;
             }
@@ -639,6 +655,7 @@ final class Tree
             $item->layout = $layout;
             $item->focusable = $focusable;
             $item->measure = self::containerMeasure($layout, $item->border === false ? 0 : 2);
+            $item->flat = $flat;
             return $this->keep($path, $sig, $style, $item);
         }
         throw new \InvalidArgumentException('Unknown element ' . $node::class);
@@ -662,6 +679,19 @@ final class Tree
         };
         $item->least = $component->leastRows(...);
         return $item;
+    }
+
+    /**
+     * True if attributes $a give an element nothing to do but arrange its children: no
+     * handler, no focus request, no state of its own (the element is placed without a window
+     * when its style allows it too, see LayoutItem::$flat).
+     *
+     * @param array<string, mixed> $a
+     */
+    private static function onlyArranges(array $a): bool
+    {
+        return $a['onKey'] === null && $a['onFocus'] === null && $a['onBlur'] === null && $a['onMouse'] === null
+            && !$a['focused'] && $a['state'] === [];
     }
 
     /** The size attributes of $node, for a signature. */

@@ -214,6 +214,8 @@ abstract class Component extends Element
     private array $placed = [];
     /** @var array<int, Component> the started components it placed as themselves (another owner's, a kept instance), by object id */
     private array $placedSelf = [];
+    /** Where the component was on the screen when it rendered last (see the `area` listener in start()). */
+    private ?Rect $renderedAt = null;
     /** The layout is to be arranged again: a child's size changed (see rearrange()). */
     private bool $rearrange = false;
     /** The next render lays the tree out again, also when it is the same (see relayout()). */
@@ -501,11 +503,20 @@ abstract class Component extends Element
                 $this->markDirty();
             }),
             // what render() draws may depend on where the component is: draw again when it moved
-            $s->on('area', function (): void {
-                if ($this->rendered && $this->parent !== null && $this->surface->viewport() === null) {
-                    $this->hiddenRank = $this->focusRank();     // (no longer shown: see pendingRank())
+            // (a window hidden draws nothing; one shown again where it was drawn last stands)
+            $s->on('area', function (Rect $area): void {
+                if ($this->parent !== null && $this->surface->viewport() === null) {
+                    if ($this->rendered) {
+                        $this->hiddenRank = $this->focusRank();     // (no longer shown: see pendingRank())
+                    }
+                    return;
                 }
-                $this->markDirty();
+                if ($this->surface->root()->detached()) {
+                    return;     // (in a window that is not shown: a hidden tab)
+                }
+                if ($this->renderedAt === null || $this->renderedAt != $area) {
+                    $this->markDirty();
+                }
             }),
             $s->on('close', fn() => $this->stop()),
         ];
@@ -1610,6 +1621,7 @@ abstract class Component extends Element
 
     private function renderNow(): void
     {
+        $this->renderedAt = $this->surface->area();
         $this->used = [];
         $laidOut = $this->laidOut;
         $this->laidOut = null;

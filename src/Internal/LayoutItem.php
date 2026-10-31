@@ -40,6 +40,12 @@ final class LayoutItem
     private array $naturals = [];
     /** Something below changed size since the item was last arranged (see invalidate()). */
     public bool $stale = false;
+    /**
+     * A container that only arranges (a `Column` or `Row` with no frame, background, handler or
+     * look of its own that the focus or the mouse changes): its items are placed straight on the
+     * host of its parent's layout, without a window of its own (see ElementLayout::arrange()).
+     */
+    public bool $flat = false;
 
     public function __construct(
         public readonly Surface $surface,

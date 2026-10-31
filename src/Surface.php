@@ -56,6 +56,8 @@ final class Surface implements \Stringable
     private bool $focusable = true;
     /** @var list<Surface> for a root: the focus path its surfaces were last told about */
     private array $announced = [];
+    /** It was shown in a window and is in none now (a hidden tab's pane): see detached(). */
+    private bool $detached = false;
     /** @var list<\Closure> what flush() runs first (see onFlush()) */
     private static array $flushers = [];
     /** @var \WeakMap<Surface, true>|null the surfaces whose producer asked for mouse reports */
@@ -122,6 +124,7 @@ final class Surface implements \Stringable
         if ($bytes === '') {
             return;
         }
+        $this->host?->beforeWrite();
         $vt = $this->vt;
         $vt->version++;
         $data = $this->utf8Tail . $bytes;
@@ -909,6 +912,9 @@ final class Surface implements \Stringable
         for ($s = $this; ($next = $s->focused()) !== null; $s = $next) {
             $path[] = $next;
         }
+        if ($this->detached) {
+            return;     // (taken out of its tree: nobody is told of a focus it has in no tree; joinTree() tells when it is shown)
+        }
         $old = $this->announced === [] ? [$this] : $this->announced;
         $this->announced = $path;
         // a surface on both paths (one moved to a new host) is not told anything
@@ -1150,6 +1156,18 @@ final class Surface implements \Stringable
         if ($shown) {
             $this->views[] = $view;
         }
+        $this->detached = $this->views === [];
+    }
+
+    /**
+     * @internal True if this surface was shown in a window and is in none now: what it hosts is
+     * not on any screen (a hidden tab's pane, a window closed but kept). A surface never hosted
+     * (a root of its own) is not detached; ask the root (`$surface->root()->detached()`) whether
+     * a surface is in a tree that is shown.
+     */
+    public function detached(): bool
+    {
+        return $this->detached;
     }
 
     private function hosting(): Host

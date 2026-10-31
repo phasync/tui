@@ -11,6 +11,11 @@ use phasync\Tui\Surface;
  * @internal The layout of one container of an element tree (`Column`, `Row`, `Layers`, or the
  * inside of a `Box`): places its items' surfaces on the host, frames them, fills nested
  * surfaces with their own layouts and paints text, on every arrange (so also on resizes).
+ *
+ * A container item that only arranges (LayoutItem::$flat: no frame, background, handler or
+ * focus look of its own) has no window: its items are placed on this host, in its rectangle.
+ * Every window is a level of compositing (its host parses what it writes), so a `Column` of
+ * `Row`s of `Text` costs one level, not three.
  */
 final class ElementLayout implements Layout
 {
@@ -23,6 +28,8 @@ final class ElementLayout implements Layout
     private static ?\WeakMap $filled = null;
     /** @var \WeakMap<Surface, array<int, LayoutItem>>|null the items placed on each host last, by their surface */
     private static ?\WeakMap $placed = null;
+    /** @var \WeakMap<Surface, array{Surface, int, int, int, int}>|null the surface of each flat container: the host its items are on, and its rectangle there */
+    private static ?\WeakMap $flatAt = null;
 
     /**
      * @param list<LayoutItem>       $items
@@ -44,34 +51,12 @@ final class ElementLayout implements Layout
 
     public function arrange(Surface $host): void
     {
-        $cols = $host->cols();
-        $rows = $host->rows();
         $this->fill($host);
-        $rects = $this->rects($cols, $rows);
         // an item placed here before, the same and in the same place, stays as it is: only one
         // with a component below that may want another size now (stale) is arranged again
         self::$placed ??= new \WeakMap();
-        $before = self::$placed[$host] ?? [];
         $now = [];
-        foreach ($this->items as $i => $item) {
-            $id = spl_object_id($item->surface);
-            // (the margin is room of the item's that it leaves blank)
-            [$mt, $mr, $mb, $ml] = $item->margin;
-            $rects[$i] = [$rects[$i][0] + $ml, $rects[$i][1] + $mt, max(0, $rects[$i][2] - $ml - $mr), max(0, $rects[$i][3] - $mt - $mb)];
-            [$x, $y, $w, $h] = $rects[$i];
-            $view = ($before[$id] ?? null) === $item ? $host->viewport($item->surface) : null;
-            if ($view !== null && $view->x() === $x && $view->y() === $y && $view->width() === $w && $view->height() === $h
-                && $view->hasBorder() === ($item->border !== false) && $view->title() === $item->title && $view->titleAlign() === $item->titleAlign) {
-                $host->host($item->surface);
-                if ($item->layout !== null && ($item->stale || $item->surface->layout() !== $item->layout)) {
-                    $item->stale = false;
-                    $item->surface->setLayout($item->layout);
-                }
-            } else {
-                self::place($host, $item, ...$rects[$i]);
-            }
-            $now[$id] = $item;
-        }
+        $this->arrangeAt($host, 0, 0, $host->cols(), $host->rows(), self::$placed[$host] ?? [], $now);
         self::$placed[$host] = $now;
         if ($this->kind === self::LAYERS) {
             // the hosting order is the z-order: keep it the layers' order
@@ -90,11 +75,77 @@ final class ElementLayout implements Layout
         }
     }
 
+    /**
+     * The surface of a flat container (see LayoutItem::$flat) and where it is: the host its
+     * items are on and its rectangle there, or null when it has a window of its own (or is not
+     * shown). For `Mouse::over()`, which lists it where the pointer is in that rectangle.
+     *
+     * @return array{Surface, int, int, int, int}|null
+     */
+    public static function flatAt(Surface $surface): ?array
+    {
+        return self::$flatAt[$surface] ?? null;
+    }
+
+    /**
+     * Place the items in the rectangle at ($ox, $oy), $cols x $rows, of $host; a flat item's
+     * items are placed the same way in its own rectangle.
+     *
+     * @param array<int, LayoutItem> $before the items placed on $host by its last arrange
+     * @param array<int, LayoutItem> $now    the items placed on it by this one
+     */
+    private function arrangeAt(Surface $host, int $ox, int $oy, int $cols, int $rows, array $before, array &$now): void
+    {
+        $rects = $this->rects($cols, $rows);
+        foreach ($this->items as $i => $item) {
+            $id = spl_object_id($item->surface);
+            // (the margin is room of the item's that it leaves blank)
+            [$mt, $mr, $mb, $ml] = $item->margin;
+            $rects[$i] = [$ox + $rects[$i][0] + $ml, $oy + $rects[$i][1] + $mt, max(0, $rects[$i][2] - $ml - $mr), max(0, $rects[$i][3] - $mt - $mb)];
+            [$x, $y, $w, $h] = $rects[$i];
+            if ($this->flattens($item)) {
+                self::$flatAt ??= new \WeakMap();
+                self::$flatAt[$item->surface] = [$host, $x, $y, $w, $h];
+                if ($item->surface->viewports() !== []) {
+                    $item->surface->giveUp();      // (it had a window of its own before: its items move here)
+                }
+                $item->stale = false;
+                $item->layout->arrangeAt($host, $x, $y, $w, $h, $before, $now);
+                continue;
+            }
+            if (self::$flatAt !== null) {
+                unset(self::$flatAt[$item->surface]);
+            }
+            $view = ($before[$id] ?? null) === $item ? $host->viewport($item->surface) : null;
+            if ($view !== null && $view->x() === $x && $view->y() === $y && $view->width() === $w && $view->height() === $h
+                && $view->hasBorder() === ($item->border !== false) && $view->title() === $item->title && $view->titleAlign() === $item->titleAlign) {
+                $host->host($item->surface);
+                if ($item->layout !== null && ($item->stale || $item->surface->layout() !== $item->layout)) {
+                    $item->stale = false;
+                    $item->surface->setLayout($item->layout);
+                }
+            } else {
+                self::place($host, $item, ...$rects[$i]);
+            }
+            $now[$id] = $item;
+        }
+    }
+
+    /**
+     * True if $item is placed without a window: a flat container in a column, row or box (not
+     * in layers, whose windows' hosting order is their z-order) whose background is this one's.
+     */
+    private function flattens(LayoutItem $item): bool
+    {
+        return $item->flat && $this->kind !== self::LAYERS && $item->layout !== null && $item->layout->kind !== self::LAYERS
+            && $item->layout->fill === $this->fill && $item->border === false && $item->shadow === null && $item->title === '';
+    }
+
     /** True if an item has a component below it that may want another size (it is arranged again). */
     public function stale(): bool
     {
         foreach ($this->items as $item) {
-            if ($item->stale) {
+            if ($item->stale || ($item->flat && $item->layout?->stale())) {
                 return true;
             }
         }

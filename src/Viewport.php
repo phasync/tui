@@ -549,6 +549,16 @@ final class Viewport
         return [$this->x, $this->y, $this->width, $this->height];
     }
 
+    /**
+     * @internal True if the next paint writes every cell it shows, compared with what the host
+     * has there (newly hosted, moved or resized, or invalidated): what the host showed under it
+     * before needs no blanking first.
+     */
+    public function paintsAnew(): bool
+    {
+        return $this->frame === [] || $this->x . ',' . $this->y . ',' . $this->width . ',' . $this->height !== $this->paintedGeometry;
+    }
+
     /** @internal Paint everything again, in full, at the next compose. */
     public function invalidate(): void
     {
@@ -841,8 +851,9 @@ final class Viewport
             }
         } else {
             $write = [];
-            for ($i = 0; $i < $n; $i++) {
-                if (($visible === null || $visible[$i]) && ($old[0][$i] !== $chars[$i] || $old[1][$i] !== $styles[$i])) {
+            [$oldChars, $oldStyles] = $old;
+            foreach ($chars as $i => $ch) {
+                if (($oldChars[$i] !== $ch || $oldStyles[$i] !== $styles[$i]) && ($visible === null || $visible[$i])) {
                     $write[$i] = true;
                 }
             }
@@ -850,24 +861,45 @@ final class Viewport
         if ($write === []) {
             return '';
         }
-        // a wide character is written whole: both halves when either changed
-        foreach (array_keys($write) as $i) {
-            if ($chars[$i] === '' && $i > 0 && ($visible === null || $visible[$i - 1])) {
-                $write[$i - 1] = true;
-            } elseif (($chars[$i + 1] ?? null) === '' && ($visible === null ? $i + 1 < $n : $visible[$i + 1] ?? false)) {
-                $write[$i + 1] = true;
+        // unchanged gaps of up to 4 cells between changed ones are written again rather than
+        // jumped over (words of a new text are one run, not a cursor move each): fewer bytes,
+        // and fewer sequences for every host above to parse
+        if ($old !== null && \count($write) > 1) {
+            $prev = null;       // (the keys are in order)
+            foreach (array_keys($write) as $i) {
+                if ($prev !== null && $i - $prev > 1 && $i - $prev <= 5) {
+                    $fill = true;
+                    for ($j = $prev + 1; $j < $i && $fill; $j++) {
+                        $fill = $visible === null || $visible[$j];
+                    }
+                    for ($j = $prev + 1; $j < $i && $fill; $j++) {
+                        $write[$j] = true;
+                    }
+                }
+                $prev = $i;
             }
         }
+        // a wide character is written whole: both halves when either changed
+        $wide = \in_array('', $chars, true);
+        if ($wide) {
+            foreach (array_keys($write) as $i) {
+                if ($chars[$i] === '' && $i > 0 && ($visible === null || $visible[$i - 1])) {
+                    $write[$i - 1] = true;
+                } elseif (($chars[$i + 1] ?? null) === '' && ($visible === null ? $i + 1 < $n : $visible[$i + 1] ?? false)) {
+                    $write[$i + 1] = true;
+                }
+            }
+        }
+        ksort($write);
         $out = '';
         $style = null;
         $link = $linkId = '';
         $at = -1;
-        for ($i = 0; $i < $n; $i++) {
-            if (!isset($write[$i])) {
-                continue;
-            }
+        foreach ($write as $i => $_) {
             $ch = $chars[$i];
-            if ($ch === '') {
+            if (!$wide) {
+                // (no wide character in the row)
+            } elseif ($ch === '') {
                 if (isset($write[$i - 1])) {
                     continue;       // written with its first half
                 }
@@ -888,7 +920,7 @@ final class Viewport
                 }
             }
             $out .= $ch;
-            $at = $i + ($ch === $chars[$i] && ($chars[$i + 1] ?? null) === '' ? 2 : 1);
+            $at = $i + ($wide && $ch === $chars[$i] && ($chars[$i + 1] ?? null) === '' ? 2 : 1);
         }
         return $link === '' ? $out : $out . Ansi::link();
     }

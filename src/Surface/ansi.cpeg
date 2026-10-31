@@ -22,7 +22,7 @@
 # them to the cells. Nothing is applied while a sequence is still being matched, so a sequence
 # that is retried with the next chunk never acts twice.
 
-Stream = (!$ Item)* $          # (an item is only looked for where input is left)
+Stream = Item* $
 
 # The sequence rules start differently after ESC (CSI "[", OSC "]", DCS "P", the strings "X^_",
 # Esc everything else), so their order only decides how soon the common ones are found.

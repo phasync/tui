@@ -46,6 +46,8 @@ final class Host
     private ?Viewport $capture = null;
     /** @var list<array{int,int,int,int,int}> the shadows the windows cast at the last compose (Viewport::shadowRects()) */
     private array $shadows = [];
+    /** @var list<array{int,int,int,int}> where windows were unhosted or moved away from since the last compose: blanked there, where no window paints anew */
+    private array $blanks = [];
     /** @var array{int,int}|null where a selection drag started, in source coordinates */
     private ?array $anchor = null;
     private bool $dragged = false;
@@ -135,7 +137,9 @@ final class Host
         if ($this->capture === $view) {
             $this->capture = $this->anchor = null;
         }
-        $this->blank($view->rect());
+        // (blanked at the next compose, except where a window shown there then paints anew:
+        // a tab's pane replaced by another's is written once, against what the host shows)
+        $this->blanks[] = $view->rect();
         if ($this->focus === $view) {
             $this->focus = null;    // settled again when the change to the tree is complete
         }
@@ -159,7 +163,7 @@ final class Host
     /** A viewport moved or changed size: blank where it was, repaint it where it is. */
     public function moved(Viewport $view, array $old): void
     {
-        $this->blank($old);
+        $this->blanks[] = $old;      // (at the next compose: see blankUncovered())
         $this->touched($view);
         Surface::geometryChanged();
     }
@@ -172,26 +176,84 @@ final class Host
     }
 
     /**
-     * Erase a rectangle of the host (with the default style), as when a window closes or moves
-     * away. What other windows had there is repainted at the next compose, because the host's
-     * own writes count as damage under the viewports.
+     * Erase rectangles of the host (with the default style), as when a window closes or moves
+     * away. What other windows had there is repainted in the compose, because the host's own
+     * writes count as damage under the viewports.
      *
-     * @param array{int,int,int,int} $rect
+     * @param array{int,int,int,int} ...$rects
      */
-    private function blank(array $rect): void
+    private function blank(array ...$rects): void
     {
-        [$x, $y, $w, $h] = $rect;
-        $x1 = max(0, $x);
-        $x2 = min($this->vt->cols, $x + $w);
-        if ($x1 >= $x2) {
-            return;
-        }
         $out = '';
-        for ($r = max(0, $y); $r < min($this->vt->rows, $y + $h); $r++) {
-            $out .= Ansi::moveTo($x1, $r) . "\e[" . ($x2 - $x1) . 'X';
+        foreach ($rects as [$x, $y, $w, $h]) {
+            $x1 = max(0, $x);
+            $x2 = min($this->vt->cols, $x + $w);
+            if ($x1 >= $x2) {
+                continue;
+            }
+            for ($r = max(0, $y); $r < min($this->vt->rows, $y + $h); $r++) {
+                $out .= Ansi::moveTo($x1, $r) . "\e[" . ($x2 - $x1) . 'X';
+            }
         }
         if ($out !== '') {
             $this->surface->write($this->wrap("\e[0m" . $out));
+        }
+    }
+
+    /**
+     * Blank where windows were unhosted, except the cells a window that paints anew covers
+     * (it is compared with the cells the host has there, and writes what differs).
+     */
+    private function blankUncovered(): void
+    {
+        $fresh = [];
+        foreach ($this->viewports as $v) {
+            if ($v->paintsAnew()) {
+                $fresh[] = $v->rect();
+            }
+        }
+        $blanks = $this->blanks;
+        $this->blanks = [];
+        $out = [];
+        foreach ($blanks as [$x, $y, $w, $h]) {
+            for ($r = $y; $r < $y + $h; $r++) {
+                // the columns of row $r left uncovered, as runs
+                $spans = [[$x, $x + $w]];
+                foreach ($fresh as [$fx, $fy, $fw, $fh]) {
+                    if ($r < $fy || $r >= $fy + $fh) {
+                        continue;
+                    }
+                    $left = [];
+                    foreach ($spans as [$a, $b]) {
+                        if ($fx >= $b || $fx + $fw <= $a) {
+                            $left[] = [$a, $b];
+                            continue;
+                        }
+                        if ($a < $fx) {
+                            $left[] = [$a, $fx];
+                        }
+                        if ($fx + $fw < $b) {
+                            $left[] = [$fx + $fw, $b];
+                        }
+                    }
+                    $spans = $left;
+                }
+                foreach ($spans as [$a, $b]) {
+                    $out[] = [$a, $r, $b - $a, 1];
+                }
+            }
+        }
+        $this->blank(...$out);
+    }
+
+    /**
+     * The host's producer is about to write: the blanking still owed goes first, so it never
+     * erases what the producer draws (a split's separator over where a window was).
+     */
+    public function beforeWrite(): void
+    {
+        if ($this->blanks !== []) {
+            $this->blankUncovered();
         }
     }
 
@@ -428,6 +490,9 @@ final class Host
             }
             $cols = $this->vt->cols;
             $rows = $this->vt->rows;
+            if ($this->blanks !== []) {
+                $this->blankUncovered();
+            }
             // rows the host's own producer changed: the windows over them are painted again
             $own = [];
             if ($this->vt->version > $this->composedVersion) {

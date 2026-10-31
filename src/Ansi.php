@@ -55,6 +55,15 @@ final class Ansi
      */
     public static function style(Style $style): string
     {
+        // (styles are interned and live as long as the process: their sequence is made once)
+        return self::$styles[spl_object_id($style)] ??= self::styleNow($style);
+    }
+
+    /** @var array<int, string> the sequence of each style, by object id (see style()) */
+    private static array $styles = [];
+
+    private static function styleNow(Style $style): string
+    {
         $codes = ['0'];
         foreach ([Style::BOLD => '1', Style::DIM => '2', Style::ITALIC => '3', Style::UNDERLINE => '4',
             Style::BLINK => '5', Style::INVERSE => '7', Style::HIDDEN => '8', Style::STRIKE => '9'] as $bit => $code) {
