@@ -69,6 +69,7 @@ final class Tree
             $layout = $this->container($root, 'r', $sheet, $style);
             $item = $this->frame(new LayoutItem($this->owner->surface), $root, $style, 'auto', 'auto');
             $item->measure = self::containerMeasure($root, $layout->items, $item->border === false ? 0 : 2);
+            $item->layout = $layout;    // (for least(): this item only measures, it is placed by no layout)
         } else {
             $item = $this->item($root, 'r', $sheet, $base);
             $layout = new ElementLayout(ElementLayout::SINGLE, [$item], fill: $base->text);
@@ -98,6 +99,12 @@ final class Tree
             return false;
         }
         return $this->builtItem->natural($cols, $rows);
+    }
+
+    /** LayoutItem::least() of $root as the last build laid it out; false when that was another element. */
+    public function leastBuilt(Element $root, int $cols): int|false
+    {
+        return $this->builtFor === $root && $this->builtItem !== null ? $this->builtItem->least($cols) : false;
     }
 
     /**
@@ -238,6 +245,7 @@ final class Tree
             $n = $component->measureFor(max(0, $cols - $border), max(0, $rows - $border));
             return $n === null ? null : [$n[0] + $border, $n[1] + $border];
         };
+        $item->least = $component->leastRows(...);
         return $item;
     }
 

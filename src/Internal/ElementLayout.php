@@ -83,6 +83,38 @@ final class ElementLayout implements Layout
     }
 
     /**
+     * The fewest rows the items need at $cols wide without being squeezed (see
+     * LayoutItem::least()): what a `ScrollView` makes its content at least as high as.
+     */
+    public function least(int $cols): int
+    {
+        $least = 0;
+        switch ($this->kind) {
+            case self::SINGLE:
+                [$t, $r, $b, $l] = $this->padding;
+                foreach ($this->items as $item) {
+                    $least = max($least, $item->least(max(0, $cols - $l - $r)));
+                }
+                return $least + $t + $b;
+            case self::COLUMN:
+                foreach ($this->items as $item) {
+                    $least += \is_int($item->height) ? $item->height : $item->least($cols);
+                }
+                return $least + $this->gap * max(0, \count($this->items) - 1);
+            case self::ROW:
+                foreach ($this->rects($cols, LayoutItem::TALL) as $i => [, , $w]) {
+                    $least = max($least, \is_int($this->items[$i]->height) ? $this->items[$i]->height : $this->items[$i]->least($w));
+                }
+                return $least;
+            default:
+                foreach ($this->items as $item) {
+                    $least = max($least, \is_int($item->height) ? $item->height : $item->least($cols));
+                }
+                return $least;
+        }
+    }
+
+    /**
      * Where each item goes on a host of $cols x $rows, as [x, y, width, height].
      *
      * @return list<array{int,int,int,int}>
@@ -109,7 +141,8 @@ final class ElementLayout implements Layout
                     if ($spec === 'auto') {
                         // what the content needs, as a share capped at that (see Size::distribute())
                         $natural = $item->natural($across ? $room : $cols, $across ? $rows : $room);
-                        $sizes[] = $natural === null ? ['fr', 1.0] : ['auto', (float) $natural[$across ? 0 : 1]];
+                        // (one that takes any room down a column is given at least what its parts need, when that fits)
+                        $sizes[] = $natural === null ? ['fr', 1.0, $across ? 0 : $item->least($cols)] : ['auto', (float) $natural[$across ? 0 : 1]];
                         continue;
                     }
                     $sizes[] = Size::parse($spec);

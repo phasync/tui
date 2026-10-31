@@ -33,7 +33,7 @@ final class ScrollLayout implements Layout
             $this->content->resize($cols, $h);
         }
         $view = $host->host($this->content, 0, 0, $cols, $rows);
-        $view->setFit(false);
+        $view->setFit(false)->setFollowOnInput(false);     // (where it shows is the ScrollView's)
         $view->move(0, 0)->resize($cols, $rows);
         if ($view->hasBorder()) {
             $view->setBorder(false);

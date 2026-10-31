@@ -71,6 +71,18 @@ it('shares the room between auto items that need more than their share and fr it
         ->and(Size::distribute([['cells', 30.0], ['auto', 5.0]], 24))->toBe([24, 0]);
 });
 
+it('gives auto items what they need when it all fits, and fr items at least their least (0.0.2-beta5)', function () {
+    // a 15-row text next to a log that fills: the text whole, the log the rest (not 12 and 12)
+    expect(Size::distribute([['auto', 15.0], ['fr', 1.0]], 24))->toBe([15, 9])
+        // three 3-row Boxes and a Box that fills, in exactly what they need: none is squeezed
+        ->and(Size::distribute([['auto', 3.0], ['auto', 3.0], ['fr', 1.0, 3], ['auto', 3.0]], 12))->toBe([3, 3, 3, 3])
+        // two fill items of different leasts share the rest, each at least its least
+        ->and(Size::distribute([['fr', 1.0, 3], ['fr', 1.0, 1]], 4))->toBe([3, 1])
+        ->and(Size::distribute([['fr', 1.0, 3], ['fr', 1.0, 1]], 10))->toBe([5, 5])
+        // it does not fit: shares as before
+        ->and(Size::distribute([['auto', 3.0], ['auto', 3.0], ['fr', 1.0, 3], ['auto', 3.0]], 8))->toBe([2, 2, 2, 2]);
+});
+
 it('sizes a container without a height by its children: a toolbar Row of one-line fields is one row', function () {
     $app = new class () extends Component {
         protected function render(): Element

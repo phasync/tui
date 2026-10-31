@@ -4,6 +4,8 @@ namespace phasync\Tui\Component;
 
 use phasync\Tui\Component;
 use phasync\Tui\Element;
+use phasync\Tui\Internal\ElementLayout;
+use phasync\Tui\Internal\LayoutItem;
 use phasync\Tui\Internal\ScrollLayout;
 use phasync\Tui\Key;
 use phasync\Tui\Layout;
@@ -135,7 +137,12 @@ class ScrollView extends Component
 
     protected function render(): Layout
     {
-        return new ScrollLayout($this->inside(), $this->layoutElement($this->content), fn(int $cols) => $this->measureElement($this->content, $cols, \PHP_INT_MAX >> 8)[1] ?? 0, $this->follow(...));
+        $inner = $this->layoutElement($this->content);
+        // as high as the content needs; content that fills (a field that takes any room) as
+        // high as its parts need at least: what does not fit is cropped and scrolls, not squeezed
+        $height = fn(int $cols) => $this->measureElement($this->content, $cols, LayoutItem::TALL)[1]
+            ?? ($inner instanceof ElementLayout ? $inner->least($cols) : 0);
+        return new ScrollLayout($this->inside(), $inner, $height, $this->follow(...));
     }
 
     /** After the layout: the top kept, and the focused element in view. */
@@ -147,11 +154,20 @@ class ScrollView extends Component
             $leaf = $next;
         }
         if ($leaf !== $this->inside && $leaf !== $this->kept) {
-            $y = 0;
-            for ($s = $leaf; $s !== $this->inside && ($v = $s->viewport()) !== null; $s = $v->host()) {
-                $y += $v->y() + ($v->hasBorder() ? 1 : 0) - $v->top();
+            // the field with what frames it: up to the largest window around it that holds no
+            // other field and fits in the view (a Box with its border and title)
+            $shown = $leaf;
+            while (($v = $shown->viewport()) !== null && ($host = $v->host()) !== $this->inside
+                && ($hv = $host->viewport()) !== null && $hv->height() <= $this->surface->rows()
+                && \count(array_filter($host->viewports(), fn(Viewport $view) => $view->source->isFocusable())) === 1) {
+                $shown = $host;
             }
-            $h = $leaf->rows();
+            $v = $shown->viewport();
+            $y = $v?->y() ?? 0;
+            $h = $v?->height() ?? $shown->rows();
+            for ($s = $v?->host(); $s !== null && $s !== $this->inside && ($u = $s->viewport()) !== null; $s = $u->host()) {
+                $y += $u->y() + ($u->hasBorder() ? 1 : 0) - $u->top();
+            }
             if ($y < $this->top) {
                 $this->top = $y;
             } elseif ($y + $h > $this->top + $this->surface->rows()) {

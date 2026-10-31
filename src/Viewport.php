@@ -52,6 +52,8 @@ final class Viewport
     private ?Style $focusStyle = null;
     private string $title = '';
     private bool $following = true;
+    /** Keys and pastes routed through it bring the bottom of the source into view (see setFollowOnInput()). */
+    private bool $followOnInput = true;
     /** Pinned top row in source coordinates (when not following). */
     private int $pinnedTop = 0;
     private int $left = 0;
@@ -259,6 +261,24 @@ final class Viewport
             $this->owner->changed($this);
         }
         return $this;
+    }
+
+    /**
+     * Whether a key or a paste routed through this viewport scrolls it back to the bottom of the
+     * source (true, the default: typing goes to the bottom of the output, as in a terminal), or
+     * leaves the scroll position alone (false: for a window whose owner keeps it where it wants,
+     * as a `ScrollView` keeps its focused field in view).
+     */
+    public function setFollowOnInput(bool $follow): static
+    {
+        $this->followOnInput = $follow;
+        return $this;
+    }
+
+    /** True if typing scrolls the view to the bottom of the source (see `setFollowOnInput()`). */
+    public function followsOnInput(): bool
+    {
+        return $this->followOnInput;
     }
 
     /** True while the view follows the bottom of the source. */

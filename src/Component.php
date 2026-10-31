@@ -207,6 +207,8 @@ abstract class Component extends Element
     private ?ComputedStyle $inherited = null;
     /** @var array{array{int,int}, ?array}|null the room a parent's layout measured this component in, and the answer */
     private ?array $measured = null;
+    /** @var array{int, int}|null the width a parent's layout asked leastRows() for, and the answer */
+    private ?array $leastAsked = null;
     /** @var array<string, true> states of its own for the stylesheet (`setStyleState()`) */
     private array $styleStates = [];
     /** @var array<string, mixed> bindings of this instance over its class's (`bind()`) */
@@ -1217,8 +1219,9 @@ abstract class Component extends Element
             if ($layout !== null) {
                 $this->surface->setLayout($layout);
             }
-            if ($this->measured !== null && $this->measure(...$this->measured[0]) !== $this->measured[1]) {
-                $this->measured = null;
+            if (($this->measured !== null && $this->measure(...$this->measured[0]) !== $this->measured[1])
+                || ($this->leastAsked !== null && $this->leastNow($this->leastAsked[0]) !== $this->leastAsked[1])) {
+                $this->measured = $this->leastAsked = null;
                 $this->parent?->relayout();     // it needs another size: the parent lays it out again
             }
         }
@@ -1564,6 +1567,23 @@ abstract class Component extends Element
         $size = $this->measure($cols, $rows);
         $this->measured = [[$cols, $rows], $size];
         return $size;
+    }
+
+    /**
+     * @internal The fewest rows this component shows its element tree in at $cols wide without
+     * squeezing it (the sum of what its parts need, one row for each that fills); 1 for one
+     * that draws itself or takes any room.
+     */
+    final public function leastRows(int $cols): int
+    {
+        $this->leastAsked = [$cols, $least = $this->leastNow($cols)];
+        return $least;
+    }
+
+    private function leastNow(int $cols): int
+    {
+        $least = $this->shown !== null && $this->tree !== null ? $this->tree->leastBuilt($this->shown, $cols) : false;
+        return $least === false ? 1 : $least;
     }
 
     /** @internal The style the parent's element tree around this component gives it to inherit. */

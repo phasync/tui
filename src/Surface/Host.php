@@ -513,7 +513,9 @@ final class Host
         if ($event instanceof Key || $event instanceof Paste) {
             // typing goes to the bottom of the output, as in a terminal
             $view->clearSelection();
-            $view->follow();
+            if ($view->followsOnInput()) {
+                $view->follow();
+            }
         }
         return $view->source->dispatch($event);
     }
