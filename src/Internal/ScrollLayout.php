@@ -29,7 +29,8 @@ final class ScrollLayout implements Layout
         $cols = $host->cols();
         $rows = $host->rows();
         $h = max($rows, ($this->height)($cols));
-        if ($this->content->cols() !== $cols || $this->content->rows() !== $h) {
+        $resized = $this->content->cols() !== $cols || $this->content->rows() !== $h;
+        if ($resized) {
             $this->content->resize($cols, $h);
         }
         $view = $host->host($this->content, 0, 0, $cols, $rows);
@@ -38,7 +39,11 @@ final class ScrollLayout implements Layout
         if ($view->hasBorder()) {
             $view->setBorder(false);
         }
-        $this->content->setLayout($this->inner);
+        // (the same layout at the same size, nothing in it wanting another size: it stands as
+        // arranged, as a nested layout of an element tree does)
+        if ($resized || $this->content->layout() !== $this->inner || !$this->inner instanceof ElementLayout || $this->inner->stale()) {
+            $this->content->setLayout($this->inner);
+        }
         ($this->follow)($view);
     }
 }

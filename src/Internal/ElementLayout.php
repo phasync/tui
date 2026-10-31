@@ -90,6 +90,17 @@ final class ElementLayout implements Layout
         }
     }
 
+    /** True if an item has a component below it that may want another size (it is arranged again). */
+    public function stale(): bool
+    {
+        foreach ($this->items as $item) {
+            if ($item->stale) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * The fewest rows the items need at $cols wide without being squeezed (see
      * LayoutItem::least()): what a `ScrollView` makes its content at least as high as.

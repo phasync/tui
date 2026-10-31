@@ -187,6 +187,18 @@ final class Tree
         return $layout === $was ? null : $layout;
     }
 
+    /** The element the last build laid out (null before the first). */
+    public function builtFor(): ?Element
+    {
+        return $this->builtFor;
+    }
+
+    /** The layout the last build returned (null before the first). */
+    public function builtLayout(): ?Layout
+    {
+        return $this->builtLayout;
+    }
+
     /** The element shown in $surface by an element tree (a component placed in one is its own element), or null. */
     public static function elementOf(Surface $surface): ?Element
     {

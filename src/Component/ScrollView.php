@@ -119,8 +119,9 @@ class ScrollView extends Component
 
     protected function onKey(Key $key): bool
     {
-        // a key that moves the focus inside may need the view to follow: lay out again after it
-        $this->markDirty();
+        // a key that moves the focus inside may need the view to follow: after it, the content
+        // is laid out again where the focus changed its look (nothing else), and followed
+        $this->markRestyle();
         return false;
     }
 

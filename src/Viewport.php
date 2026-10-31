@@ -350,9 +350,12 @@ final class Viewport
         $this->syncScrolled();
         $max = $this->bottomTop();
         $row = max(-$this->source->scrollbackSize(), min($max, $row));
+        $before = [$this->top(), $this->following];
         $this->following = $row >= $max;
         $this->pinnedTop = $row;
-        $this->owner->changed($this);
+        if ($before !== [$row, $this->following]) {
+            $this->owner->changed($this);     // (scrolled to where it is: nothing to repaint)
+        }
         return $this;
     }
 
@@ -365,8 +368,11 @@ final class Viewport
     /** Scroll sideways: column $col of the source shows at the left edge. */
     public function pan(int $col): static
     {
-        $this->left = max(0, min($col, max(0, $this->source->cols() - $this->innerWidth())));
-        $this->owner->changed($this);
+        $left = max(0, min($col, max(0, $this->source->cols() - $this->innerWidth())));
+        if ($left !== $this->left) {
+            $this->left = $left;
+            $this->owner->changed($this);
+        }
         return $this;
     }
 

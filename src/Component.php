@@ -204,12 +204,18 @@ abstract class Component extends Element
     private ?Tree $tree = null;
     /** The element tree the last render returned (null: it drew itself or returned a layout). */
     private ?Element $shown = null;
+    /** The element tree the last render laid out with layoutElement() (a ScrollView's content), see restyleNow(). */
+    private ?Element $laidOut = null;
+    /** The render in progress is a restyle: layoutElement() of the tree laid out last lays out only what the focus changed. */
+    private bool $restyling = false;
     /** @var array{Stylesheet, ComputedStyle, int, list<string>}|null what the layout of $shown was made with: stylesheet, style, focus version, breakpoints */
     private ?array $shownWith = null;
     /** @var array<string, true> the keys of the children the last layout of $shown placed */
     private array $placed = [];
     /** @var array<int, Component> the started components it placed as themselves (another owner's, a kept instance), by object id */
     private array $placedSelf = [];
+    /** The layout is to be arranged again: a child's size changed (see rearrange()). */
+    private bool $rearrange = false;
     /** The next render lays the tree out again, also when it is the same (see relayout()). */
     private bool $relayout = false;
     /** An instance the program keeps from render to render (see placedUnder()). */
@@ -1605,6 +1611,8 @@ abstract class Component extends Element
     private function renderNow(): void
     {
         $this->used = [];
+        $laidOut = $this->laidOut;
+        $this->laidOut = null;
         $this->rendering = true;
         $outer = self::$inRender;
         self::$inRender = $this;
@@ -1633,10 +1641,17 @@ abstract class Component extends Element
             if ($same) {
                 $layout = null;
                 $used = $this->used + $this->placed;
+            } elseif ($this->restyling && $this->laidOut === $laidOut) {
+                // (a restyle of the tree laid out with layoutElement(): what it placed stands)
+                $layout = $this->layoutOf($result, true);
+                $used = $this->used + $this->placed;
             } else {
                 $layout = $this->layoutOf($result);
                 $used = $this->used;
             }
+        } catch (\Throwable $e) {
+            $this->laidOut ??= $laidOut;
+            throw $e;
         } finally {
             self::$inRender = $outer;
             $this->used = null;
@@ -1655,12 +1670,15 @@ abstract class Component extends Element
         $returned = $same ? $this->surface->layout() : $layout;
         if (!$same) {
             $this->show($layout);
+        } elseif ($this->rearrange) {
+            $this->show($this->shownLayout());
         }
         foreach ($this->tree?->takeFocusRequests() ?? [] as $target) {
             $target->focus();       // (elements that became `focused: true`)
         }
         $this->firstShown();
-        if ($returned !== null) {
+        if ($returned !== null && !$this->restyling) {
+            // (a restyle shows what the last render showed: nothing left the tree)
             foreach ($this->children as $key => $child) {
                 if (!isset($used[$key]) && !isset($this->kept[$key]) && !isset($this->placedSelf[spl_object_id($child)])
                     && !$child->isShownIn($this->surface) && !$child->isHeld()) {
@@ -1718,17 +1736,18 @@ abstract class Component extends Element
         if ($resized || ($this->leastAsked !== null && $this->leastNow($this->leastAsked[0]) !== $this->leastAsked[1])) {
             $this->leastAsked = null;
             Tree::sizeMayChange($this);
-            $this->parent?->relayout();
+            $this->parent?->rearrange();
             if ($this->parent !== null && $layout !== null && !$this->deferred) {
-                // (arranged when the parent gives it its size, else when it renders again after
-                // the parent in this frame: the old layout is not arranged at the new size first)
+                // (arranged when the parent gives it its size, else when it is arranged again
+                // after the parent in this frame: the old layout is not arranged at the new size first)
                 $this->deferred = true;
                 $this->surface->deferLayout($layout);
-                $this->relayout();
+                $this->rearrange();
                 return;
             }
         }
         $this->deferred = false;
+        $this->rearrange = false;
         if ($this->parent === null && ($this->floating !== [] || $this->overlayLayout !== null)) {
             $layout = $this->withOverlays($layout);
         }
@@ -1748,11 +1767,27 @@ abstract class Component extends Element
         $sheet = $this->stylesheet();
         $style = $this->style();
         $last = $this->shownWith;
-        $layout = $this->tree === null || $this->shown === null || $last === null || $this->relayout || $this->overlays !== [] || $this->floating !== []
-            || $last[0] !== $sheet || $last[1] !== $style || $last[3] !== $this->breakpoints() ? false : $this->tree->restyle($this->shown, $sheet, $style);
+        $root = $this->shown ?? $this->laidOut;
+        $possible = $this->tree !== null && $root !== null && $last !== null && !$this->relayout && $this->overlays === [] && $this->floating === []
+            && $last[0] === $sheet && $last[1] === $style && $last[3] === $this->breakpoints();
+        if ($possible && $this->shown === null) {
+            // a tree laid out with layoutElement() (a ScrollView's content) where render() puts
+            // it: render() runs, and its layoutElement() of the same tree restyles it
+            $this->restyling = true;
+            try {
+                $this->renderNow();
+            } finally {
+                $this->restyling = false;
+            }
+            return;
+        }
+        $layout = $possible ? $this->tree->restyle($root, $sheet, $style) : false;
         if ($layout === false) {
             $this->renderNow();
             return;
+        }
+        if ($layout === null && $this->rearrange) {
+            $layout = $this->shownLayout();     // (the same layout, arranged again)
         }
         $this->shownWith = [$sheet, $style, Surface::focusVersion(), $last[3]];
         foreach ($this->tree->takeFocusCalls() as [$callback, $element]) {
@@ -1859,17 +1894,39 @@ abstract class Component extends Element
         $this->markDirty();
     }
 
+    /**
+     * A child's size changed (its items in this component's tree measure again, see
+     * Tree::sizeMayChange()): the layout shown is arranged again in the next frame, without a
+     * render. A clock or a counter in a `Text` closure that grows a column wider does not run
+     * the render of the screen around it.
+     */
+    private function rearrange(): void
+    {
+        $this->rearrange = true;
+        $this->markRestyle();
+    }
+
+    /** The layout of the last render on the surface (inside the overlays a root hosts). */
+    private function shownLayout(): ?Layout
+    {
+        $layout = $this->surface->layout();
+        return $layout !== null && $layout === $this->overlayLayout ? $this->overlayLayout->inner : $layout;
+    }
+
     /** The layout for what render() returned (an element tree laid out). */
-    private function layoutOf(Layout|Element|null $result): ?Layout
+    private function layoutOf(Layout|Element|null $result, bool $restyled = false): ?Layout
     {
         foreach ($this->overlays as $key => $_) {
             $this->child($key);         // (keeps their content)
         }
         $this->shown = $result instanceof Element ? $result : null;
         $this->relayout = false;
-        $this->placed = $this->placedSelf = [];
+        if (!$restyled) {
+            $this->placed = $this->placedSelf = [];
+        }
         $this->shownWith = null;
         if ($result instanceof Element) {
+            $this->laidOut = null;
             $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...), $this->runElementHandler(...));
             $sheet = $this->stylesheet();
             $style = $this->style();
@@ -1882,6 +1939,10 @@ abstract class Component extends Element
                 unset(self::$helpShown[$this]);
             }
             return $layout;
+        }
+        if ($this->laidOut !== null) {
+            // (a tree laid out with layoutElement(): restyled on a focus change, see restyleNow())
+            $this->shownWith = [$this->stylesheet(), $this->style(), Surface::focusVersion(), $this->breakpoints()];
         }
         return $result;
     }
@@ -1913,12 +1974,34 @@ abstract class Component extends Element
      * $element laid out as a layout of this component's, without setting it: for a component
      * that shows an element tree somewhere other than its own surface (a `ScrollView` puts it
      * on a surface taller than itself). The surfaces and child components behind the elements
-     * persist across calls as they do for `render()`; call it from `render()`.
+     * persist across calls as they do for `render()`; call it from `render()`, once per render.
+     * When the focus moves inside the tree, the component renders again and the same element
+     * (the same object: a prop that did not change) is laid out again only where the focus
+     * changed its look, as a `render()` that returns its tree is (a Tab in a `ScrollView` of two
+     * hundred rows costs what it costs in one of two).
      */
     final protected function layoutElement(Element $element): Layout
     {
         $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...), $this->runElementHandler(...));
-        return $this->tree->build($element, $this->stylesheet(), $this->style());
+        $sheet = $this->stylesheet();
+        $style = $this->style();
+        // (what the layout asks, a component's hasFocus() for its `:focused` look, is not a read
+        // of the render: the tree follows the focus itself, as for a tree render() returns)
+        $reader = self::$reader;
+        self::$reader = null;
+        try {
+            if ($this->restyling && $this->laidOut === null && $element === $this->tree->builtFor()) {
+                $layout = $this->tree->restyle($element, $sheet, $style);
+                if ($layout !== false) {
+                    $this->laidOut = $element;
+                    return $layout ?? $this->tree->builtLayout();
+                }
+            }
+            $this->laidOut = $element;
+            return $this->tree->build($element, $sheet, $style);
+        } finally {
+            self::$reader = $reader;
+        }
     }
 
     /**
@@ -1936,7 +2019,15 @@ abstract class Component extends Element
     final protected function measureElement(Element $element, int $cols, int $rows): ?array
     {
         $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...), $this->runElementHandler(...));
-        return $this->tree->measure($element, $cols, $rows, $this->stylesheet(), $this->style());
+        $reader = self::$reader;
+        self::$reader = null;       // (as in layoutElement())
+        try {
+            // (the tree laid out last: measured by its items, as a parent measures a render's tree)
+            $built = $element === $this->laidOut ? $this->tree->measureBuilt($element, $cols, $rows) : false;
+            return $built !== false ? $built : $this->tree->measure($element, $cols, $rows, $this->stylesheet(), $this->style());
+        } finally {
+            self::$reader = $reader;
+        }
     }
 
     // ------------------------------------------------------------------------------------------
@@ -2361,7 +2452,12 @@ abstract class Component extends Element
     /** True if the component is in $state (one of its own, see `setStyleState()`, or a built-in one). */
     final public function hasStyleState(string $state): bool
     {
-        return \in_array($state, $this->states(), true);
+        if (isset($this->styleStates[$state]) || \in_array($state, $this->attribute('state'), true)) {
+            return true;
+        }
+        // (the built-in states are worked out; another one is only a state of its own or of its element)
+        return ($state === 'hover' || $state === 'focused' || $state === 'disabled' || isset(Stylesheet::BREAKPOINTS[$state]))
+            && \in_array($state, $this->states(), true);
     }
 
     // ------------------------------------------------------------------------------------------
