@@ -903,12 +903,13 @@ final class Surface implements \Stringable
     /**
      * Move the focus to the next window in order (the previous one with $backwards): through
      * every surface below this one that hosts nothing, depth first, in hosting order, wrapping
-     * around. Bind it to a key (Tab, or a prefix key when the windows are shells that need Tab).
-     * Returns false when there is no other window to go to.
+     * around (with `$wrap` false, stopping at the last window: for a group of fields inside a
+     * larger one, which goes on from there). Bind it to a key (Tab, or a prefix key when the
+     * windows are shells that need Tab). Returns false when there is no other window to go to.
      */
-    public function focusNext(bool $backwards = false): bool
+    public function focusNext(bool $backwards = false, bool $wrap = true): bool
     {
-        return $this->host?->focusNext($backwards) ?? false;
+        return $this->host?->focusNext($backwards, $wrap) ?? false;
     }
 
     /**

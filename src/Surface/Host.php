@@ -312,7 +312,7 @@ final class Host
         return $out;
     }
 
-    public function focusNext(bool $backwards): bool
+    public function focusNext(bool $backwards, bool $wrap = true): bool
     {
         $leaves = self::leaves($this->surface);
         if ($leaves === []) {
@@ -322,7 +322,7 @@ final class Host
         $at = array_search($current, $leaves, true);
         $n = \count($leaves);
         $next = $at === false ? ($backwards ? $n - 1 : 0) : ($at + ($backwards ? $n - 1 : 1)) % $n;
-        if ($at === $next) {
+        if ($at === $next || (!$wrap && $at !== false && ($backwards ? $next > $at : $next < $at))) {
             return false;
         }
         end($leaves[$next])->focus();
@@ -460,13 +460,15 @@ final class Host
 
     /**
      * The compositor's drawing, wrapped so the producer of the host keeps its state: its cursor,
-     * pen and character sets are saved (DECSC) and restored (DECRC), and what would bend the
-     * drawing (origin mode, insert mode, a shifted character set) is off in between.
+     * pen (with the hyperlink it is in) and character sets are saved (DECSC) and restored
+     * (DECRC), and what would bend the drawing (origin mode, insert mode, a shifted character
+     * set, a hyperlink the producer left open) is off in between.
      */
     private function wrap(string $drawing): string
     {
         $insert = $this->vt->insertMode;
-        return "\e7\e[?6l\x0f\e(B" . ($insert ? "\e[4l" : '') . $drawing . "\e[0m" . ($insert ? "\e[4h" : '') . "\e8";
+        $link = $this->vt->pen->link !== '' ? "\e]8;;\e\\" : '';
+        return "\e7\e[?6l\x0f\e(B" . $link . ($insert ? "\e[4l" : '') . $drawing . "\e[0m" . ($insert ? "\e[4h" : '') . "\e8";
     }
 
     // ------------------------------------------------------------------------------------------

@@ -7,6 +7,9 @@ use phasync\Tui\Tests\Support\Tmux;
  * Known differences between tmux and xterm, which the Surface follows and which are therefore
  * left out of these cases and covered by known-answer tests instead:
  * - BS with a wrap pending: xterm moves to the second-to-last column, tmux stays in the last.
+ * - EL with a wrap pending (autowrap on, the last column just written): xterm erases from the
+ *   last column, so the character just written goes; tmux keeps its cursor past the end and
+ *   erases nothing.
  * - HPR (CSI a) and VPR (CSI e): tmux ignores them.
  * - DEC line drawing: capture-pane prints the raw ACS characters (q, x) instead of ─ and │.
  *
@@ -60,6 +63,7 @@ $cases = [
     'backspace at the left margin' => "\x08\x08a\x08\x08b\r\n" . str_repeat('z', 28) . "\x08\x08q",
     'cursor visibility' => "\e[?25lhidden",
     'wrap off' => "\e[?7l" . str_repeat('a', 35) . "\e[?7h\r\n" . str_repeat('b', 35),
+    'EL after the last column, autowrap off' => "\e[?7l" . str_repeat('a', 30) . "\e[K\e[?7h\r\nb",
     'wide char at last column' => str_repeat('-', 29) . '中x',
     'DECALN' => "\e#8\e[2;2Hx",
     'RIS' => "abc\e[31m\e[2;5r\ecx",

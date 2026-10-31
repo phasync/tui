@@ -174,6 +174,27 @@ final class Ansi
         return "\e]52;c;" . base64_encode($text) . "\x07";
     }
 
+    /**
+     * Start a hyperlink to $uri (OSC 8): the text written after it, until the link is ended,
+     * is the link; `link()` without a URI ends it. An `$id` joins pieces of one link (a link
+     * wrapped onto two rows, drawn in two writes). The link is apart from the style: SGR,
+     * `reset()` included, leaves it on. A terminal that supports hyperlinks makes the text
+     * clickable; the terminal device passes links on only to those (see
+     * `TerminalDevice::supportsHyperlinks()`), the others show the text.
+     */
+    public static function link(string $uri = '', string $id = ''): string
+    {
+        $uri = (string) preg_replace('/[\x00-\x1f\x7f]/', '', $uri);
+        $id = (string) preg_replace('/[\x00-\x1f\x7f:;]/', '', $id);
+        return "\e]8;" . ($id === '' || $uri === '' ? '' : "id=$id") . ';' . $uri . "\e\\";
+    }
+
+    /** $text as a hyperlink to $uri, ended after it (see `link()`). */
+    public static function hyperlink(string $text, string $uri, string $id = ''): string
+    {
+        return self::link($uri, $id) . $text . self::link();
+    }
+
     /** Switch to the alternate screen, saving the cursor (mode 1049), or back with false. */
     public static function altScreen(bool $on = true): string
     {

@@ -659,8 +659,8 @@ final class Viewport
     /**
      * Escape sequences that write the cells of a row (starting at host column $x0) that differ
      * from $old (all of them without $old) and are visible, as runs: a cursor move to each run,
-     * SGR where the style changes. A wide character whose other half cannot be shown becomes a
-     * blank.
+     * SGR where the style changes, OSC 8 where the hyperlink does (none is open at the start
+     * and at the end). A wide character whose other half cannot be shown becomes a blank.
      *
      * @param list<string>                          $chars
      * @param list<Style>                           $styles
@@ -689,6 +689,7 @@ final class Viewport
         }
         $out = '';
         $style = null;
+        $link = $linkId = '';
         $at = -1;
         for ($i = 0; $i < $n; $i++) {
             if (!isset($write[$i])) {
@@ -709,10 +710,15 @@ final class Viewport
             if ($styles[$i] !== $style) {
                 $style = $styles[$i];
                 $out .= Ansi::style($style);
+                if ($style->link !== $link || $style->linkId !== $linkId) {
+                    $link = $style->link;
+                    $linkId = $style->linkId;
+                    $out .= Ansi::link($link, $linkId);
+                }
             }
             $out .= $ch;
             $at = $i + ($ch === $chars[$i] && ($chars[$i + 1] ?? null) === '' ? 2 : 1);
         }
-        return $out;
+        return $link === '' ? $out : $out . Ansi::link();
     }
 }

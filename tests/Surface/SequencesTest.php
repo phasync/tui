@@ -1,6 +1,7 @@
 <?php
 
 use phasync\Tui\Color;
+use phasync\Tui\Ansi;
 use phasync\Tui\Style;
 use phasync\Tui\Surface;
 
@@ -66,6 +67,13 @@ describe('erasing', function () {
         expect(rows(vt($fill . "\e[J", 5, 3)))->toBe('aaaaa|bb   |     ')
             ->and(rows(vt($fill . "\e[1J", 5, 3)))->toBe('     |   bb|ccccc')
             ->and(rows(vt($fill . "\e[2J", 5, 3)))->toBe('     |     |     ');
+    });
+
+    it('erases the character just written into the last column with EL, as xterm does (docs/surface.md)', function () {
+        // the cursor stays on the last column after writing it, wrap pending or (autowrap off) not
+        expect(rows(vt("\e[?7labcde\e[K", 5, 1)))->toBe('abcd ')
+            ->and(rows(vt("abcde\e[K", 5, 2)))->toBe('abcd |     ')
+            ->and(rows(vt("\e[?7l\e[2Kabcde", 5, 1)))->toBe('abcde');
     });
 
     it('does not move the cursor when erasing', function () {
@@ -321,8 +329,38 @@ describe('OSC and other strings', function () {
     });
 
     it('parses and ignores other OSC strings', function () {
-        $s = vt("a\e]8;;http://example.com\e\\link\e]8;;\e\\\e]52;c;aGVsbG8=\x07\e]11;?\x07b");
+        $s = vt("a\e]8;;http://example.com\e\\link\e]8;;\e\\\e]52;c;aGVsbG8=\x07\e]4;1;?\x07\e]11;?\x07b");
         expect($s->line(0))->toBe('alinkb');
+    });
+
+    it('keeps OSC 8 hyperlinks in the cells: the URI and id, across SGR, until the link ends', function () {
+        $s = vt("a\e]8;id=x1;https://example.com/a;b\e\\li\e[1;31mnk\e[0m!\e]8;;\x07b \e]8;;file:///tmp\e\\f\e]8;;\e\\");
+        $link = fn(int $x) => [$s->cell($x, 0)->style->link, $s->cell($x, 0)->style->linkId];
+        expect($s->line(0))->toBe('alink!b f')
+            ->and($link(0))->toBe(['', ''])
+            ->and($link(1))->toBe(['https://example.com/a;b', 'x1'])
+            ->and($link(3))->toBe(['https://example.com/a;b', 'x1'])          // SGR changed the colour, not the link
+            ->and($s->cell(3, 0)->style->fg)->toBe(1)
+            ->and($link(5))->toBe(['https://example.com/a;b', 'x1'])          // SGR 0 does not end a link
+            ->and($link(6))->toBe(['', ''])
+            ->and($link(8))->toBe(['file:///tmp', ''])
+            ->and(explode("\n", $s->dump())[0])->toBe('a[link=x1;https://example.com/a;b]li[/][bold fg=1 link=x1;https://example.com/a;b]nk[/][link=x1;https://example.com/a;b]![/]b [link=file:///tmp]f[/]');
+    });
+
+    it('does not put a hyperlink on erased, inserted or scrolled-in blank cells', function () {
+        $s = vt("\e]8;;http://x\e\\ab\e[K\r\e[2@\n\e[2Kz\e]8;;\e\\", 6, 2);
+        expect(rows($s))->toBe('  ab  |z     ')
+            ->and($s->cell(0, 0)->style->link)->toBe('')->and($s->cell(2, 0)->style->link)->toBe('http://x')
+            ->and($s->cell(4, 0)->style->link)->toBe('')
+            ->and($s->cell(0, 1)->style->link)->toBe('http://x')->and($s->cell(1, 1)->style->link)->toBe('');
+    });
+
+    it('builds hyperlinks with Ansi::link() and Ansi::hyperlink(), dropping control characters', function () {
+        expect(Ansi::hyperlink('docs', 'https://example.com', 'd1'))->toBe("\e]8;id=d1;https://example.com\e\\docs\e]8;;\e\\")
+            ->and(Ansi::link("http://a\e]b"))->toBe("\e]8;;http://a]b\e\\")
+            ->and(Ansi::link())->toBe("\e]8;;\e\\");
+        $s = vt('x' . Ansi::hyperlink('docs', 'https://example.com', 'd1') . 'y');
+        expect($s->cell(1, 0)->style->link)->toBe('https://example.com')->and($s->cell(5, 0)->style->link)->toBe('');
     });
 
     it('drops an OSC cancelled with CAN or aborted with ESC', function () {

@@ -3,7 +3,8 @@
 namespace phasync\Tui;
 
 /**
- * The look of a cell: foreground color, background color and attributes.
+ * The look of a cell: foreground color, background color and attributes, and the hyperlink the
+ * cell belongs to (OSC 8), if any.
  *
  * Styles are immutable and interned: `Style::of()` returns the same object for the same values,
  * so two cells look the same exactly when their styles are `===`. Read a cell's style with
@@ -11,6 +12,9 @@ namespace phasync\Tui;
  *
  *     $warning = Style::of(fg: Color::YELLOW, attrs: Style::BOLD);
  *     $surface->write(Ansi::style($warning) . 'careful' . Ansi::reset());
+ *
+ * The hyperlink is set apart from the colours, as terminals do: `Ansi::style()` and SGR (`ESC [
+ * 0 m` included) leave it as it is, `Ansi::link()` sets and ends it.
  */
 final class Style
 {
@@ -40,13 +44,18 @@ final class Style
         public readonly int $bg,
         /** Attribute bits: `Style::BOLD | Style::UNDERLINE` and so on. */
         public readonly int $attrs,
+        /** The URI of the hyperlink the cell belongs to, '' for none. */
+        public readonly string $link = '',
+        /** The hyperlink's id ('' for none): cells with the same id and URI are one link, also across rows. */
+        public readonly string $linkId = '',
     ) {
     }
 
-    /** The style with these colors and attributes (the same object every time). */
-    public static function of(int $fg = Color::DEFAULT, int $bg = Color::DEFAULT, int $attrs = 0): Style
+    /** The style with these colors, attributes and hyperlink (the same object every time). */
+    public static function of(int $fg = Color::DEFAULT, int $bg = Color::DEFAULT, int $attrs = 0, string $link = '', string $linkId = ''): Style
     {
-        return self::$interned["$fg,$bg,$attrs"] ??= new Style($fg, $bg, $attrs);
+        $key = $link === '' ? "$fg,$bg,$attrs" : "$fg,$bg,$attrs,$linkId;$link";
+        return self::$interned[$key] ??= new Style($fg, $bg, $attrs, $link, $link === '' ? '' : $linkId);
     }
 
     /** The default style: default colors, no attributes. */
@@ -64,30 +73,36 @@ final class Style
     /** This style with another foreground color. */
     public function withFg(int $fg): Style
     {
-        return self::of($fg, $this->bg, $this->attrs);
+        return self::of($fg, $this->bg, $this->attrs, $this->link, $this->linkId);
     }
 
     /** This style with another background color. */
     public function withBg(int $bg): Style
     {
-        return self::of($this->fg, $bg, $this->attrs);
+        return self::of($this->fg, $bg, $this->attrs, $this->link, $this->linkId);
     }
 
     /** This style with these attribute bits added. */
     public function with(int $attrs): Style
     {
-        return self::of($this->fg, $this->bg, $this->attrs | $attrs);
+        return self::of($this->fg, $this->bg, $this->attrs | $attrs, $this->link, $this->linkId);
     }
 
     /** This style with these attribute bits removed. */
     public function without(int $attrs): Style
     {
-        return self::of($this->fg, $this->bg, $this->attrs & ~$attrs);
+        return self::of($this->fg, $this->bg, $this->attrs & ~$attrs, $this->link, $this->linkId);
+    }
+
+    /** This style in the hyperlink to $uri (with an id, to join parts of one link), or in none with ''. */
+    public function withLink(string $uri, string $id = ''): Style
+    {
+        return self::of($this->fg, $this->bg, $this->attrs, $uri, $id);
     }
 
     /**
-     * A readable description such as `bold fg=1 bg=#203040`, empty for the plain style. This is
-     * the notation `Surface::dump()` uses.
+     * A readable description such as `bold fg=1 bg=#203040 link=https://example.com`, empty for
+     * the plain style. This is the notation `Surface::dump()` uses.
      */
     public function __toString(): string
     {
@@ -102,6 +117,9 @@ final class Style
         }
         if ($this->bg !== Color::DEFAULT) {
             $parts[] = 'bg=' . Color::name($this->bg);
+        }
+        if ($this->link !== '') {
+            $parts[] = 'link=' . ($this->linkId === '' ? '' : $this->linkId . ';') . $this->link;
         }
         return implode(' ', $parts);
     }

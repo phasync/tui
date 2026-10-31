@@ -774,6 +774,12 @@ final class Emulator
                 $n++;
             }
         }
+        if ($code === '8') {
+            // a hyperlink: "8;params;URI" starts one (params "id=x:key=value"), "8;;" ends it
+            $parts = explode(';', $value, 2);
+            $id = preg_match('/(?:^|:)id=([^:]*)/', $parts[0], $m) ? $m[1] : '';
+            $this->pen = $this->pen->withLink($parts[1] ?? '', $id);
+        }
         if ($code === '52') {
             // clipboard write: "52;<selections>;<base64>"; reading the clipboard is not offered
             $parts = explode(';', $value, 2);
@@ -1340,7 +1346,7 @@ final class Emulator
                     break;
             }
         }
-        $this->pen = Style::of($fg, $bg, $attrs);
+        $this->pen = Style::of($fg, $bg, $attrs, $this->pen->link, $this->pen->linkId);     // (SGR leaves the hyperlink)
     }
 
     /**

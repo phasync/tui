@@ -41,6 +41,24 @@ describe('compositing', function () {
             ->and($host->cursor()->x)->toBe(6);
     });
 
+    it('forwards hyperlinks of a hosted surface, and keeps the host producer\'s own link apart', function () {
+        $src = vt('a' . Ansi::hyperlink('bc', 'https://example.com', 'i') . 'd', 4, 1);
+        $host = new Surface(8, 2);
+        $host->write("\e[2;1H" . Ansi::link('http://host') . 'h');   // the host's producer is in a link
+        $host->host($src, 1, 0);
+        $host->compose();
+        $host->write('j' . Ansi::link() . 'k');
+        expect(rows($host))->toBe(' abcd   |hjk     ')
+            ->and($host->cell(1, 0)->style->link)->toBe('')
+            ->and([$host->cell(2, 0)->style->link, $host->cell(3, 0)->style->linkId])->toBe(['https://example.com', 'i'])
+            ->and($host->cell(4, 0)->style->link)->toBe('')
+            ->and($host->cell(1, 1)->style->link)->toBe('http://host')       // its link went on after the compositor wrote
+            ->and($host->cell(2, 1)->style->link)->toBe('');
+        $nested = new Surface(10, 2);
+        $nested->host($host, 1, 0);
+        expect($nested->cell(3, 0)->style->link)->toBe('https://example.com')->and($nested->cell(2, 1)->style->link)->toBe('http://host');
+    });
+
     it('keeps an insert-mode producer\'s mode and does not insert while compositing', function () {
         $host = new Surface(6, 1);
         $host->write("\e[4h");

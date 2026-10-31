@@ -44,12 +44,28 @@ needs nothing at runtime):
 - ESC sequences: RIS, IND, RI, NEL, HTS, DECSC/DECRC, DECKPAM/DECKPNM, DECALN, charset
   designation (the DEC line drawing set is honoured).
 - OSC: window title (0, 2) stored, colour queries (10, 11, 12) answered, clipboard writes (52)
-  passed up; other OSC, DCS, APC, PM and SOS strings are consumed and ignored.
+  passed up, hyperlinks (8) kept in the cells (see below); other OSC, DCS, APC, PM and SOS
+  strings are consumed and ignored.
 - Queries answered on the input channel: DSR 5 and 6 (cursor position), DA1, DA2, XTVERSION,
   DECRQM, kitty keyboard flags, OSC 10/11 colours.
 
 Unknown sequences are consumed without corrupting the screen. A sequence or a UTF-8 character
-split across two `write()` calls is completed by the next call. Not implemented, on purpose for
+split across two `write()` calls is completed by the next call.
+
+**The last column.** As in xterm, a character written into the last column leaves the cursor
+on that column, with the wrap pending: the next character goes to the next row (with autowrap
+on), or over the last column again (autowrap off, `ESC [ ? 7 l`). So a drawing that writes a
+row to its very end and then `ESC [ K` (erase to the end of the row) erases the character it
+has just written, because the cursor is still on it. That is xterm's behaviour, not a bug:
+write the row and stop, or erase first (`ESC [ 2 K`, then the text).
+
+**Hyperlinks** (OSC 8, `ESC ] 8 ; id=x ; URI ST`, ended by `ESC ] 8 ; ; ST`): the text written
+in between belongs to the link. Each cell carries it in its style (`$cell->style->link`, the
+URI, and `linkId`), apart from the colours: SGR, `ESC [ 0 m` included, leaves it on, and
+erased or inserted blank cells are not in it. A host passes its windows' links on when it
+composites them, and a terminal device writes them to the real terminal when that terminal
+supports them (see [terminal](terminal.md)). Build them with `Ansi::link()` or
+`Ansi::hyperlink()`. Not implemented, on purpose for
 now: left/right margins (DECSLRM), double-width lines, reverse wrap, 132-column mode, palette
 queries (OSC 4), DECRQSS, and reflow on resize.
 
@@ -147,6 +163,8 @@ $s->input->read();                          // "\eOA"
 | `scrollRegion($top, $bottom)` | DECSTBM (inclusive rows) |
 | `title($title)` | OSC 2 |
 | `clipboard($text)` | OSC 52: put text on the clipboard (passed up to the real terminal) |
+| `link($uri = '', $id = '')` | OSC 8: start a hyperlink to `$uri` (with an `$id`, pieces of one link are joined); without a URI, end it. Control characters are dropped. |
+| `hyperlink($text, $uri, $id = '')` | `$text` as a hyperlink, ended after it |
 | `altScreen(bool $on = true)` | mode 1049 |
 
 ```php
@@ -156,10 +174,12 @@ $s->write(Ansi::moveTo(2, 1) . Ansi::styled('ok', Style::of(Color::GREEN, attrs:
 ## Styles and colours
 
 `Style` is an immutable, interned value (compare with `===`): `Style::of(int $fg = Color::DEFAULT,
-int $bg = Color::DEFAULT, int $attrs = 0)`, `Style::plain()`, `has($attrs)`, `withFg($fg)`,
-`withBg($bg)`, `with($attrs)`, `without($attrs)`, and `__toString()` (`"bold fg=1"`, `''` for
+int $bg = Color::DEFAULT, int $attrs = 0, string $link = '', string $linkId = '')`,
+`Style::plain()`, `has($attrs)`, `withFg($fg)`, `withBg($bg)`, `with($attrs)`, `without($attrs)`,
+`withLink($uri, $id = '')`, and `__toString()` (`"bold fg=1 link=https://example.com"`, `''` for
 plain). Attributes are bit flags: `Style::BOLD`, `DIM`, `ITALIC`, `UNDERLINE`, `BLINK`,
-`INVERSE`, `HIDDEN`, `STRIKE`.
+`INVERSE`, `HIDDEN`, `STRIKE`. `link` is the URI of the hyperlink the cell is in (`''` for
+none), `linkId` its id.
 
 A colour is an int: `Color::DEFAULT` (-1), 0-15 for the named colours (`Color::RED`,
 `Color::BRIGHT_BLUE`, ...), 16-255 for the 256-colour palette, or a truecolor from
