@@ -207,6 +207,8 @@ abstract class Component extends Element
     private ?ComputedStyle $inherited = null;
     /** @var array{array{int,int}, ?array}|null the room a parent's layout measured this component in, and the answer */
     private ?array $measured = null;
+    /** @var array<string, array{int,int}|null> measureFor() by room, until the next markDirty() or render */
+    private array $sizes = [];
     /** @var array{int, int}|null the width a parent's layout asked leastRows() for, and the answer */
     private ?array $leastAsked = null;
     /** @var array<string, true> states of its own for the stylesheet (`setStyleState()`) */
@@ -766,6 +768,7 @@ abstract class Component extends Element
      */
     final public function markDirty(): void
     {
+        $this->sizes = [];
         if (!$this->mounted || $this->renderPending || !$this->rendered || $this->rendering) {
             return;     // (before the first render: that one is coming)
         }
@@ -1211,6 +1214,7 @@ abstract class Component extends Element
             $this->used = null;
             $this->rendering = false;
         }
+        $this->sizes = [];      // (measured by what it rendered now)
         $returned = $same ? $this->surface->layout() : $layout;
         if (!$same) {
             if ($this->parent === null && ($this->floating !== [] || $this->overlayLayout !== null)) {
@@ -1219,7 +1223,7 @@ abstract class Component extends Element
             if ($layout !== null) {
                 $this->surface->setLayout($layout);
             }
-            if (($this->measured !== null && $this->measure(...$this->measured[0]) !== $this->measured[1])
+            if (($this->measured !== null && $this->measured[1] !== $this->measureFor(...$this->measured[0]))
                 || ($this->leastAsked !== null && $this->leastNow($this->leastAsked[0]) !== $this->leastAsked[1])) {
                 $this->measured = $this->leastAsked = null;
                 $this->parent?->relayout();     // it needs another size: the parent lays it out again
@@ -1558,13 +1562,23 @@ abstract class Component extends Element
 
     /**
      * @internal `measure()` for a parent's layout: the answer is remembered, so that when it
-     * changes (an editor that grew a line) the parent lays its tree out again.
+     * changes (an editor that grew a line) the parent lays its tree out again. The answers stand
+     * until the component is marked for a render or renders (so a parent's render does not
+     * measure its fifty unchanged rows again): what `measure()` reads must be what a change of
+     * goes with a render, as state, props and the style are.
      *
      * @return array{int,int}|null
      */
     final public function measureFor(int $cols, int $rows): ?array
     {
-        $size = $this->measure($cols, $rows);
+        $key = $cols . ',' . $rows;
+        if (!\array_key_exists($key, $this->sizes)) {
+            if (\count($this->sizes) > 16) {
+                $this->sizes = [];
+            }
+            $this->sizes[$key] = $this->measure($cols, $rows);
+        }
+        $size = $this->sizes[$key];
         $this->measured = [[$cols, $rows], $size];
         return $size;
     }
