@@ -3,8 +3,9 @@
 ## 0.0.3-beta8 (2026-11-01)
 
 Hosted surfaces are composited by copying cells instead of writing escape sequences, the
-terminal gets one diff at the end, a `Tui::quit()` from a `Tui::go()` job no longer kills a
-headless program, and `Confirm` answers to y and n. Everything from 0.0.3-beta7 works as
+terminal gets one diff at the end, a render whose elements lay out as the last ones keeps
+that layout, a `Tui::quit()` from a `Tui::go()` job no longer kills a headless program, and
+`Confirm` answers to y and n. Everything from 0.0.3-beta7 works as
 before, except where an entry says what changed. Times are `press()` + `settle()` (or a frame's
 `settle()`) around `hrtime()` under `Tui::headless()`, one every 50 ms (the CPU clocks down in
 between), with `tools/monitor-bench.php`; "back to back" is without the pause.
@@ -24,11 +25,12 @@ between), with `tools/monitor-bench.php`; "back to back" is without the pause.
 - What you notice, against 0.0.3-beta7:
   - Switching to a full `Markdown` tab at 120x40: 8.7 ms (was 14.3 ms).
   - The frame in which all fifty bars of `ProgressBar` rows move (`monitor-bench.php bars`):
-    29 ms (was 37 ms); 11.5 ms back to back (was 15.5 ms).
+    20 ms (was 37 ms); 7.8 ms back to back (was 15.5 ms). See "A render that lays out as the
+    last one" below for the most of it.
   - A Tab in a `ScrollView`: 3 ms at 2 rows and 5.5 ms at 200 (were 3.7 and 6 ms); back to
     back 1.2 and 2.1 ms (were 1.5 and 2.4 ms).
   - A Tab in the program of 50 rows whose bars move (`monitor-bench.php keys`): about the
-    same median, 2.6-3 ms; a Tab is 1.1 ms back to back, of which composing is now 0.1 ms. The
+    same median, 2.6-3 ms; a Tab is 1.05 ms back to back, of which composing is 0.2 ms. The
     rest of that program's frames is the work of its components (see "What a frame of
     components costs" in docs/surface.md).
 - What the producer of a host writes under a window stays there: it shows again when the
@@ -53,6 +55,31 @@ between), with `tools/monitor-bench.php`; "back to back" is without the pause.
   (mode 2026), so a device keeps making frames until the hold ends or times out.
 - A moving `ProgressBar` finds the cells it changes from the edges of its fill instead of
   checking every cell, and writes only those.
+
+**A render that lays out as the last one**
+
+- A closure (or a `render()`) that makes its elements anew on every frame was laid out anew
+  on every frame: every element styled, measured and placed again, although a bar's value or
+  a handler was all that differed. Now the new elements are compared with the ones laid out
+  last; when they lay out the same (the same elements in the same places, with the same
+  attributes, texts and classes, while the focus, the mouse, the sizes and the styles stay as
+  they were), the last layout stands: the new handlers are the ones that run, the components
+  at their places take their new props, and nothing else is done. In the fifty-bar program
+  this took the element tree from about 3 ms to 1.2 ms back to back. An element the program
+  keeps from render to render and changes with `with()` is laid out again (see "Element
+  trees" in docs/components.md).
+- `Component::style()` keeps its answers while nothing a style depends on changed (the
+  focus, the mouse, the geometry, a component's attributes or own states, a stylesheet or
+  theme), instead of computing the states and the stylesheet's answer on every call: it is
+  asked for every component of every frame, several times.
+- Parsing what is written to a surface: the parser tries an item by its first byte (the
+  sequences that start with ESC and the C0 controls are guarded by it, a well-formed CSI
+  sequence is tried first, the C1 forms behind one look at the character), so the end of a
+  write no longer tries every kind of sequence. A write of a few sequences costs about a third
+  less (26 to 17.5 µs for a moving bar's write; 6.9 to 3.4 µs for one character). What is
+  parsed and how is unchanged (the grammar is the same language).
+- A moving `ProgressBar` whose label keeps its width writes the label over the old one
+  instead of erasing to the end of the row first (one sequence less per bar and frame).
 
 **`Tui::quit()` from a job**
 

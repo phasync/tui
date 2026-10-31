@@ -430,6 +430,18 @@ less than it needs) and `display: none` (`hidden`: left out, as `null` would be)
 draws shows where no element covers it. Components that draw themselves (a graph with `Ansi`)
 go in a tree like any other.
 
+**What a render costs when little changed.** The elements are made anew on every render, so
+the library compares the new tree with the one it laid out last. When they lay out the same
+(the same elements in the same places, with the same attributes, texts and classes, while
+nothing they are styled by changed: the focus, the mouse, the sizes, the stylesheet), the last
+layout stands, whatever else is new: handlers (`onKey:`, `onFocus:`, `onMouse:`) may be other
+closures, and they are the ones that run from then on; component elements may be new
+instances with other props, and the components at their places take those props (and render
+when they changed, see "Props"). Nothing is styled, measured or laid out again. So a screen of
+fifty rows that a closure makes anew because a bar moved in each costs the comparison of its
+elements and the bars' own renders. An element the program keeps from one render to the next
+and changes with `with()` is laid out again.
+
 ## Props
 
 A component placed in the tree with `new` is a child at that place: the first render starts

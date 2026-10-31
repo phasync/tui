@@ -18,20 +18,26 @@ README.md and docs/.
       which one changed 0.1 ms); bench modes against beta7 (paced): tabs 14.3 -> 8.7 ms,
       scroll 2 3.7 -> 3.0, scroll 200 6.0 -> 5.5, bars 37 -> 29, keys 2.6-3.6 -> 2.8-2.9 (equal
       within noise)
-- [ ] 1d'. NOT MET: the 50-bar frame under 8 ms (29 ms paced, 11.5 ms back to back) and a
-      clear improvement of `keys` (its median is the Tab, 1.1 ms back to back of which compose
-      0.1 ms, or a Tab that coincides with a bar tick and pays that frame). What is left is the
-      component layer, flat in profiles of the bars frame (back to back): the closure's Tree::build
-      of 250 elements ~3 ms (itemNow, Element::attribute, Stylesheet::compute, Component::states,
-      kept, ...), the 50 ProgressBar renders ~3 ms (style() twice, look(), the write: ~6 us of fixed
-      cost per Surface::write plus ~2.5 us per item in the generated parser, whose Item* loop
-      tries every alternative once more at the end of each write), the rest of the frame's
-      component work ~3 ms (show/place/measure/area), compose 1.3 ms, the device diff and the
-      FakeTerminal's parse ~1.5 ms. The paced numbers are ~2.6x the back-to-back ones (CPU
-      governor). Reaching 8 ms paced needs ~3 ms back to back: a restructuring of the element
-      build (rows whose elements equal the last build's kept without a visit) and of the write
-      path (fixed cost per write; a first-character dispatch in the generated parser), not
-      compositing.
+- [ ] 1d'. NOT MET: the 50-bar frame under 8 ms. Continuation 2 (component layer): 29 -> 20 ms
+      paced, 11.5 -> 7.8 ms back to back (tools/monitor-bench.php bars; paced costs 2.6x back
+      to back on this CPU: schedutil, 1.2-3.6 GHz, the frame runs near the low clock after 50 ms
+      idle, so 8 ms paced needs about 3 ms back to back). Done: Tree::unchanged() (a build whose
+      elements lay out as the last build's keeps its items: 3 -> 1.2 ms), Component::style()
+      memo (styleCounters), grammar first-byte order (CsiPlain first, ESC-led and C0 guarded,
+      C1 behind one lookahead: a bar's write 26 -> 17.5 us standalone), Host::place() once per
+      frame, ProgressBar shape() once per render and no EL for a label of the same width.
+      Measured split of the 7.8 ms (hrtime around each phase, back to back): the closure 0.5,
+      the tree walk 1.2 (sameShape + reuse; place()/receive() of 150 components is 0.3 of it),
+      50 bar renders 2.6 (of which their writes' parsing 1.4: ~28 us each in situ against 17.5
+      standalone, cold caches), compose 1.9, device diff 0.7, FakeTerminal parse 0.8. Nothing
+      left is more than a quarter of the frame; what remains is per-item cost (parser items ~4
+      us in situ, windows ~8 us to compose). Ideas not done: damage by column spans (blit only
+      the changed windows' extents of a row, not every window on it: ~0.7 ms), a viewport
+      version so damage() compares numbers instead of building look strings (~0.3 ms), Text
+      elements without a window when they have no handler (like flat containers; ~0.3 ms).
+      None of them reaches 3 ms. `keys`: median 2.9 ms (equal within noise); a Tab is 1.05 ms
+      back to back: the dispatch and focus walk 0.25, the restyle of two rows 0.2, compose
+      0.2, two Button renders 0.13, the fake terminal 0.07; no one part to cut.
 - [x] 1e. docs/surface.md Performance, docs/hosting.md ("Compositing is blitting"), README
       model, CHANGELOG
 - [x] 2. Quit from a Tui::go() job under headless: the fatal came from the Tui::sleep(0.5) of
@@ -43,6 +49,34 @@ README.md and docs/.
       one line once per process already (RuntimeBeta5Test); cookbook recipe 11; fiber-interop
       0.3.2/0.4.2 are not on Packagist (2026-10-31: 0.3.1/0.4.1 and dev only): pins, warning
       and Quit stay
+
+## Design decisions (0.0.3-beta8, continuation 2)
+
+- **Tree::unchanged()**: before a full build, the new element tree is compared with the one
+  built last (sameShape(): same classes, attributes with any closure equal to any closure,
+  texts, spans, gaps, Box titles; component elements by class and attributes, props ignored,
+  a started one only as itself; a Help never), under the same sheet, base style, inline flag
+  and Component::styleCounters() (styleVersion, focusVersion, geometryVersion, treeVersion,
+  recorded after the build and after a restyle). Then reuse() does only what a build does
+  besides laying out: nodes[] and focused/focusing get the new elements (handlers, focus
+  callbacks), component elements are placed (receive()) and must land on the component the
+  last build had there, else the full build runs (place() is idempotent). claim() runs first
+  as before and seals every element: with() on a sealed element bumps the style counter, so a
+  kept element changed in place is laid out again. The global counters are coarse: any
+  component started anywhere (another program in the same process) makes the next build a full
+  one; tests that compare with a fresh program make their fresh programs after the run.
+- **Component::style() memo**: per component, per part+states key, valid while
+  styleCounters() is the same and no other component's render asks (hasFocus() subscribes a
+  reader). styleVersion is bumped by attribute changes (receive(), with()), setStyleState(),
+  inheritStyle() with another style, renderSubtree() (theme, stylesheet, background probe) and
+  the pointer moving. Surface::geometryVersion() counts geometryChanged().
+- **Grammar order for speed** (ansi.cpeg): Item = CsiPlain | Escape | Control | Text | C1Item.
+  charm/parsing guards a rule reference with a first-byte check only when its regex analyser
+  understands the pattern: \x{..} escapes (code points above 0x7f) and negated classes defeat
+  it, and \xhh above 0x7f would be analysed as a byte (wrong under /u), so the ESC-led rules
+  are written in ASCII only and the C1 forms are separate rules behind one lookahead.
+- **Host::place() per frame**: damage() and the blit after it place every window with the same
+  arguments; the result (without the row filter) is kept by viewport id for the compose.
 
 ## Status (0.0.3-beta7; TODO-0.0.3-beta7.md)
 
