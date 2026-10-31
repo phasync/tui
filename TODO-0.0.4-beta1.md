@@ -54,7 +54,10 @@ kitty or WezTerm window, so examples and `--headless` output matter.
 
 The drawing API is **not** implemented here: it is the separate library **phasync/canvas**
 (`/home/frode/dev/phasync/canvas`, require it as a path repository with `symlink: true` and
-`"phasync/canvas": "*"`; read its README first). It gives `new Canvas($w, $h)->getContext()` with
+`"phasync/canvas": "*"`; read its README first). It is being written in parallel with this
+version: do items 1, 2, 5 and the image half of 4 first, and start item 3 last; if the directory
+has no README yet when you get there, finish everything else, commit, and look again (it will be
+there within the hour); do not write a 2D context of your own. It gives `new Canvas($w, $h)->getContext()` with
 the browser's `CanvasRenderingContext2D` methods over GD or Imagick, and outputs `toPng()`,
 `toPixels()` and `toDots($w, $h)` (a downscaled dot bitmap with per-dot RGB). This library adds
 only the terminal half:
