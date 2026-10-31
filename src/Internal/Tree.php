@@ -35,6 +35,8 @@ final class Tree
     private array $painted = [];
     /** @var array<string, true> paths used by the build in progress */
     private array $seen = [];
+    /** @var array<int, true> the started components the build in progress shows, by object id (see claim()) */
+    public array $present = [];
     /** The last build had a `Help` element (it follows the focus). */
     public bool $showsHelp = false;
     /** A measure that places nothing: component elements are only looked up (see measure()). */
@@ -71,6 +73,8 @@ final class Tree
     /** The layout for the owner's surface that shows $root. */
     public function build(Element $root, Stylesheet $sheet, ComputedStyle $base): Layout
     {
+        $this->present = [];
+        $this->claim($root);
         $this->seen = [];
         $this->showsHelp = false;
         $this->hovers = [];
@@ -174,12 +178,37 @@ final class Tree
      */
     public function measure(Element $root, int $cols, int $rows, Stylesheet $sheet, ComputedStyle $base, bool $place = true): ?array
     {
+        if ($place) {
+            $this->present = [];
+            $this->claim($root);
+        }
         $dry = $this->dry;
         $this->dry = !$place;
         try {
             return ($this->item($root, 'r', $sheet, $base) ?? self::nothing())->natural($cols, $rows);
         } finally {
             $this->dry = $dry;
+        }
+    }
+
+    /**
+     * Before anything is placed: the components started already that the tree shows (instances
+     * the program kept) are noted (`$present`), so no new instance placed where one of them was
+     * takes it over, whatever order they come in.
+     */
+    private function claim(Element $node, ?Element $parent = null): void
+    {
+        if ($node instanceof Component) {
+            if ($node->isMounted()) {
+                $this->present[spl_object_id($node)] = true;
+                $node->placedUnder($parent);
+            }
+        } elseif ($node instanceof Column || $node instanceof Row || $node instanceof Layers) {
+            foreach ($node->children as $child) {
+                $this->claim($child, $node);
+            }
+        } elseif ($node instanceof Box && !$node->title instanceof \Closure) {
+            $this->claim($node->child, $node);
         }
     }
 
@@ -231,7 +260,7 @@ final class Tree
         }
         if ($node instanceof Component) {
             $key = $node->attribute('key');
-            $component = $node->isMounted() ? $node : ($this->place)($key !== null ? "\0k:" . $key : "\0p:" . $path, $node, !$this->dry);
+            $component = ($this->place)($key !== null ? "\0k:" . $key : "\0p:" . $path, $node, !$this->dry);
             if ($component === null || !$component->isMounted()) {
                 return new LayoutItem(new Surface(1, 1, 0));     // (a dry measure: gone, it takes any room)
             }

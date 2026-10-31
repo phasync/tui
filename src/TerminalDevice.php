@@ -471,6 +471,18 @@ abstract class TerminalDevice
         return $this->root;
     }
 
+    /**
+     * The component shown on this device: the root component started on it (`Tui::run()`'s,
+     * `Tui::headless()`'s, or one given to `start()`), null when none is. How a test or a
+     * program without a class reaches the components of its tree: `$terminal->component()
+     * ->children()['progress']` finds the one placed with `key: 'progress'`. Keeping the
+     * instances you place (`$bars[$i] ??= new ProgressBar(...)`) is the simpler way.
+     */
+    public function component(): ?Component
+    {
+        return $this->root === null ? null : Component::of($this->root);
+    }
+
     /** Wait (cooperatively) until `detach()` is called; returns at once when not attached. */
     public function wait(): void
     {

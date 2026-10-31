@@ -196,8 +196,14 @@ abstract class Component extends Element
     private ?array $shownWith = null;
     /** @var array<string, true> the keys of the children the last layout of $shown placed */
     private array $placed = [];
+    /** @var array<int, true> the started components it placed as themselves, by object id */
+    private array $placedSelf = [];
     /** The next render lays the tree out again, also when it is the same (see relayout()). */
     private bool $relayout = false;
+    /** An instance the program keeps from render to render (see placedUnder()). */
+    private bool $itself = false;
+    /** @var array{?\WeakReference<Element>}|null the container the last element tree placed it in */
+    private ?array $under = null;
     /** The latest focus request in its subtree when a render stopped showing it (see pendingRank()). */
     private ?int $hiddenRank = null;
     /** focus() was called before start(): it takes effect when the component starts. */
@@ -1417,7 +1423,8 @@ abstract class Component extends Element
         }
         if ($returned !== null) {
             foreach ($this->children as $key => $child) {
-                if (!isset($used[$key]) && !isset($this->kept[$key]) && !$child->isShownIn($this->surface) && !$child->isHeld()) {
+                if (!isset($used[$key]) && !isset($this->kept[$key]) && !isset($this->placedSelf[spl_object_id($child)])
+                    && !$child->isShownIn($this->surface) && !$child->isHeld()) {
                     if ($child->parent === $this) {
                         $child->stop();     // a render does not wait for its coroutines
                     } else {
@@ -1519,7 +1526,7 @@ abstract class Component extends Element
         }
         $this->shown = $result instanceof Element ? $result : null;
         $this->relayout = false;
-        $this->placed = [];
+        $this->placed = $this->placedSelf = [];
         $this->shownWith = null;
         if ($result instanceof Element) {
             $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
@@ -1601,10 +1608,37 @@ abstract class Component extends Element
      */
     private function place(string $key, Component $fresh, bool $create = true): ?Component
     {
+        if ($fresh->mounted) {
+            // started already (an instance the program kept, or another component's): itself
+            if ($create) {
+                $this->placedSelf[spl_object_id($fresh)] = true;
+            }
+            return $fresh;
+        }
+        if ($fresh->stopped !== null) {
+            throw new \LogicException($fresh::class . ' was placed in the tree again after it left the tree, which stopped it '
+                . '(an instance that leaves the tree is stopped): place a new instance instead (forget the old one when its row goes: '
+                . 'unset($bars[$i])), or keep it in the tree with the class \'hidden\' while it should not show');
+        }
         if ($create) {
             $this->placed[$key] = true;
         }
         $existing = $this->child($key);
+        if ($existing !== null && ($existing->itself || isset($this->tree?->present[spl_object_id($existing)]))) {
+            // a kept instance the program shows as itself (wherever it is now) is never taken
+            // over by a new one: it keeps its key elsewhere, the new instance is a child of its own
+            if (!$create) {
+                return null;
+            }
+            unset($this->children[$key]);
+            $this->children["\0i:" . spl_object_id($existing)] = $existing;
+            if (isset($this->kept[$key])) {
+                unset($this->kept[$key]);
+                $this->kept["\0i:" . spl_object_id($existing)] = true;
+            }
+            self::$treeVersion++;
+            return $this->child($key, fn() => $fresh);
+        }
         if (!$create) {
             return $existing !== null && $existing::class === $fresh::class ? $existing : null;
         }
@@ -1616,6 +1650,31 @@ abstract class Component extends Element
             $existing->stop();      // another kind of component at this place now
         }
         return $this->child($key, fn() => $fresh);
+    }
+
+    /**
+     * @internal An element tree places this component, started already, under $parent (null:
+     * as the root). Placed under another container than last time, it is an instance the
+     * program kept from one render to the next: from then on a new instance placed where it is
+     * does not take its props over, wherever this one moves (see place()).
+     */
+    final public function placedUnder(?Element $parent): void
+    {
+        $was = $this->under;
+        if ($was !== null && ($was[0]?->get()) !== $parent) {
+            $this->itself = true;       // in a container of another render: the program kept it
+        }
+        $this->under = [$parent === null ? null : \WeakReference::create($parent)];
+    }
+
+    /**
+     * The component whose surface $surface is (the root component on a terminal device's root,
+     * a component's `$this->surface`), or null when none is mounted on it.
+     */
+    final public static function of(Surface $surface): ?Component
+    {
+        $component = self::$onSurface[$surface] ?? null;
+        return $component !== null && $component->mounted ? $component : null;
     }
 
     /** Take the props (public properties) and attributes of $fresh, a new instance of this class. */
