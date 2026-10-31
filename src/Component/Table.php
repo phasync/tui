@@ -5,6 +5,7 @@ namespace phasync\Tui\Component;
 use phasync\Tui\Ansi;
 use phasync\Tui\Component;
 use phasync\Tui\Internal\Size;
+use phasync\Tui\Markup;
 use phasync\Tui\Mouse;
 use phasync\Tui\Style;
 use phasync\Tui\Text;
@@ -22,8 +23,11 @@ use phasync\Tui\Text;
  * **Columns** by title, each a width or an array: `width` (cells, `'25%'`, `'1fr'` of what is
  * left, or `'auto'`, the default: as wide as its widest cell and title), `align` (`left`,
  * `right`, `center`) and `sortable` (default true). **Rows** by key (your ids: pids, file
- * names), each a list of cells in column order; a cell may carry SGR escape sequences for
- * colours. A cell wider than its column is cut with "…". When the columns do not fit, the
+ * names), each a list of cells in column order; a cell takes markup (`'<fg=red>failed</>'`,
+ * see `Markup`) and may carry SGR escape sequences for colours. A cell wider than its column
+ * is cut with "…". The widths of `'auto'` columns are measured when the rows change (a new
+ * `rows` array, `setItems()`), not when the cursor or the view moves, so moving through
+ * 10,000 rows costs what it costs through 100. When the columns do not fit, the
  * table scrolls sideways by column (Left/Right, the wheel sideways), the first column shown
  * at the left edge.
  *
@@ -55,6 +59,12 @@ class Table extends Component
     private ?array $inView = null;
     /** @var list<array{int,int}> the column positions drawn last (x, width), for clicks */
     private array $drawn = [];
+    /** @var array{array, ?int, bool, string, list<int|string>, array<int|string, int>}|null the shown rows for [rows, sorting, filter]: keys and their positions */
+    private ?array $order = null;
+    /** @var array{array, array<int, int>}|null the widest cell of each column, for the rows */
+    private ?array $widest = null;
+    /** How many cells were measured for 'auto' widths (for tests: once per change of the rows). */
+    private int $measuredCells = 0;
 
     /**
      * @param array<string, int|string|array{width?: int|string, align?: string, sortable?: bool}> $columns by title, in order
@@ -75,16 +85,17 @@ class Table extends Component
         if ($keys === []) {
             return null;
         }
-        return \in_array($this->currentKey, $keys, true) ? $this->currentKey : $keys[0];
+        return $this->currentKey !== null && isset($this->order[5][$this->currentKey]) ? $this->currentKey : $keys[0];
     }
 
     /** Make the row with key $key current and scroll it into view; false if there is no such row. */
     public function setCurrent(int|string $key): bool
     {
-        if (!\in_array($key, $this->shown(), true)) {
+        $at = $this->positionOf($key);
+        if ($at === null) {
             return false;
         }
-        $this->moveTo(array_search($key, $this->shown(), true));
+        $this->moveTo($at);
         return true;
     }
 
@@ -185,41 +196,75 @@ class Table extends Component
     // ------------------------------------------------------------------------------------------
 
     /**
-     * The keys of the rows shown, in the order shown: sorted, and (in a `Select`) filtered.
+     * The keys of the rows shown, in the order shown: sorted, and filtered by `filterRows()` (a
+     * `Select` that is typed in). Computed again only when the rows (a new array), the sorting
+     * or `filterKey()` changed.
      *
      * @return list<int|string>
      */
-    protected function shown(): array
+    final protected function shown(): array
     {
+        $by = $this->filterKey();
+        $o = $this->order;
+        if ($o !== null && $o[0] === $this->rows && $o[1] === $this->sortColumn && $o[2] === $this->descending && $o[3] === $by) {
+            return $o[4];
+        }
         $keys = array_keys($this->rows);
-        if ($this->sortColumn === null) {
-            return $keys;
+        if ($this->sortColumn !== null) {
+            $col = $this->sortColumn;
+            $plain = [];
+            foreach ($this->rows as $key => $cells) {
+                $plain[$key] = self::plain((string) (array_values($cells)[$col] ?? ''));
+            }
+            usort($keys, function ($a, $b) use ($plain): int {
+                $x = $plain[$a];
+                $y = $plain[$b];
+                $c = is_numeric($x) && is_numeric($y) ? $x <=> $y : strnatcasecmp($x, $y);
+                return $c === 0 ? 0 : ($this->descending ? -$c : $c);
+            });
         }
-        $col = $this->sortColumn;
-        $plain = [];
-        foreach ($this->rows as $key => $cells) {
-            $plain[$key] = self::plain((string) (array_values($cells)[$col] ?? ''));
-        }
-        usort($keys, function ($a, $b) use ($plain): int {
-            $x = $plain[$a];
-            $y = $plain[$b];
-            $c = is_numeric($x) && is_numeric($y) ? $x <=> $y : strnatcasecmp($x, $y);
-            return $c === 0 ? 0 : ($this->descending ? -$c : $c);
-        });
+        $keys = array_values($this->filterRows($keys));
+        $this->order = [$this->rows, $this->sortColumn, $this->descending, $by, $keys, array_flip($keys)];
         return $keys;
     }
 
-    /** The cell text without escape sequences. */
+    /**
+     * The rows to show of $keys (sorted already), for a subclass that filters (a `Select`):
+     * all of them by default. What it depends on besides the rows goes in `filterKey()`.
+     *
+     * @param list<int|string> $keys
+     * @return list<int|string>
+     */
+    protected function filterRows(array $keys): array
+    {
+        return $keys;
+    }
+
+    /** What `filterRows()` depends on besides the rows (a filter's text): the rows shown are computed again when it changes. */
+    protected function filterKey(): string
+    {
+        return '';
+    }
+
+    /** The position of row $key among the rows shown, null when it is not shown. */
+    protected function positionOf(int|string $key): ?int
+    {
+        $this->shown();
+        return $this->order[5][$key] ?? null;
+    }
+
+    /** The cell text without markup and escape sequences. */
     protected static function plain(string $text): string
     {
-        return preg_replace('/\e\[[0-9;:?]*[A-Za-z]/', '', $text);
+        return preg_replace('/\e\[[0-9;:?]*[A-Za-z]/', '', Markup::plain($text));
     }
 
     /** Move the current row by $n; false when it could not move at all. */
     private function move(int $n): bool
     {
         $keys = $this->shown();
-        $at = array_search($this->current(), $keys, true);
+        $current = $this->current();
+        $at = $current === null ? false : ($this->positionOf($current) ?? false);
         if ($keys === [] || $at === false || ($at + $n < 0 && $at === 0) || ($at + $n >= \count($keys) && $at === \count($keys) - 1)) {
             return false;
         }
@@ -292,13 +337,10 @@ class Table extends Component
     {
         $spec = $this->spec();
         $sizes = [];
+        $widest = $this->widest();
         foreach ($spec as $i => [$title, $width]) {
             if ($width === 'auto') {
-                $w = Text::width($title) + ($this->sortColumn === $i ? 2 : 0);
-                foreach ($this->rows as $cells) {
-                    $w = max($w, Text::width((string) (array_values($cells)[$i] ?? '')));
-                }
-                $width = $w;
+                $width = max(Text::width(Markup::plain($title)) + ($this->sortColumn === $i ? 2 : 0), $widest[$i] ?? 0);
             }
             $sizes[] = Size::parse($width);
         }
@@ -312,6 +354,37 @@ class Table extends Component
             }
         }
         return $widths;
+    }
+
+    /**
+     * The widest cell of each column (its visible text), measured once for the rows: again only
+     * when `rows` is another array.
+     *
+     * @return array<int, int>
+     */
+    private function widest(): array
+    {
+        if ($this->widest !== null && $this->widest[0] === $this->rows) {
+            return $this->widest[1];
+        }
+        $widest = [];
+        foreach ($this->rows as $cells) {
+            foreach (array_values($cells) as $i => $cell) {
+                $this->measuredCells++;
+                $w = Text::width(Markup::plain((string) $cell));
+                if ($w > ($widest[$i] ?? 0)) {
+                    $widest[$i] = $w;
+                }
+            }
+        }
+        $this->widest = [$this->rows, $widest];
+        return $widest;
+    }
+
+    /** @internal How many cells were measured for the widths of 'auto' columns so far. */
+    public function measuredCells(): int
+    {
+        return $this->measuredCells;
     }
 
     /** The largest first column that still leaves no blank on the right. */
@@ -337,16 +410,13 @@ class Table extends Component
     {
         $spec = $this->spec();
         $width = max(0, \count($spec) - 1);
+        $widest = $this->widest();
         foreach ($spec as $i => [$title, $w]) {
             if (\is_int($w)) {
                 $width += $w;
                 continue;
             }
-            $n = Text::width($title) + ($this->sortColumn === $i ? 2 : 0);
-            foreach ($this->rows as $cells) {
-                $n = max($n, Text::width((string) (array_values($cells)[$i] ?? '')));
-            }
-            $width += $n;
+            $width += max(Text::width(Markup::plain($title)) + ($this->sortColumn === $i ? 2 : 0), $widest[$i] ?? 0);
         }
         return [min($cols, max(1, $width)), max(1, \count($this->shown()) + ($this->header ? 1 : 0) + $this->footerRows())];
     }
@@ -401,8 +471,8 @@ class Table extends Component
         $keys = $this->shown();
         $body = $this->bodyRows();
         $current = $this->current();
-        $at = $current === null ? null : array_search($current, $keys, true);
-        if ($at !== null && $at !== false) {
+        $at = $current === null ? null : $this->positionOf($current);
+        if ($at !== null) {
             $this->currentAt = $at;
             if (!$this->free) {
                 $this->top = min(max($this->top, $at - $body + 1), $at);
@@ -425,8 +495,9 @@ class Table extends Component
         if ($this->header) {
             $cells = [];
             foreach ($this->drawn as $i => [, $w]) {
-                $title = $spec[$i][0] . ($this->sortColumn === $i ? ($this->descending ? ' ▼' : ' ▲') : '');
-                $style = $this->style('header', ...($this->sortColumn === $i ? ['sorted'] : []))->text;
+                $states = $this->sortColumn === $i ? ['sorted'] : [];
+                $title = $this->markup($spec[$i][0], 'header', ...$states) . ($this->sortColumn === $i ? ($this->descending ? ' ▼' : ' ▲') : '');
+                $style = $this->style('header', ...$states)->text;
                 $cells[$i] = [Text::pad(Text::truncate($title, $w), $w, $spec[$i][2]), $style];
             }
             $out .= $this->line(0, $cells, $this->style('header')->text, $cols);
@@ -435,10 +506,11 @@ class Table extends Component
         for ($r = 0; $r < $body && $this->top + $r < \count($keys); $r++) {
             $key = $keys[$this->top + $r];
             $row = array_values($this->rows[$key]);
-            $style = $this->style('row', ...$this->rowStates($key, $key === $current))->text;
+            $states = $this->rowStates($key, $key === $current);
+            $style = $this->style('row', ...$states)->text;
             $cells = [];
             foreach ($this->drawn as $i => [, $w]) {
-                $cells[$i] = [Text::pad(Text::truncate((string) ($row[$i] ?? ''), $w), $w, $spec[$i][2]), $style];
+                $cells[$i] = [Text::pad(Text::truncate($this->markup((string) ($row[$i] ?? ''), 'row', ...$states), $w), $w, $spec[$i][2]), $style];
             }
             $out .= $this->line($y + $r, $cells, $style, $cols);
         }

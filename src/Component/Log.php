@@ -3,6 +3,7 @@
 namespace phasync\Tui\Component;
 
 use phasync\Tui\Component;
+use phasync\Tui\Markup;
 use phasync\Tui\Mouse;
 use phasync\Tui\Split;
 use phasync\Tui\Surface;
@@ -163,7 +164,8 @@ final class Log extends Component
 
     /**
      * Add text at the end. Line breaks ("\n") end lines; text without one continues the last
-     * line. Escape sequences in it (colors) work as in a terminal.
+     * line. Markup in it (`<fg=red>error</>`, see `Markup`) is read per line, and escape
+     * sequences (colors) work as in a terminal. `lines()` keeps the text as it was given.
      */
     public function append(string $text): void
     {
@@ -174,7 +176,8 @@ final class Log extends Component
         $first = array_shift($pieces);
         $out = '';
         if ($first !== '') {
-            if ($this->wordWrap) {
+            // (an open line with markup is written again whole, so a tag that closes later shows)
+            if ($this->wordWrap || str_contains($this->open . $first, '<')) {
                 // the open line is laid out again with what it gets
                 if ($this->openRows - 1 >= $this->content->rows()) {
                     $top = $this->pinnedLine();
@@ -186,19 +189,17 @@ final class Log extends Component
                 }
                 $out .= "\r" . ($this->openRows > 1 ? "\e[" . ($this->openRows - 1) . 'A' : '') . "\e[J";
                 $this->open .= $first;
-                $out .= $this->rowsOf($this->open);
+                $out .= $this->wordWrap ? $this->rowsOf($this->open) : $this->shown($this->open);
             } else {
                 $this->open .= $first;
                 $out .= $first;
             }
         }
         foreach ($pieces as $piece) {
-            $out .= "\r\n" . ($this->wordWrap ? $this->rowsOf($piece) : $piece);
+            $out .= "\r\n" . ($this->wordWrap ? $this->rowsOf($piece) : $this->shown($piece));
         }
         $this->add($pieces);
-        if ($this->wordWrap) {
-            $this->openRows = \count(Text::wrap($this->open, $this->content->cols(), true));
-        }
+        $this->openRows = $this->rowCount($this->open, $this->content->cols());
         $this->content->write($out);
         $this->scrolled();
     }
@@ -332,15 +333,22 @@ final class Log extends Component
         return $this->lineAt($view->top() + max(1, $view->innerHeight()) - 1);
     }
 
+    /** $line as it is shown: its markup turned into escape sequences. */
+    private function shown(string $line): string
+    {
+        return str_contains($line, '<') ? Markup::toAnsi($line, null, $this->stylesheet()) : $line;
+    }
+
     /** $line laid out for the content's width, rows joined with "\r\n" (word wrap mode). */
     private function rowsOf(string $line): string
     {
-        return implode("\r\n", Text::wrap($line, $this->content->cols(), true));
+        return implode("\r\n", Text::wrap($this->shown($line), $this->content->cols(), true));
     }
 
     /** How many rows $line takes at $cols columns. */
     private function rowCount(string $line, int $cols): int
     {
+        $line = $this->shown($line);
         return $this->wordWrap ? max(1, \count(Text::wrap($line, $cols, true))) : max(1, (int) ceil(Text::width($line) / max(1, $cols)));
     }
 
@@ -408,7 +416,7 @@ final class Log extends Component
         }
         $view = $this->view();
         // the lines that fit, from the end
-        $all = $this->lines();
+        $all = array_map($this->shown(...), $this->lines());
         $first = \count($all);
         $count = 0;
         while ($first > 0 && $count < $capacity) {
@@ -423,13 +431,13 @@ final class Log extends Component
         }
         $shown = \array_slice($all, $first);
         if ($this->wordWrap) {
-            $shown = array_map($this->rowsOf(...), $shown);
+            $shown = array_map(fn(string $line) => implode("\r\n", Text::wrap($line, $cols, true)), $shown);
         }
         $out .= implode("\r\n", $shown);
         if ($this->open === '' && $all !== []) {
             $out .= "\r\n";     // the cursor waits on the row after the last ended line
         }
-        $this->openRows = $this->wordWrap ? \count(Text::wrap($this->open, $cols, true)) : 1;
+        $this->openRows = $this->rowCount($this->open, $cols);
         $c->write($out);
         $this->laidCols = $cols;
         if ($view !== null && !$view->isFollowing()) {

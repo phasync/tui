@@ -183,7 +183,7 @@ final class Select extends Table implements Field
         $current = $this->current();
         $this->filter = $text;
         $shown = $this->shown();
-        if ($shown !== [] && !\in_array($current, $shown, true)) {
+        if ($shown !== [] && ($current === null || $this->positionOf($current) === null)) {
             $this->moveTo(0);
         }
         $this->requestRender();
@@ -380,20 +380,24 @@ final class Select extends Table implements Field
         // the open list is as wide as the field, also when the field changed its width (a resize)
         $this->list()?->with(width: max($cols, $this->listWidth));
         $current = $this->current();
-        $label = $current === null ? '' : implode(' ', $this->rows[$current]);
+        $label = $current === null ? '' : $this->markup(implode(' ', $this->rows[$current]));
         $style = Ansi::style($this->style()->text);
         $this->surface->write("\e[?25l\e[2J\e[H" . $style . Text::truncate($label, max(0, $cols - 2)) . Ansi::moveTo(max(0, $cols - 1), 0) . $style . ($this->isOpen() ? '▴' : '▾'));
         return null;
     }
 
-    protected function shown(): array
+    protected function filterRows(array $keys): array
     {
-        $keys = parent::shown();
         if ($this->filter === '') {
             return $keys;
         }
         $needle = mb_strtolower($this->filter);
         return array_values(array_filter($keys, fn($k) => str_contains(mb_strtolower(self::plain(implode(' ', $this->rows[$k]))), $needle)));
+    }
+
+    protected function filterKey(): string
+    {
+        return $this->filter;
     }
 
     protected function currentChanged(int|string $key): void

@@ -70,6 +70,12 @@ final class Terminal extends Component
         });
     }
 
+    /** It takes the keys (they go to its program), so it is focused as itself. */
+    protected function canFocus(): bool
+    {
+        return true;
+    }
+
     protected function unmount(): void
     {
         // disposed: hang the program up, and kill it if it does not listen

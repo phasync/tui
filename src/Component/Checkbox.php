@@ -5,6 +5,7 @@ namespace phasync\Tui\Component;
 use phasync\Tui\Ansi;
 use phasync\Tui\Component;
 use phasync\Tui\Mouse;
+use phasync\Tui\Markup;
 use phasync\Tui\Text;
 
 /**
@@ -24,7 +25,7 @@ use phasync\Tui\Text;
 class Checkbox extends Component implements Field
 {
     /**
-     * @param string $label  the text after the box (a prop)
+     * @param string $label  the text after the box (a prop; markup, see `Markup`)
      * @param bool   $checked its first value
      * @param bool   $toggle  drawn as a switch instead of a box (a prop)
      * @param (\Closure(bool $checked, Checkbox $checkbox): void)|null $onChange after every flip
@@ -107,14 +108,14 @@ class Checkbox extends Component implements Field
 
     public function measure(int $cols, int $rows): ?array
     {
-        return [min($cols, Text::width($this->mark()) + ($this->label === '' ? 0 : 1 + Text::width($this->label))), 1];
+        return [min($cols, Text::width($this->mark()) + ($this->label === '' ? 0 : 1 + Text::width(Markup::plain($this->label)))), 1];
     }
 
     protected function render(): null
     {
         $style = $this->style();
         $box = $this->style('box', ...($this->checked ? ['checked'] : []));
-        $line = Ansi::style($box->text) . $this->mark() . Ansi::style($style->text) . ($this->label === '' ? '' : ' ' . $this->label);
+        $line = Ansi::style($box->text) . $this->mark() . Ansi::style($style->text) . ($this->label === '' ? '' : ' ' . $this->markup($this->label));
         $this->surface->write("\e[?25l\e[2J\e[H" . Text::truncate($line, $this->surface->cols()));
         return null;
     }

@@ -4,6 +4,7 @@ namespace phasync\Tui\Component;
 
 use phasync\Tui\Ansi;
 use phasync\Tui\Component;
+use phasync\Tui\Markup;
 use phasync\Tui\Internal\MarkdownBlocks;
 use phasync\Tui\Mouse;
 use phasync\Tui\Text;
@@ -23,7 +24,10 @@ use phasync\Tui\Text;
  * (with a simple highlighter for php, js, sh and json), tables and thematic breaks. Text is
  * measured by display width: wide characters and emoji take two cells. Escape sequences and
  * control characters in the text are dropped, so text from a model or a file can not drive the
- * terminal. Not supported: raw HTML (shown as text), reference links, footnotes, task boxes.
+ * terminal. Inline tags of the library's markup (`<b>`, `<dim>`, `<fg=red>`, `<span class="...">`,
+ * see `Markup`) style the text outside code spans and code blocks, where they stay literal;
+ * `\<` and `&lt;` are a plain `<`. Not supported: other raw HTML (shown as text), reference
+ * links, footnotes, task boxes.
  *
  * **Streaming.** `append()` takes text that ends anywhere; the whole text is read again as it
  * is (an open fence is a code block that runs to the end, an emphasis with no end yet is its
@@ -427,14 +431,16 @@ class Markdown extends Component
         $len = \strlen($s);
         $flush = function () use (&$out, &$buf, $parts): void {
             if ($buf !== '') {
-                $out .= $this->sgr($parts) . html_entity_decode($buf, \ENT_QUOTES | \ENT_HTML5);
+                // markup in the text (inline HTML such as <b>), then the entities (&lt; is a plain <)
+                $text = str_contains($buf, '<') ? Markup::toAnsi($buf, $this->style($parts), $this->stylesheet()) : $buf;
+                $out .= $this->sgr($parts) . html_entity_decode($text, \ENT_QUOTES | \ENT_HTML5);
                 $buf = '';
             }
         };
         for ($i = 0; $i < $len;) {
             $c = $s[$i];
             if ($c === '\\' && $i + 1 < $len && str_contains(self::PUNCT, $s[$i + 1])) {
-                $buf .= $s[$i + 1];
+                $buf .= $s[$i + 1] === '<' ? '&lt;' : $s[$i + 1];     // (an escaped < is no markup)
                 $i += 2;
             } elseif ($c === '`') {
                 $n = strspn($s, '`', $i);

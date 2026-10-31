@@ -5,6 +5,7 @@ namespace phasync\Tui\Component;
 use phasync\Tui\Ansi;
 use phasync\Tui\Component;
 use phasync\Tui\Mouse;
+use phasync\Tui\Markup;
 use phasync\Tui\Text;
 
 /**
@@ -15,7 +16,8 @@ use phasync\Tui\Text;
  *         new Button('Cancel', onPress: fn() => $this->close()),
  *     ], gap: 2)
  *
- * Drawn as `[ label ]`, one row, as wide as that (its `measure()`). Pressing it calls
+ * Drawn as `[ label ]`, one row, as wide as that (its `measure()`). The label takes markup
+ * (`'<u>S</u>ave'`, see `Markup`). Pressing it calls
  * `$onPress($button)` and emits the event `press`. In a `Form`, a button without `$onPress`
  * submits the form. A disabled button (`disabled: true`) takes no input.
  *
@@ -90,12 +92,12 @@ class Button extends Component
 
     public function measure(int $cols, int $rows): ?array
     {
-        return [min($cols, Text::width($this->label) + 4), 1];
+        return [min($cols, Text::width(Markup::plain($this->label)) + 4), 1];
     }
 
     protected function render(): null
     {
-        $text = Text::truncate('[ ' . $this->label . ' ]', $this->surface->cols());
+        $text = Text::truncate('[ ' . $this->markup($this->label) . ' ]', $this->surface->cols());
         $this->surface->write("\e[?25l\e[2J\e[H" . Ansi::style($this->style()->text) . $text);
         return null;
     }
