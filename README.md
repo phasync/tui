@@ -121,7 +121,7 @@ inside `fiber\run()`, which is why the program is wrapped in one.
 
 Such a program takes input without a class too: `keys:` on the runner binds keys to closures
 (`Tui::run($screen, keys: ['ctrl+n' => [fn() => add($s), 'new card']])`), every element takes
-`onKey:` (which makes it focusable, in the Tab walk) and `onMouse:` (presses, drags and the
+`onKey:` (keys that apply while the focus is in it; an element with nothing focusable inside is a stop of the Tab walk itself) and `onMouse:` (presses, drags and the
 release of a drag, with what it was dropped on), and a handler may await a dialog:
 `fiber\await(Confirm::ask('Delete', 'Delete the card?'))`, `Dialog::open(new Dialog(...))`. See
 [docs/components.md](docs/components.md#without-a-class).

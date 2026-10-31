@@ -81,12 +81,22 @@ open, as in a class.
 (`new Text($card, onKey: [...], onMouse: fn(Mouse $m) => ...)`, also `->with(onKey: ...)`):
 
 - `onKey:` is a bindings array as above, or a closure `fn(Key $key, Element $element): bool`
-  (true when it took the key). An element with `onKey:` is **focusable**: in the Tab walk with
-  the components, in the order they show; a press on it focuses it; its `focus:` classes and
-  `:focused` rules apply while it has the focus (`class: 'focus:inverse'`), and `Help` lists its
-  described keys while it does. A key that ends at it goes to its `onKey:` first (after the
-  program's `keys:`, which come before everything); one it does not take goes on to the
-  component that placed it and its parents.
+  (true when it took the key). Its keys apply **while the focus is in the element**; its
+  `focus:` classes and `:focused` rules apply then (`class: 'focus:inverse'`), `onFocus:` runs
+  when the focus enters it from outside, and `Help` lists its described keys. Which element
+  is a stop of the Tab walk:
+  - an element with `onKey:` and nothing inside that takes keys (a card of text, a row of a
+    list) is **focusable** itself: in the Tab walk with the components, in the order they show,
+    and a press on it focuses it;
+  - an element with `onKey:` around components that take keys (a `Row` of `Button`s) is not a
+    stop: Tab visits the components inside it exactly as without `onKey:`, and the element's
+    keys apply while one of them has the focus. So
+    `new Row([$label, new Button('Pause'), new Button('Cancel')], onKey: ['p' => fn() => $pause($id)])`
+    pauses the row whose button has the focus.
+
+  A key goes to the focused component first (a `Button` keeps Enter), then to the `onKey:` of
+  the elements around it, innermost first, then to the component that placed them and its
+  parents (the program's `keys:` come before everything).
 - `onMouse:` (`fn(Mouse $m, Element $element)`) gets the presses, drags and releases over the element, in its coordinates
   (`$m->x`, `$m->y`, 0 at its top-left). An element that took the press (anything but `false`
   returned) gets the drag and the release wherever the pointer goes, with coordinates that may
@@ -796,8 +806,10 @@ nothing on the key's way binds them and the key ends at a component with keys of
 the next (previous) such component in the same order, around; while a modal dialog is open,
 only among the components in it. A `Terminal` has no keys of its own (they go to its program),
 so a shell keeps its Tab; a component that binds `tab` (a `Form`, `Tabs`, an `Editor` with
-completion) keeps its meaning. Elements with `onKey:` are in the same walk (see "Without a
-class"). **Only what the current render shows is in the walk**: a component kept alive but not
+completion) keeps its meaning. Elements with `onKey:` and nothing focusable inside are in the
+same walk; one around focusable components is not, its components are (see "Without a
+class"). Container widgets that move the focus themselves use the same order:
+`Component::focusOrder($surface)` lists the stops below a surface. **Only what the current render shows is in the walk**: a component kept alive but not
 shown (the `Terminal` of a hidden tab, a `keep()` child, a component given as a prop), whoever
 owns it, is skipped, and keys do not go to it, until it is shown again or focused by
 `focus()`. When the focused component is no longer shown, the component focused before it gets

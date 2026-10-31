@@ -38,9 +38,15 @@ namespace phasync\Tui;
  * - `onFocus`, `onBlur`: closures called (with the element) when the focus enters the element
  *   (a component in it, or the component itself, gets the keys) and when it leaves, so a
  *   program without classes can follow the focused row: `onFocus: fn() => $s->current = $id`.
- * - `onKey`: the element's keys, for a program without classes. An element with `onKey` takes
- *   the focus: Tab and Shift-Tab stop at it, a click focuses it, `focus:` classes and
- *   `:focused` rules show it, and while it has the focus its keys come here first. Either a
+ * - `onKey`: the element's keys, for a program without classes. Its keys apply while the focus
+ *   is in the element: after the keys of a focused component inside it (a `Button` keeps
+ *   Enter), before the bindings of the component that placed it, and `focus:` classes,
+ *   `:focused` rules and `onFocus` follow the focus into it. An element with `onKey` and nothing
+ *   inside that takes keys (a card, a list row of text) takes the focus itself: Tab and
+ *   Shift-Tab stop at it and a click focuses it. One around components that take keys (a `Row`
+ *   of `Button`s) is not a stop itself: Tab visits the components inside it as without
+ *   `onKey`, and its keys apply while one of them has the focus (`p` pauses the row whose
+ *   button is focused). Either a
  *   map of keys to closures in the notation of `Component::bindings()`
  *   (`['enter' => fn() => $s->open = $id, 'delete' => [fn() => $s->remove($id), 'remove']]`:
  *   a bound key is taken), or one closure for every key, `fn(Key $key, Element $element):
