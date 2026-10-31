@@ -231,3 +231,113 @@ it('looks different focused, shows its placeholder, and takes no input disabled'
         expect($b->value())->toBe('x')->and($t->dump())->toContain('[dim bg=8]x');
     });
 });
+
+it('walks the history of submitted texts with Up and Down, and comes back to the text being written', function () {
+    $editor = new Editor(maxLines: 1, history: true, onSubmit: fn(string $v, Editor $e) => $e->setValue(''));
+    mountOn(new EditorForm($editor), 20, 3, function (FakeTerminal $t) use ($editor) {
+        $editor->focus();
+        $t->type("one\ntwo\nthr");
+        expect($editor->history())->toBe(['one', 'two']);
+        $t->press('up');
+        expect($editor->value())->toBe('two');
+        $t->press('up', 'up');
+        expect($editor->value())->toBe('one');
+        $t->press('down');
+        expect($editor->value())->toBe('two');
+        $t->press('down');
+        expect($editor->value())->toBe('thr');
+        $editor->setHistory(['a']);
+        $t->press('up');
+        expect($editor->value())->toBe('a');
+    });
+    // multi-line: only on the first row (Up) and the last (Down)
+    $editor = new Editor("x\ny", history: true);
+    $editor->setHistory(['old']);
+    mountOn(new EditorForm($editor), 20, 5, function (FakeTerminal $t) use ($editor) {
+        $editor->focus();
+        $t->press('up');                        // the cursor is on the last line: a row up
+        expect($editor->value())->toBe("x\ny")->and($editor->cursor())->toBe([0, 1]);
+        $t->press('up');
+        expect($editor->value())->toBe('old');
+    });
+});
+
+it('grows with its text up to maxLines in a Box, the box with it', function () {
+    $editor = new Editor(maxLines: 3);
+    $app = new class ($editor) extends Component {
+        public function __construct(private Editor $editor)
+        {
+        }
+
+        protected function render(): Element
+        {
+            return new Column([new phasync\Tui\Element\Box($this->child('e', fn() => $this->editor)), new Text('under')]);
+        }
+    };
+    mountOn($app, 12, 8, function (FakeTerminal $t) use ($editor) {
+        $editor->focus();
+        $t->settle();
+        expect(explode("\n", $t->text())[3])->toBe('under');
+        $t->type("a\nb");
+        $t->settle();
+        expect(explode("\n", $t->text())[4])->toBe('under');
+        $t->type("\nc\nd");
+        $t->settle();
+        expect(explode("\n", $t->text())[5])->toBe('under');      // three rows at most
+    });
+});
+
+it('completes the word at the cursor from a list under it: Tab opens, typing filters, Enter accepts, Escape closes', function () {
+    $words = ['select', 'selection', 'self', 'send'];
+    $editor = new Editor(maxLines: 1, complete: fn(string $w) => array_values(array_filter($words, fn($c) => str_starts_with($c, $w))));
+    mountOn(new EditorForm($editor), 30, 8, function (FakeTerminal $t) use ($editor) {
+        $editor->focus();
+        $t->type('go se');
+        $t->press('tab');
+        $t->settle();
+        $rows = explode("\n", $t->text());
+        expect($rows[2])->toStartWith('endselect')->and($rows[5])->toStartWith('   send')->and($editor->hasFocus())->toBeTrue();
+        $t->type('l');                           // filters
+        $t->settle();
+        expect($editor->completion()->selected())->toBe('select')->and($t->text())->not->toContain('send');
+        $t->press('down', 'enter');
+        $t->settle();
+        expect($editor->value())->toBe('go selection')->and($editor->completion())->toBeNull()->and($t->text())->not->toContain('self');
+        $t->type(' s');
+        $t->press('tab');
+        $t->press('escape');
+        $t->settle();
+        expect($editor->completion())->toBeNull()->and($editor->value())->toBe('go selection s');
+        $t->press('tab', 'tab');                 // Tab twice: open, accept the first
+        expect($editor->value())->toBe('go selection select');
+    });
+});
+
+it('can be extended: a chat input with a key of its own', function () {
+    $input = new class (maxLines: 3) extends Editor {
+        public array $sent = [];
+
+        protected function bindings(): array
+        {
+            return [...parent::bindings(), 'enter' => 'send', 'ctrl+l' => 'clear'];
+        }
+
+        public function send(): void
+        {
+            $this->sent[] = $this->value();
+            $this->setValue('');
+        }
+
+        public function clear(): void
+        {
+            $this->insert('[cleared]');
+        }
+    };
+    mountOn(new EditorForm($input), 20, 5, function (FakeTerminal $t) use ($input) {
+        $input->focus();
+        $t->type("hi\n");
+        $t->paste("two\nlines");
+        $t->press('ctrl+l', 'enter');
+        expect($input->sent)->toBe(['hi', "two\nlines[cleared]"])->and($input->value())->toBe('');
+    });
+});

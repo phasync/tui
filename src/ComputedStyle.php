@@ -42,6 +42,23 @@ final class ComputedStyle
         return $plain ??= new self(Style::plain());
     }
 
+    /**
+     * The colours and attributes as inline style properties (`['color' => ..., 'bold' => true]`),
+     * for a `Text` or `Span` a widget draws in one of its parts' styles:
+     * `new Text($title, style: $this->style('title')->properties())`.
+     *
+     * @return array<string, mixed>
+     */
+    public function properties(): array
+    {
+        $s = $this->text;
+        $out = ['color' => $s->fg, 'background' => $s->bg];
+        foreach (['bold' => Style::BOLD, 'dim' => Style::DIM, 'italic' => Style::ITALIC, 'underline' => Style::UNDERLINE, 'inverse' => Style::INVERSE, 'strike' => Style::STRIKE] as $name => $bit) {
+            $out[$name] = ($s->attrs & $bit) !== 0;
+        }
+        return $out;
+    }
+
     /** $text in this style's colours and attributes, followed by a reset (see `Ansi::styled()`). */
     public function apply(string $text): string
     {

@@ -158,3 +158,60 @@ it('styles only through write(): there is no cell API, and a replay of the bytes
             ->and($app->surface->dump())->toContain('[bold bg=6]title[/][bg=6]       [/]');     // (erased cells take the background only)
     });
 });
+
+it('styles a component by states of its own: .card:selected', function () {
+    $card = new class () extends Component {
+        protected function render(): Element
+        {
+            return new Text('card');
+        }
+    };
+    $app = new class ($card) extends Component {
+        public function __construct(private Component $card)
+        {
+        }
+
+        protected function render(): Element
+        {
+            return new Box($this->child('c', fn() => $this->card->with(class: 'card')));
+        }
+    };
+    $app->setStylesheet(Stylesheet::default()->with(['.card:selected' => ['color' => 'red', 'bold' => true]]));
+    mountOn($app, 10, 3, function (FakeTerminal $t) use ($card) {
+        $t->settle();
+        expect($t->surface->cell(1, 1)->style->fg)->not->toBe(Color::RED);
+        $card->setStyleState('selected');
+        $t->settle();
+        expect($card->hasStyleState('selected'))->toBeTrue()->and($t->surface->cell(1, 1)->style->fg)->toBe(Color::RED)
+            ->and($t->surface->cell(1, 1)->style->attrs & Style::BOLD)->not->toBe(0);
+        $card->setStyleState('selected', false);
+        $t->settle();
+        expect($t->surface->cell(1, 1)->style->fg)->not->toBe(Color::RED);
+    });
+});
+
+it('paints a self-drawing component\'s clear screen in its style', function () {
+    $panel = new class () extends Component {
+        protected function render(): null
+        {
+            $this->surface->write("\e[2J\e[Hdrawn");      // no SGR of its own
+            return null;
+        }
+    };
+    $app = new class ($panel) extends Component {
+        public function __construct(private Component $panel)
+        {
+        }
+
+        protected function render(): Element
+        {
+            return new Column([$this->child('p', fn() => $this->panel->with(id: 'panel'))]);
+        }
+    };
+    $app->setStylesheet(Stylesheet::default()->with(['#panel' => ['background' => 'blue', 'color' => 'yellow']]));
+    mountOn($app, 8, 2, function (FakeTerminal $t) {
+        $t->settle();
+        expect($t->surface->cell(7, 1)->style->bg)->toBe(Color::BLUE)->and($t->surface->cell(0, 0)->style->fg)->toBe(Color::YELLOW)
+            ->and($t->text())->toStartWith('drawn');
+    });
+});

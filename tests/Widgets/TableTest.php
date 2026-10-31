@@ -5,6 +5,7 @@
  * scrolling, sorting, the current row, filtering, marking, and the selection kept by key.
  */
 
+use phasync\Tui\Component;
 use phasync\Tui\Component\Select;
 use phasync\Tui\Component\Table;
 use phasync\Tui\FakeTerminal;
@@ -134,5 +135,89 @@ it('marks several items with Space, keeps marks and the current item across new 
         expect($s->selection())->toBe(['a'])->and($s->selected())->toBe('a');
         $t->press('alt+a');
         expect($s->selection())->toBe(['z', 'a']);
+    });
+});
+
+it('filters a multi-select on text with spaces: typing starts the filter, Enter ends it, Space marks again', function () {
+    $s = new Select(['a' => 'red apple', 'b' => 'green apple', 'c' => 'red cherry'], multiple: true);
+    mountOn($s, 20, 5, function (FakeTerminal $t, Select $s) {
+        $t->type('red a');                      // the space is part of the filter
+        expect($s->filter())->toBe('red a')->and($s->isFiltering())->toBeTrue()->and($s->selection())->toBe([]);
+        $t->settle();
+        expect($t->text())->toContain('red apple')->and($t->text())->not->toContain('cherry')->and($t->text())->toContain('/red a');
+        $t->press('enter');                     // ends the filter mode, the filter stays
+        $t->press('space');                     // marks
+        expect($s->isFiltering())->toBeFalse()->and($s->filter())->toBe('red a')->and($s->selection())->toBe(['a']);
+        $t->press('escape');                    // clears the filter
+        $t->type('/');                          // starts the filter mode without typing
+        expect($s->isFiltering())->toBeTrue()->and($s->filter())->toBe('');
+        $t->type('cherry');
+        $t->press('enter', 'space');
+        expect($s->selection())->toBe(['a', 'c']);
+    });
+});
+
+/** A screen with filler rows above a dropdown. */
+final class DropdownScreen extends Component
+{
+    public array $activated = [];
+
+    public function __construct(public int $above)
+    {
+    }
+
+    public function dropdown(): Select
+    {
+        return $this->child('d', fn() => new Select(
+            ['a' => 'Apple', 'b' => 'Banana', 'c' => 'Cherry', 'd' => 'Date'],
+            dropdown: true,
+            onActivate: fn($key) => $this->activated[] = $key,
+        ));
+    }
+
+    protected function render(): \phasync\Tui\Element
+    {
+        return new \phasync\Tui\Element\Column([
+            new \phasync\Tui\Element\Text(implode("\n", array_fill(0, $this->above, '~')), height: $this->above),
+            new \phasync\Tui\Element\Row([$this->dropdown()->with(width: 12)], height: 1),
+            new \phasync\Tui\Element\Text('', height: '1fr'),
+        ]);
+    }
+}
+
+it('opens a dropdown under itself, picks with Enter, and keeps it closed on Escape', function () {
+    mountOn(new DropdownScreen(1), 30, 10, function (FakeTerminal $t, DropdownScreen $app) {
+        $d = $app->dropdown();
+        $d->focus();
+        $t->settle();
+        expect(explode("\n", $t->text())[1])->toBe('Apple      ▾');
+        $t->press('enter');
+        $t->settle();
+        $rows = explode("\n", $t->text());
+        expect($d->isOpen())->toBeTrue()->and($rows[2])->toStartWith('Apple')->and($rows[5])->toStartWith('Date');
+        $t->press('down', 'down', 'enter');
+        $t->settle();
+        expect($d->isOpen())->toBeFalse()->and($d->selected())->toBe('c')->and($app->activated)->toBe(['c'])
+            ->and(explode("\n", $t->text())[1])->toBe('Cherry     ▾')->and($t->text())->not->toContain('Date');
+        $t->press('space', 'up', 'escape');
+        $t->settle();
+        expect($d->selected())->toBe('c')->and($d->isOpen())->toBeFalse()->and($d->hasFocus())->toBeTrue();
+        $t->type('ban');                        // typing opens it, filtering
+        $t->press('enter');
+        expect($d->selected())->toBe('b');
+        $t->click(3, 1);                        // a click opens; a click on an item picks it
+        $t->settle();
+        $t->click(1, 5);
+        expect($d->selected())->toBe('d');
+    });
+});
+
+it('opens a dropdown at the bottom upward', function () {
+    mountOn(new DropdownScreen(8), 30, 10, function (FakeTerminal $t, DropdownScreen $app) {
+        $app->dropdown()->focus();
+        $t->press('enter');
+        $t->settle();
+        $rows = explode("\n", $t->text());
+        expect($rows[4])->toStartWith('Apple')->and($rows[7])->toStartWith('Date')->and($rows[8])->toStartWith('Apple      ▴');
     });
 });

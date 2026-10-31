@@ -4,7 +4,6 @@ namespace phasync\Tui\Component;
 
 use fiber\Deferred;
 use phasync\Tui\Component;
-use phasync\Tui\ComputedStyle;
 use phasync\Tui\Element;
 use phasync\Tui\Element\Box;
 use phasync\Tui\Element\Column;
@@ -263,7 +262,7 @@ class Dialog extends Component
     {
         $rows = [];
         if ($this->title !== '') {
-            $rows[] = new Text($this->title, wrap: false, style: self::inline($this->style('title')));
+            $rows[] = new Text($this->title, wrap: false, style: $this->style('title')->properties());
             $rows[] = new Text('', height: 1);
         }
         $rows[] = $this->scroll();
@@ -278,14 +277,4 @@ class Dialog extends Component
         return new Box(new Column($rows), style: ['border' => 'none', 'padding' => implode(' ', $this->style()->padding)]);
     }
 
-    /** A computed style as inline properties, for the title's text. */
-    private static function inline(ComputedStyle $c): array
-    {
-        $s = $c->text;
-        $out = ['color' => $s->fg, 'background' => $s->bg];
-        foreach (['bold' => 1, 'dim' => 2, 'italic' => 4, 'underline' => 8, 'inverse' => 32, 'strike' => 128] as $name => $bit) {
-            $out[$name] = ($s->attrs & $bit) !== 0;
-        }
-        return $out;
-    }
 }

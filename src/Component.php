@@ -1411,16 +1411,17 @@ abstract class Component extends Element
 
     /**
      * The keys a `Help` element shows: those of $for (else of the component the keys go to in
-     * this component's tree) and of its parents, nearest first, each key once.
+     * this component's tree) and of its parents, nearest first, each key once; with $show
+     * 'focused' only its own, with 'application' only its parents'.
      *
      * @return list<array{string, string}>
      */
-    private function helpFor(?Component $for): array
+    private function helpFor(?Component $for, string $show = 'all'): array
     {
         $at = $for ?? self::keyEnd($this->surface->root()) ?? $this;
         $out = [];
         for ($c = $at; $c !== null; $c = $c->parent) {
-            if ($c->attribute('disabled')) {
+            if ($c->attribute('disabled') || ($show === 'focused' && $c !== $at) || ($show === 'application' && $c === $at)) {
                 continue;
             }
             foreach ($c->bindingsInForce() as $key => [, $description, $always]) {

@@ -38,7 +38,7 @@ final class Tree
 
     /**
      * @param \Closure(string $key, Component $fresh): Component $place  the child component for a component element
-     * @param \Closure(?Component $for): list<array{string, string}> $help the bindings for a Help element
+     * @param \Closure(?Component $for, string $show): list<array{string, string}> $help the bindings for a Help element
      */
     public function __construct(
         private readonly Component $owner,
@@ -242,25 +242,16 @@ final class Tree
     {
         $this->showsHelp = true;
         $runs = [];
-        foreach (($this->help)($node->for) as $i => [$key, $action]) {
+        foreach (($this->help)($node->for, $node->show) as $i => [$key, $action]) {
             $runs[] = $i === 0 ? '' : $node->separator;
-            $runs[] = new Span($key, style: self::inline($sheet->compute($node, [], $style, 'key')));
+            $runs[] = new Span($key, style: $sheet->compute($node, [], $style, 'key')->properties());
             $runs[] = ' ';
-            $runs[] = new Span($action, style: self::inline($sheet->compute($node, [], $style, 'action')));
+            $runs[] = new Span($action, style: $sheet->compute($node, [], $style, 'action')->properties());
         }
-        return new Text($runs);
+        // one row, cut where it does not fit, unless it is given a height
+        return new Text($runs, wrap: $node->attribute('height') !== null || $style->height !== null);
     }
 
-    /** A computed style as inline properties (for spans made from parts). */
-    private static function inline(ComputedStyle $c): array
-    {
-        $s = $c->text;
-        $props = ['color' => $s->fg, 'background' => $s->bg];
-        foreach (['bold' => 1, 'dim' => 2, 'italic' => 4, 'underline' => 8, 'inverse' => 32, 'strike' => 128] as $name => $bit) {
-            $props[$name] = ($s->attrs & $bit) !== 0;
-        }
-        return $props;
-    }
 
     /** @return list<string> */
     private function states(Element $node, Surface $surface): array

@@ -14,7 +14,7 @@ use phasync\Tui\Text;
  *     $remember = $this->child('remember', fn() => new Checkbox('Remember me', onChange: fn(bool $on) => ...));
  *     $remember->checked();
  *
- * Space, Enter or a click flips it; `$onChange($checked, $checkbox)` is called and the event
+ * Space or a click flips it (Enter goes on: in a `Form` it submits); `$onChange($checked, $checkbox)` is called and the event
  * `change` emitted. One row, as wide as its box and label (`measure()`). In a `Form`, its
  * value is `checked()`. A disabled one takes no input.
  *
@@ -48,7 +48,7 @@ class Checkbox extends Component implements Field
 
     protected function bindings(): array
     {
-        return ['space' => 'flip', 'enter' => 'flip'];
+        return ['space' => 'flip'];
     }
 
     /** True when it is checked (on). */

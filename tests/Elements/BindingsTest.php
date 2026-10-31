@@ -146,3 +146,83 @@ it('refuses a key bound to a method that is not public', function () {
         expect(fn() => $t->press('a'))->toThrow(LogicException::class, "bound to 'secret'");
     });
 });
+
+it('fits Help on one row, cut with "…", wraps it only with a height, and lists the focused keys, the application\'s, or both', function () {
+    $field = new class () extends Component {
+        protected function bindings(): array
+        {
+            return ['ctrl+s' => ['save', 'save'], 'ctrl+f' => ['find', 'find']];
+        }
+
+        public function save(): void
+        {
+        }
+
+        public function find(): void
+        {
+        }
+    };
+    $app = new class ($field) extends Component {
+        public string $show = 'all';
+        public ?int $height = null;
+
+        public function __construct(private Component $field)
+        {
+        }
+
+        protected function bindings(): array
+        {
+            return ['ctrl+q' => ['quit', 'quit'], 'f1' => ['help', 'help']];
+        }
+
+        public function quit(): void
+        {
+        }
+
+        public function help(): void
+        {
+        }
+
+        protected function render(): Element
+        {
+            return new Column([$this->child('f', fn() => $this->field), new Help(show: $this->show, height: $this->height)]);
+        }
+    };
+    mountOn($app, 26, 4, function (FakeTerminal $t, Component $app) use ($field) {
+        $field->focus();
+        $t->settle();
+        $rows = explode("\n", $t->text());
+        expect($rows[3])->toBe('ctrl+s save  ctrl+f find …')->and($rows[2])->toBe('');
+        $app->height = 2;
+        $app->requestRender();
+        $t->settle();
+        $rows = explode("\n", $t->text());
+        expect($rows[2])->toStartWith('ctrl+s save')->and($rows[3])->toContain('quit');
+        $app->height = null;
+        $app->show = 'focused';
+        $app->requestRender();
+        $t->settle();
+        expect(explode("\n", $t->text())[3])->toBe('ctrl+s save  ctrl+f find');
+        $app->show = 'application';
+        $app->requestRender();
+        $t->settle();
+        expect(explode("\n", $t->text())[3])->toBe('ctrl+q quit  f1 help');
+    });
+});
+
+it('reaches a child by its key from outside: children()', function () {
+    $app = new class () extends Component {
+        protected function render(): Element
+        {
+            return new Column([$this->child('log', fn() => new TextInput()), (new TextInput())->with(key: 'name'), new TextInput()]);
+        }
+    };
+    mountOn($app, 20, 4, function (FakeTerminal $t, Component $app) {
+        $t->settle();
+        $children = $app->children();
+        expect($children['log'])->toBeInstanceOf(TextInput::class)->and($children['name'])->toBeInstanceOf(TextInput::class)
+            ->and(count($children))->toBe(3);
+        $placed = array_values(array_filter(array_keys($children), fn($k) => str_starts_with($k, "\0")));
+        expect($placed)->toHaveCount(1);
+    });
+});

@@ -288,3 +288,47 @@ it('closes the root when detached, and detaches when the root is closed', functi
             ->and($terminal->surface->isAltScreen())->toBeFalse();
     });
 });
+
+it('ends a headless run whose test throws: run() detaches, fiber\run() rethrows instead of hanging', function () {
+    $start = microtime(true);
+    expect(fn() => run(function () {
+        $t = new FakeTerminal(20, 3);
+        $app = new class () extends phasync\Tui\Component {
+            protected function run(): void
+            {
+                while ($this->sleep(0.01)) {
+                }
+            }
+        };
+        $app->start($t);
+        $t->run(function () {
+            throw new RuntimeException('the test failed');
+        });
+    }))->toThrow(RuntimeException::class, 'the test failed');
+    expect(microtime(true) - $start)->toBeLessThan(2);
+});
+
+it('settles: the screen shows what the input made the program draw', function () {
+    run(function () {
+        $t = new FakeTerminal(20, 2);
+        $app = new class () extends phasync\Tui\Component {
+            protected function onKey(Key $key): bool
+            {
+                $this->state->text = ($this->state->text ?? '') . $key->text;
+                return true;
+            }
+
+            protected function render(): phasync\Tui\Element
+            {
+                return new phasync\Tui\Element\Text('got ' . ($this->state->text ?? ''));
+            }
+        };
+        $app->start($t);
+        $t->run(function (FakeTerminal $t) {
+            $t->type('abc');
+            expect($t->text())->toStartWith("got\n");      // the render comes in the next frame
+            $t->settle();
+            expect($t->text())->toStartWith('got abc');
+        });
+    });
+});

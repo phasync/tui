@@ -60,6 +60,8 @@ final class Select extends Table implements Field
     private string $filter = '';
     private bool $filtering = false;
     private ?Overlay $list = null;
+    /** The list of a dropdown: one click picks. */
+    private bool $pickOnClick = false;
 
     /**
      * @param array<int|string, string|list<string>> $items a label or the cells of each item, by key
@@ -312,6 +314,7 @@ final class Select extends Table implements Field
             },
             onChange: fn(array $keys) => $this->setSelection($keys),
         );
+        $list->pickOnClick = true;
         $list->setSelection($this->selection());
         [$natural] = $list->measure(\PHP_INT_MAX >> 8, 1);
         $list->with(width: max($this->surface->cols(), $natural));
@@ -395,6 +398,11 @@ final class Select extends Table implements Field
 
     protected function clicked(int|string $key): void
     {
+        if ($this->pickOnClick && !$this->multiple) {
+            $this->setCurrent($key);
+            $this->activate();
+            return;
+        }
         $key === $this->current() ? $this->activate() : $this->setCurrent($key);
     }
 
