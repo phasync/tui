@@ -32,6 +32,10 @@ final class Host
     private array $rowVersion = [];
     /** A window held back a synchronized update when the frame was made. */
     private bool $holding = false;
+    /** @var array<int, int> the own rows' versions when the frame was made */
+    private array $ownVersion = [];
+    /** @var list<array{Viewport, ?string, int, int}> each window when the frame was made: its key (`place()`) and rows */
+    private array $shown = [];
     public ?Layout $layout = null;
     /** A press on a window focuses it; null: as the host's host says. */
     public ?bool $clickFocus = null;
@@ -357,7 +361,12 @@ final class Host
      * the windows it hosts in turn, to any depth, copied (`Area::cut()`/`Area::put()`) and
      * clipped by every window on the way down; a shadow shades the windows below the one that
      * casts it. Rows that differ from the previous frame get a new version (the host's damage).
-     * It costs the visible area, whatever the depth of the tree.
+     *
+     * Only rows something changed on are made again: rows of the host's own cells that changed,
+     * and the rows of each window drawn differently than in the last frame (where it was and
+     * where it is), with every window on them; the others are the last frame's. A new size, a
+     * window hosted, unhosted or raised, or a window holding back an update makes all of them.
+     * It costs the rows that changed, whatever the depth of the tree.
      */
     public function compose(): void
     {
@@ -365,50 +374,114 @@ final class Host
             return;
         }
         $this->dirty = false;
-        $this->holding = false;
         $vt = $this->vt;
         $cols = $vt->cols;
         $rows = $vt->rows;
-        $chars = $styles = [];
-        foreach ($vt->lines as $y => $line) {
-            $chars[$y] = $line->chars;
-            $styles[$y] = $line->styles;
+        $views = $this->viewports;
+        $above = self::shadesAbove($views, 0, 0);
+        $at = [];
+        foreach ($views as $i => $v) {
+            $at[$i] = self::place($v, 0, 0, 0, 0, $cols, $rows, $above[$i]);
         }
-        $this->blitAll($chars, $styles, $this->viewports, 0, 0, 0, 0, $cols, $rows);
+        $all = $this->holding || \count($this->shown) !== \count($views);
         if (\count($this->frame) !== $rows || \count($this->frame[0]->chars) !== $cols) {
             // the first frame, or another size: what showed before is the host's own cells
             $this->frame = array_map(fn(Line $line) => clone $line, $vt->lines);
             $this->rowVersion = $vt->rowVersion;
+            $all = true;
         }
+        $damaged = [];
+        foreach ($views as $i => $v) {
+            $was = $this->shown[$i] ?? null;
+            if ($all || $was[0] !== $v) {
+                $all = true;
+                break;
+            }
+            $key = $at[$i][8] ?? null;
+            if ($key !== $was[1]) {
+                for ($y = $was[2]; $y < $was[3]; $y++) {
+                    $damaged[$y] = true;
+                }
+                for ($y = $at[$i][5] ?? 0, $y2 = $at[$i][7] ?? 0; $y < $y2; $y++) {
+                    $damaged[$y] = true;
+                }
+            }
+        }
+        foreach ($vt->rowVersion as $y => $version) {
+            if ($all || $version !== ($this->ownVersion[$y] ?? null)) {
+                $damaged[$y] = true;
+            }
+        }
+        $this->ownVersion = $vt->rowVersion;
+        $this->shown = [];
+        foreach ($views as $i => $v) {
+            $this->shown[] = $at[$i] === null ? [$v, null, 0, 0] : [$v, $at[$i][8], $at[$i][5], $at[$i][7]];
+        }
+        $this->holding = false;
+        if ($damaged === []) {
+            return;
+        }
+        ksort($damaged);
+        $ys = array_keys($damaged);
         $version = null;
+        for ($k = 0, $n = \count($ys); $k < $n;) {
+            // a band of rows: the own cells, the windows on them
+            $a = $ys[$k++];
+            for ($b = $a + 1; $k < $n && $ys[$k] === $b; $k++, $b++);
+            $chars = $styles = [];
+            for ($y = $a; $y < $b; $y++) {
+                $chars[$y] = $vt->lines[$y]->chars;
+                $styles[$y] = $vt->lines[$y]->styles;
+            }
+            foreach ($views as $i => $v) {
+                if ($at[$i] !== null) {
+                    $this->blit($chars, $styles, $v, $at[$i], $above[$i], $a, $b);
+                }
+            }
+            for ($y = $a; $y < $b; $y++) {
+                $line = $this->frame[$y];
+                if ($line->chars !== $chars[$y] || $line->styles !== $styles[$y]) {
+                    $line->chars = $chars[$y];
+                    $line->styles = $styles[$y];
+                    $this->rowVersion[$y] = $version ??= ++$vt->version;
+                }
+            }
+        }
         foreach ($this->frame as $y => $line) {
             $line->wrapped = $vt->lines[$y]->wrapped;
-            if ($line->chars !== $chars[$y] || $line->styles !== $styles[$y]) {
-                $line->chars = $chars[$y];
-                $line->styles = $styles[$y];
-                $this->rowVersion[$y] = $version ??= ++$vt->version;
-            }
         }
     }
 
     /**
      * Blit $views (a host's windows, bottom first, placed at $ox,$oy of the frame) into the
-     * frame's rows, inside the clip rectangle $cx1,$cy1 - $cx2,$cy2 (exclusive).
+     * frame's rows $by1 to $by2 (exclusive), inside the clip rectangle $cx1,$cy1 - $cx2,$cy2.
      *
      * @param array<int, list<string>> $chars
      * @param array<int, list<Style>>  $styles
      * @param list<Viewport>           $views
      */
-    private function blitAll(array &$chars, array &$styles, array $views, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2): void
+    private function blitAll(array &$chars, array &$styles, array $views, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2, int $by1, int $by2): void
     {
-        $n = \count($views);
-        if ($n === 0) {
-            return;
+        $above = self::shadesAbove($views, $ox, $oy);
+        foreach ($views as $i => $v) {
+            $at = self::place($v, $ox, $oy, $cx1, $cy1, $cx2, $cy2, $above[$i]);
+            if ($at !== null) {
+                $this->blit($chars, $styles, $v, $at, $above[$i], $by1, $by2);
+            }
         }
-        // the shadows of the windows above each one, in frame coordinates
+    }
+
+    /**
+     * The shadows of the windows above each of $views, in frame coordinates.
+     *
+     * @param list<Viewport> $views
+     * @return list<list<array{int,int,int,int,int}>>
+     */
+    private static function shadesAbove(array $views, int $ox, int $oy): array
+    {
         $above = [];
         $shades = [];
-        for ($i = $n - 1; $i >= 0; $i--) {
+        for ($i = \count($views) - 1; $i >= 0; $i--) {
             $above[$i] = $shades;
             if ($views[$i]->shadow() !== null) {
                 foreach ($views[$i]->shadowRects() as [$sx, $sy, $sw, $sh, $color]) {
@@ -416,17 +489,18 @@ final class Host
                 }
             }
         }
-        foreach ($views as $i => $v) {
-            $this->blit($chars, $styles, $v, $ox, $oy, $cx1, $cy1, $cx2, $cy2, $above[$i]);
-        }
+        return $above;
     }
 
     /**
-     * @param array<int, list<string>>              $chars
-     * @param array<int, list<Style>>               $styles
-     * @param list<array{int,int,int,int,int}>      $shades
+     * Where window $v is in the frame (its host placed at $ox,$oy), the part of it inside the
+     * clip, and the key of how it is drawn there: equal keys, equal cells (its subtree, look,
+     * place, clip and shadows the same). Null when none of it shows.
+     *
+     * @param list<array{int,int,int,int,int}> $shades
+     * @return array{int,int,int,int,int,int,int,int,string}|null x, y, width, height, left, top, right, bottom, key
      */
-    private function blit(array &$chars, array &$styles, Viewport $v, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2, array $shades): void
+    private static function place(Viewport $v, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2, array $shades): ?array
     {
         [$x0, $y0, $w, $h] = $v->rect();
         $x0 += $ox;
@@ -436,26 +510,44 @@ final class Host
         $top = max($y0, $cy1);
         $bottom = min($y0 + $h, $cy2);
         if ($left >= $right || $top >= $bottom) {
+            return null;
+        }
+        $key = $v->source->changeCount() . ",$x0,$y0,$w,$h,$left,$top,$right,$bottom," . $v->lookKey() . ($shades === [] ? '' : json_encode($shades));
+        return [$x0, $y0, $w, $h, $left, $top, $right, $bottom, $key];
+    }
+
+    /**
+     * Blit window $v, placed as `place()` says, into the frame's rows $by1 to $by2: the cells
+     * of the last frame it was drawn in when its key is the same, else drawn anew.
+     *
+     * @param array<int, list<string>>              $chars
+     * @param array<int, list<Style>>               $styles
+     * @param array{int,int,int,int,int,int,int,int,string} $at
+     * @param list<array{int,int,int,int,int}>      $shades
+     */
+    private function blit(array &$chars, array &$styles, Viewport $v, array $at, array $shades, int $by1, int $by2): void
+    {
+        [$x0, $y0, $w, $h, $left, $top, $right, $bottom, $key] = $at;
+        $from = max($top, $by1);
+        $to = min($bottom, $by2);
+        if ($from >= $to) {
             return;
         }
-        // a window covers its rectangle: drawn as before (its subtree, look, place, clip and
-        // shadows the same), its cells are those of the last frame
-        $key = $v->source->changeCount() . ",$x0,$y0,$w,$h,$left,$top,$right,$bottom," . $v->lookKey() . ($shades === [] ? '' : json_encode($shades));
         $drawn = $v->drawn;
         if ($drawn !== null && $drawn[0] === $key && $drawn[1] !== null) {
-            foreach ($drawn[1] as $i => $c) {
-                Area::put($chars[$top + $i], $styles[$top + $i], $left, $c, $drawn[2][$i]);
+            for ($y = $from; $y < $to; $y++) {
+                Area::put($chars[$y], $styles[$y], $left, $drawn[1][$y - $top], $drawn[2][$y - $top]);
             }
             return;
         }
         $holding = $this->holding;
         $this->holding = false;
-        $this->draw($chars, $styles, $v, $x0, $y0, $w, $h, $left, $top, $right, $bottom, $shades);
+        $this->draw($chars, $styles, $v, $x0, $y0, $w, $h, $left, $top, $right, $bottom, $shades, $by1, $by2);
         if ($this->holding) {
             $v->drawn = null;       // (a window in it holds back an update: drawn anew next frame)
         } elseif ($drawn === null || $drawn[0] !== $key) {
             $v->drawn = [$key, null, null];     // (changed: kept once it stays as it is for a frame)
-        } else {
+        } elseif ($from === $top && $to === $bottom) {
             $c = $s = [];
             for ($y = $top, $n = $right - $left; $y < $bottom; $y++) {
                 $c[] = \array_slice($chars[$y], $left, $n);
@@ -490,22 +582,24 @@ final class Host
     }
 
     /**
-     * Draw window $v at $x0,$y0 ($w x $h) of the frame, inside $left,$top - $right,$bottom: its
-     * border, its source's cells in view, the windows its source hosts, its selection, and the
-     * shadows of the windows above it.
+     * Draw window $v at $x0,$y0 ($w x $h) of the frame, inside $left,$top - $right,$bottom, on
+     * the rows $by1 to $by2 of it: its border, its source's cells in view, the windows its
+     * source hosts, its selection, and the shadows of the windows above it.
      *
      * @param array<int, list<string>>         $chars
      * @param array<int, list<Style>>          $styles
      * @param list<array{int,int,int,int,int}> $shades
      */
-    private function draw(array &$chars, array &$styles, Viewport $v, int $x0, int $y0, int $w, int $h, int $left, int $top, int $right, int $bottom, array $shades): void
+    private function draw(array &$chars, array &$styles, Viewport $v, int $x0, int $y0, int $w, int $h, int $left, int $top, int $right, int $bottom, array $shades, int $by1, int $by2): void
     {
+        $from = max($top, $by1);
+        $to = min($bottom, $by2);
         $b = $v->hasBorder() ? 1 : 0;
         if ($b) {
             $style = $v->borderStyleNow();
             foreach ([0, $h - 1] as $r) {
                 $y = $y0 + $r;
-                if ($y >= $top && $y < $bottom && ($r === 0 || $h > 1)) {
+                if ($y >= $from && $y < $to && ($r === 0 || $h > 1)) {
                     [$bc, $bs] = $v->borderRow($r === 0, $style);
                     [$c, $s] = Area::cut($bc, $bs, $left - $x0, $right - $left);
                     Area::put($chars[$y], $styles[$y], $left, $c, $s);
@@ -519,7 +613,7 @@ final class Host
             if ($w > 1 && $x0 + $w - 1 < $right) {
                 $sides[] = $x0 + $w - 1;
             }
-            for ($y = max($top, $y0 + 1); $y < min($bottom, $y0 + $h - 1); $y++) {
+            for ($y = max($from, $y0 + 1); $y < min($to, $y0 + $h - 1); $y++) {
                 foreach ($sides as $x) {
                     Area::put($chars[$y], $styles[$y], $x, [$side], [$style]);
                 }
@@ -531,7 +625,9 @@ final class Host
         $ir = min($ix + $v->innerWidth(), $right);
         $it = max($iy, $top);
         $ib = min($iy + $v->innerHeight(), $bottom);
-        if ($il < $ir && $it < $ib) {
+        $rt = max($it, $by1);
+        $rb = min($ib, $by2);
+        if ($il < $ir && $rt < $rb) {
             $source = $v->source;
             $held = $source->heldLines();
             if ($held !== null) {
@@ -556,13 +652,13 @@ final class Host
                 $x1 = max($sx + $vx, $cl);
                 $x2 = min($sx + $vx + $vw, $cr);
                 if ($x1 < $x2) {
-                    for ($y = max($sy + $vy, $ct), $y2 = min($sy + $vy + $vh, $cb); $y < $y2; $y++) {
+                    for ($y = max($sy + $vy, $ct, $rt), $y2 = min($sy + $vy + $vh, $cb, $rb); $y < $y2; $y++) {
                         $covered[$y][] = [$x1, $x2];
                     }
                 }
             }
             $plain = Style::plain();
-            for ($y = $it; $y < $ib; $y++) {
+            for ($y = $rt; $y < $rb; $y++) {
                 $row = $firstRow + $y - $iy;
                 $line = $row >= 0 ? ($row < $sourceRows ? $lines[$row] : null) : $source->scrollbackLine($row);
                 $spans = isset($covered[$y]) ? self::uncovered($il, $ir, $covered[$y]) : [[$il, $ir]];
@@ -578,11 +674,11 @@ final class Host
             }
             // the windows the source hosts, clipped by this window and by the source's edges
             if ($views !== []) {
-                $this->blitAll($chars, $styles, $views, $sx, $sy, $cl, $ct, $cr, $cb);
+                $this->blitAll($chars, $styles, $views, $sx, $sy, $cl, $ct, $cr, $cb, $by1, $by2);
             }
             // a selection shows in inverse, over all the window shows (its windows too)
             if ($selection !== null) {
-                for ($y = $it; $y < $ib; $y++) {
+                for ($y = $rt; $y < $rb; $y++) {
                     $row = $firstRow + $y - $iy;
                     for ($x = $il; $x < $ir; $x++) {
                         if ($chars[$y][$x] === '' && $x > $il) {
@@ -598,7 +694,7 @@ final class Host
         foreach ($shades as [$sx, $sy, $sw, $sh, $color]) {
             $x1 = max($left, $sx);
             $x2 = min($right, $sx + $sw);
-            for ($y = max($top, $sy), $y2 = min($bottom, $sy + $sh); $y < $y2; $y++) {
+            for ($y = max($from, $sy), $y2 = min($to, $sy + $sh); $y < $y2; $y++) {
                 $row = &$styles[$y];
                 for ($x = $x1; $x < $x2; $x++) {
                     $row[$x] = Area::shade($row[$x], $color);

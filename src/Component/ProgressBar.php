@@ -176,23 +176,24 @@ class ProgressBar extends Component
             // (a bar that moves by a cell writes a cell, not the whole row)
             $out = '';
             [, , $oldFrom, $oldN, $oldLabel] = $was;
-            for ($x = 0; $x < $width; $x++) {
+            // (the cells between two consecutive edges of the old and the new fill are all
+            // filled or all empty, before and now)
+            $edges = array_unique([0, $width, ...array_map(
+                fn(int $e) => max(0, min($width, $e)),
+                [$from, $from + $n, $oldFrom, $oldFrom + $oldN],
+            )]);
+            sort($edges);
+            for ($i = 0, $last = \count($edges) - 1; $i < $last; $i++) {
+                [$x, $end] = [$edges[$i], $edges[$i + 1]];
                 $filled = $x >= $from && $x < $from + $n;
-                if ($filled === ($x >= $oldFrom && $x < $oldFrom + $oldN)) {
-                    continue;
+                if ($filled !== ($x >= $oldFrom && $x < $oldFrom + $oldN)) {
+                    $out .= "\e[1;" . ($x + 1) . 'H' . ($filled ? $bar . str_repeat('█', $end - $x) : $base . str_repeat('░', $end - $x));
                 }
-                $run = 1;
-                while ($x + $run < $width && ($x + $run >= $from && $x + $run < $from + $n) === $filled
-                    && ($x + $run >= $oldFrom && $x + $run < $oldFrom + $oldN) !== $filled) {
-                    $run++;
-                }
-                $out .= "\e[1;" . ($x + 1) . 'H' . ($filled ? $bar . str_repeat('█', $run) : $base . str_repeat('░', $run));
-                $x += $run - 1;
             }
             if ($label !== $oldLabel) {
                 $out .= "\e[1;" . ($width + 1) . 'H' . $base . "\e[K" . ($label === '' ? '' : ' ' . $label);
             }
-            return "\e[?7;25l" . $out;
+            return $out;        // (on the cells of the drawing before: no autowrap, no cursor)
         }
         // (no autowrap: nothing goes past the last column, whatever the label holds)
         return "\e[?7;25l" . $base . "\e[2J\e[H" . str_repeat('░', $from) . $bar . str_repeat('█', $n) . $base . str_repeat('░', max(0, $width - $from - $n))

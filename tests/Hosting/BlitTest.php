@@ -105,6 +105,11 @@ function blitScenario(int $seed, bool $own, int $steps = 120, ?Closure $debug = 
                     $twins[$w]->write($bytes);
                 }
         }
+        if ($step % 3 === 1 && $hosts !== []) {
+            // (a host below composed on its own as well: its frame, and the root's after it)
+            $nested = $hosts[mt_rand(0, \count($hosts) - 1)];
+            expect($nested->dump())->toBe($oracle->of($nested)->dump(), "seed $seed step $step, a host below");
+        }
         if ($step % 3 === 2) {
             $debug && $debug($root, $step);
             expect($root->dump())->toBe($oracle->of($root)->dump(), "seed $seed step $step");

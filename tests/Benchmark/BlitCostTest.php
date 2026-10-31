@@ -90,3 +90,25 @@ it('sends a few dozen bytes for a one-cell change ten levels down', function () 
         });
     });
 });
+
+it('makes again only the rows a change is on: a window among two hundred costs its row', function () {
+    // (the screen of the keys bench: fifty rows of four windows each)
+    $root = new Surface(120, 60);
+    $windows = [];
+    for ($y = 0; $y < 50; $y++) {
+        foreach ([[0, 8], [9, 93], [103, 9], [113, 7]] as [$x, $w]) {
+            $s = new Surface($w, 1, 0);
+            $s->write("\e[3" . ($y % 7) . "mrow $y at $x");
+            $root->host($s, $x, $y, $w, 1);
+            $windows[] = $s;
+        }
+    }
+    $root->compose();
+    $before = $root->version();
+    $windows[4 * 17 + 2]->write("\e[H\e[1mfocused");
+    $root->compose();
+    expect($root->damagedSince($before))->toBe([17])->and($root->line(17))->toContain('focused');
+    $median = composeMedian($root, fn(int $i) => $windows[($i * 37) % 200]->write("\e[H" . ($i % 10)));
+    // (about 0.1 ms on the machine this was written on; every window drawn: about 1 ms)
+    expect($median)->toBeLessThan(0.6);
+});

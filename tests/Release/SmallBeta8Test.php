@@ -3,7 +3,10 @@
 /* TODO-0.0.3-beta8 item 3: small things from use. */
 
 use phasync\Tui\Component\Confirm;
+use phasync\Tui\Component\ProgressBar;
+use phasync\Tui\Element\Column;
 use phasync\Tui\Element\Text;
+use phasync\Tui\State;
 use phasync\Tui\Tui;
 
 it('answers a Confirm with y and n, as with Enter and Escape', function () {
@@ -33,6 +36,26 @@ it('answers a Confirm with y and n, as with Enter and Escape', function () {
         expect($t->text())->toContain('Send it?');
         $t->press('escape');
         expect(fiber\await($asked))->toBeFalse();
+        $t->detach();
+    });
+});
+
+it('draws a bar that jumps anywhere as the bar drawn whole at its value', function () {
+    fiber\run(function () {
+        // (the cells a move changes are found from the edges of the fill before and now)
+        mt_srand(8);
+        $s = new State(['v' => 0.0]);
+        $t = Tui::headless(fn() => new Column([new ProgressBar(fn() => $s->v, '')]), 40, 1);
+        $t->settle();
+        for ($i = 0; $i < 40; $i++) {
+            $v = [0.0, 1.0, mt_rand(0, 100) / 100, $s->v + 0.025][mt_rand(0, 3)];
+            $s->v = min(1.0, $v);
+            $t->settle();
+            $u = Tui::headless(fn() => new Column([new ProgressBar(min(1.0, $v), '')]), 40, 1);
+            $u->settle();
+            expect($t->dump())->toBe($u->dump());
+            $u->detach();
+        }
         $t->detach();
     });
 });
