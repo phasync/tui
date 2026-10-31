@@ -276,3 +276,9 @@ composer grammar                                          # recompile src/Surfac
 ```
 
 See [CHANGELOG.md](CHANGELOG.md) for the changes per version.
+
+## Licence
+
+MIT. `src/Surface/AnsiParser.php` is generated from `src/Surface/ansi.cpeg` by
+[charm/parsing](https://github.com/frodeborli/charm-parsing), whose author licenses this
+generated output for use under this package's licence.
