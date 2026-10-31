@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+**Added**
+
+- `Tabs` widget: a tab bar (top or bottom) with one content per tab; components in hidden tabs
+  keep their state (a `Terminal` goes on running); Left/Right, Ctrl-Tab, Ctrl-Shift-Tab,
+  Alt-1..9, click, middle click, wheel; a scrolling bar with `‹` `›` when the labels exceed
+  the width; `setTabs()` keeps the current tab by key; `change` and `close` events; parts
+  `Tabs::bar`, `Tabs::tab` (`current`, `hover`, `focused`), `Tabs::hint`, `Tabs::close`,
+  `Tabs::more`; Tab/Enter into the content, Escape back to the bar. Default theme rules added
+  to `Stylesheet::default()`. docs/widgets.md, examples/tabs.php.
+
 ## 0.0.2-beta3 (2026-10-31)
 
 Inline mode, the Markdown widget, hyperlinks, one way to scroll, and four defects from use.

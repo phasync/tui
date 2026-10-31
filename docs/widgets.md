@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`ProgressBar` and `Spinner`, and `Markdown`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, and `Markdown`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -346,6 +346,71 @@ Page Up/Page Down and Home/End do when nothing in it takes them (at the end they
 to the next field). Without a size it is as high as its content, so it only scrolls when its box
 is smaller. `top()`, `scrollTo(int $row)`, `scrollBy(int $rows): bool`. A `Dialog` puts its
 content in one, and so does an overlay of a plain element.
+
+## Tabs
+
+A tab bar (top or bottom) and one content per tab: panes of a workspace, open files, shells.
+
+```php
+$tabs = $this->child('tabs', fn() => new Tabs([
+    'shell' => ['label' => 'Shell', 'content' => new Terminal('sh')],
+    'log'   => ['label' => 'Log',   'content' => new Log()],
+    'help'  => ['label' => 'Help',  'content' => new Markdown($help), 'closable' => true],
+], hints: true, onChange: fn(string $key) => $this->status->set($key)));
+
+$tabs->setTabs([...$open, 'new' => ['label' => 'New', 'content' => new Editor()]], current: 'new');
+```
+
+| Constructor argument | |
+|---|---|
+| `array $tabs = []` | By key: `['label' => string, 'content' => Component\|Element, 'closable' => ?bool]`. Labels are plain text. Taken from the first instance only; change them with `setTabs()`. |
+| `?string $current` | The key of the first current tab (default the first). |
+| `string $position = 'top'` | `'top'` or `'bottom'`. A prop. |
+| `bool $hints = false` | Show the number of each of the first nine tabs (what Alt-number selects). A prop. |
+| `bool $closable = false` | A `×` on every tab (a tab's own `closable` overrides). A prop. |
+| `?Closure $onChange` | `fn(string $key, Tabs $tabs)`: the current tab changed. Also the event `change`. |
+| `?Closure $onClose` | `fn(string $key, Tabs $tabs)`: a tab is asked to close (the `×`, a middle click, Delete). It decides: call `close($key)` or `setTabs()`. Without it the tab is removed and its component disposed. The event `close` is emitted either way. |
+
+**Hidden tabs keep their state.** A content that is a component is started when the tabs are
+and lives until its tab goes: hidden, it is not laid out but it is not stopped either. A
+`Terminal` in a hidden tab goes on running and receiving output (it starts when its tab is
+first shown, because a terminal starts when it is sized); an `Editor` keeps its text, a `Log`
+goes on collecting. A content that is a plain element is built into the tree while its tab is
+shown (an element is rebuilt on every render anyway).
+
+| Method | What it does |
+|---|---|
+| `tabs(): array` | The keys, in order. |
+| `current(): ?string` | The current key; null without tabs. |
+| `select(string $key): bool` | Make a tab current (the focus follows when it was in the content); false for an unknown key. |
+| `next()`, `previous()` | The actions of Right/Left (false at the ends, so the key goes on). |
+| `setTabs(array $tabs, ?string $current = null)` | Add, remove, reorder and rename. The current tab stays **by key**; if it is gone the tab at its place takes over (a `change`). Components of tabs that went are disposed, the others keep their state. |
+| `close(string $key): bool`, `closeCurrent()` | As the `×` and Delete do (see `$onClose`). |
+| `focusContent()`, `focusBar()`, `inContent(): bool` | Move the focus into the shown content or back to the bar; where it is. |
+
+**Keys.** On the bar: Left/Right, Home/End change tab (not around), Tab or Enter move the
+focus into the shown content (a content with nothing to focus keeps it on the bar), Delete
+closes the current tab when it is closable. In the content: Escape moves the focus back to the
+bar, but only when the content did not take it (an `Editor` with a selection clears it first),
+and never for a `Terminal`, which keeps Escape and all other keys. Before the content sees them,
+and from the bar or the content alike: Ctrl-Tab and Ctrl-Shift-Tab (around), Alt-1 to Alt-9 (the
+focus follows into the new tab's content when it was in the content). Rebind the bar's keys with
+`bind()`.
+
+**Mouse.** A click on a tab selects it and gives the bar the focus; a click on its `×` or a
+middle click closes it; the wheel over the bar steps to the previous or next tab; `‹` and `›`
+do the same.
+
+**Overflow.** When the labels are wider than the bar, it shows as many whole tabs as fit with
+`‹` and `›` in the first and last column (dim when there is nothing beyond); the current tab is
+always in the window, and one wider than the bar is shown cut with "…". The window only moves
+when the current tab leaves it.
+
+**Style**: `Tabs`; parts `Tabs::bar` (the row; give it a background), `Tabs::tab` with the states
+`current`, `hover` and `focused` (the current tab while the bar has the focus, so
+`Tabs::tab:current:focused`), `Tabs::hint`, `Tabs::close` and `Tabs::more` (`‹` `›`). Parts
+compose in that order, so a tab inherits the bar's background. The default theme: muted tabs,
+the current one bold and underlined in the accent colour, inverted while the bar has the focus.
 
 ## ProgressBar and Spinner
 
