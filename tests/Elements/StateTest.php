@@ -144,6 +144,7 @@ it('renders a coroutine loop that changes the state once per frame, not once per
     };
     mountOn($app, 20, 1, function (FakeTerminal $t, Component $app) {
         \fiber\sleep(0.06);
+        $t->settle();       // (the render of the last step)
         expect($app->writes)->toBeGreaterThan(200)
             ->and($app->renders)->toBeLessThanOrEqual(intdiv($app->writes, 50) + 2)    // the first, and one per step, not per write
             ->and($t->text())->toBe('ticks ' . $app->writes);

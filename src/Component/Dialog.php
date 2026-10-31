@@ -4,17 +4,16 @@ namespace phasync\Tui\Component;
 
 use fiber\Deferred;
 use phasync\Tui\Component;
+use phasync\Tui\ComputedStyle;
 use phasync\Tui\Element;
 use phasync\Tui\Element\Box;
 use phasync\Tui\Element\Column;
-use phasync\Tui\Element\Span;
+use phasync\Tui\Element\Row;
 use phasync\Tui\Element\Text;
-use phasync\Tui\Mouse;
-use phasync\Tui\Text as TextUtil;
 
 /**
- * A modal dialog with a message (or any element tree) and buttons, whose answer is an
- * awaitable: open it with `Component::dialog()` from the component it covers.
+ * A modal dialog with a message (or any element tree: a form) and buttons, whose answer is an
+ * awaitable: open it with `Component::dialog()` from the component it belongs to.
  *
  *     $this->go(function () {
  *         $choice = fiber\await($this->dialog(new Dialog(
@@ -25,29 +24,34 @@ use phasync\Tui\Text as TextUtil;
  *         ...
  *     });
  *
- * `$buttons` maps each label to the answer it gives, in order; the first has the focus.
- * Left/Right and Tab/Shift-Tab move between them, Enter (or a click) presses one, Escape
- * cancels with the `$cancel` answer (null by default), which is also the answer when the
- * dialog ends without one (its component was disposed, the program quit). The dialog is as large as its content
- * needs (a message wraps at 60 columns or the screen's width); give it a size with
- * `with(width: 50, height: 12)` for element content. Subclass it for dialogs of your own
- * (see `Confirm`); `close($answer)` ends it from code.
+ * `$buttons` maps each label to the answer it gives, in order; they are `Button`s. The focus
+ * starts on the first field of the content, or on the first button when the content has none.
+ * Tab and Shift-Tab go through the content's fields first and the buttons after, Left/Right
+ * move between the buttons. Enter presses the focused button (in a field: the first button),
+ * Escape cancels with the `$cancel` answer (null by default), which is also the answer when the
+ * dialog ends without one (the component that opened it was disposed, the program quit).
  *
- * **Style**: `Dialog` itself (the default theme: a round border in the accent colour, padding
- * `0 1`), the parts `Dialog::title` and `Dialog::button` with state `focused`.
+ * **Size**: as large as its content needs (a message wraps at 60 columns), never larger than
+ * the screen: a dialog that does not fit is shrunk and its content scrolls (it is in a
+ * `ScrollView`; Page Up/Page Down and the wheel scroll it). `with(width: 50, height: 12)`
+ * fixes the size.
+ *
+ * **Subclass it** for dialogs of your own (see `Confirm`): `accept($answer)` decides whether a
+ * button's answer closes the dialog (a form dialog checks its fields there and stays open with
+ * its error messages), `close($answer)` ends it from code.
+ *
+ * **Style**: `Dialog` (the default theme: a round border in the accent colour, padding `0 1`),
+ * the part `Dialog::title`; its buttons are styled as `Button`.
  */
 class Dialog extends Component
 {
     private ?Deferred $answer = null;
-    private int $button = 0;
-    /** @var list<array{int,int,int}> the buttons drawn last: index, first and last column on the button row */
-    private array $hits = [];
 
     /**
      * @param string               $title   shown at the top, in the `Dialog::title` style
      * @param string|Element       $content the message (wrapped), or an element tree
      * @param array<string, mixed> $buttons the answer of each button, by label, in order
-     * @param mixed                $cancel  the answer for Escape
+     * @param mixed                $cancel  the answer for Escape, and when it ends unanswered
      */
     public function __construct(
         public string $title = '',
@@ -63,17 +67,28 @@ class Dialog extends Component
         return $this->answer ??= new Deferred();
     }
 
-    /** Close the dialog with $answer: the awaitable resolves, the dialog ends, the focus goes back. */
+    /**
+     * Decide whether $answer, the answer of a pressed button, closes the dialog: return false
+     * to keep it open (a form whose fields are not valid yet; show why in the dialog). Not asked
+     * for the cancel answer (Escape) nor by `close()`. The default accepts every answer.
+     */
+    protected function accept(mixed $answer): bool
+    {
+        return true;
+    }
+
+    /** Close the dialog with $answer (without asking `accept()`): the awaitable resolves, the dialog ends, the focus goes back. */
     public function close(mixed $answer = null): void
     {
         if (!$this->result()->isSettled()) {
             $this->result()->resolve($answer);
         }
         $this->emit('close', $this);
-        $this->dispose();
+        $overlay = $this->inOverlay();
+        $overlay !== null ? $overlay->close($answer) : $this->dispose();
     }
 
-    /** Ended without an answer (its parent went, the program quit): the awaitable gets the `$cancel` answer. */
+    /** Ended without an answer (its opener went, the program quit): the awaitable gets the `$cancel` answer. */
     protected function unmount(): void
     {
         if (!$this->result()->isSettled()) {
@@ -81,32 +96,67 @@ class Dialog extends Component
         }
     }
 
+    protected function mount(): void
+    {
+        // (measuring makes the fields and buttons, so one can have the focus before the first render)
+        $this->measure($this->surface->cols(), $this->surface->rows());
+        foreach ($this->fields($this->scroll()) as $field) {
+            $field->focus();
+            return;
+        }
+        $this->button(0)?->focus();
+    }
+
+    /** A dialog passes the focus on to its fields and buttons. */
+    protected function canFocus(): bool
+    {
+        return false;
+    }
+
     protected function bindings(): array
     {
         return [
-            'left' => 'previousButton', 'shift+tab' => 'previousButton',
-            'right' => 'nextButton', 'tab' => 'nextButton',
+            'tab' => 'nextField', 'shift+tab' => 'previousField',
+            'left' => 'previousButton', 'right' => 'nextButton',
             'enter' => ['press', 'choose'], 'escape' => ['cancel', 'cancel'],
+            'pageup' => 'scrollUp', 'pagedown' => 'scrollDown',
         ];
     }
 
-    /** Focus the button before. */
-    public function previousButton(): void
+    /** Tab: to the next field or button (the content's first, then the buttons, around). */
+    public function nextField(): bool
     {
-        $this->button = max(0, $this->button - 1);
+        $moved = $this->surface->focusNext();
+        $this->markDirty();     // (the content's ScrollView follows the focus)
+        return $moved;
     }
 
-    /** Focus the button after. */
-    public function nextButton(): void
+    /** Shift-Tab: to the field or button before. */
+    public function previousField(): bool
     {
-        $this->button = min(max(0, \count($this->buttons) - 1), $this->button + 1);
+        $moved = $this->surface->focusNext(true);
+        $this->markDirty();
+        return $moved;
     }
 
-    /** Press the focused button: close with its answer. */
+    /** Focus the button before the focused one; false when the focus is not on a button, or on the first. */
+    public function previousButton(): bool
+    {
+        $i = $this->focusedButton();
+        return $i !== null && $i > 0 && $this->focusButton($i - 1);
+    }
+
+    /** Focus the button after the focused one; false when the focus is not on a button, or on the last. */
+    public function nextButton(): bool
+    {
+        $i = $this->focusedButton();
+        return $i !== null && $i < \count($this->buttons) - 1 && $this->focusButton($i + 1);
+    }
+
+    /** Press the focused button (from a field: the first): close with its answer if `accept()` takes it. */
     public function press(): void
     {
-        $answers = array_values($this->buttons);
-        $this->close($answers[$this->button] ?? null);
+        $this->choose($this->focusedButton() ?? 0);
     }
 
     /** Close with the `$cancel` answer. */
@@ -115,89 +165,121 @@ class Dialog extends Component
         $this->close($this->cancel);
     }
 
-    protected function onMouse(Mouse $mouse): bool
+    /** Scroll the content up a page; false when it is at the top. */
+    public function scrollUp(): bool
     {
-        if ($mouse->action === Mouse::PRESS && $mouse->button === Mouse::LEFT) {
-            [$t] = $this->style()->padding;
-            foreach ($this->hits as [$i, $from, $to, $row]) {
-                if ($mouse->y === $row + $t && $mouse->x >= $from && $mouse->x <= $to) {
-                    $this->button = $i;
-                    $this->press();
-                }
+        return $this->scroll()->pageUp();
+    }
+
+    /** Scroll the content down a page; false when it is at the bottom. */
+    public function scrollDown(): bool
+    {
+        return $this->scroll()->pageDown();
+    }
+
+    private function choose(int $i): void
+    {
+        $answers = array_values($this->buttons);
+        if ($answers === []) {
+            return;
+        }
+        $answer = $answers[$i] ?? $answers[0];
+        if ($this->accept($answer)) {
+            $this->close($answer);
+        }
+    }
+
+    private function focusButton(int $i): bool
+    {
+        $button = $this->button($i);
+        if ($button === null) {
+            return false;
+        }
+        $button->focus();
+        return true;
+    }
+
+    private function focusedButton(): ?int
+    {
+        for ($i = 0; $i < \count($this->buttons); $i++) {
+            if ($this->button($i)?->hasFocus()) {
+                return $i;
             }
         }
-        return true;    // (modal: everything in the dialog is the dialog's)
+        return null;
     }
 
-    /** The message's lines at $width columns. */
-    private function lines(int $width): array
+    private function button(int $i): ?Button
     {
-        return \is_string($this->content) ? TextUtil::wrap($this->content, max(1, $width), true) : [];
-    }
-
-    private function buttonsWidth(): int
-    {
-        $w = 0;
-        foreach (array_keys($this->buttons) as $label) {
-            $w += TextUtil::width((string) $label) + 4 + 2;
+        $labels = array_keys($this->buttons);
+        if (!isset($labels[$i])) {
+            return null;
         }
-        return max(0, $w - 2);
+        return $this->child("button$i", fn() => new Button((string) $labels[$i], fn() => $this->choose($i)));
     }
 
-    /** As large as the title, the message (wrapped at 60 columns) and the buttons need, or the size given with `with()`. */
+    private function scroll(): ScrollView
+    {
+        $content = \is_string($this->content) ? new Text($this->content) : $this->content;
+        $scroll = $this->child('scroll', fn() => new ScrollView($content));
+        if (\is_string($this->content) ? !($scroll->content instanceof Text && $scroll->content->plain() === $this->content) : $scroll->content !== $content) {
+            $scroll->content = $content;
+            $scroll->markDirty();
+        }
+        return $scroll;
+    }
+
+    /** @return iterable<Component> the components in $in that take keys, in order */
+    private function fields(Component $in): iterable
+    {
+        foreach ($in->children() as $child) {
+            if ($child->canFocus()) {
+                yield $child;
+            }
+            yield from $this->fields($child);
+        }
+    }
+
+    /** As large as the title, the content (a message wrapped at 60 columns) and the buttons need; or the size given with `with()`. */
     public function measure(int $cols, int $rows): ?array
     {
-        [$t, $r, $b, $l] = $this->style()->padding;
+        [, $r, , $l] = $this->style()->padding;
         $width = $this->attribute('width');
         $height = $this->attribute('height');
-        if (!\is_string($this->content) && ($width === null || $height === null)) {
-            [$width, $height] = [$width ?? min($cols, 60), $height ?? min($rows, 12)];
-        }
         if (\is_int($width) && \is_int($height)) {
             return [min($cols, $width), min($rows, $height)];
         }
-        $room = min($cols, 60) - $l - $r;
-        $lines = $this->lines($room);
-        $inner = max(TextUtil::width($this->title), $this->buttonsWidth(), ...array_map(TextUtil::width(...), $lines));
-        $tall = ($this->title === '' ? 0 : 2) + \count($lines) + ($this->buttons === [] ? 0 : 2);
-        return [min($cols, $inner + $l + $r), min($rows, $tall + $t + $b)];
+        $room = \is_int($width) ? min($cols, $width) : (\is_string($this->content) ? min($cols, 60 + $l + $r) : $cols);
+        [$w, $h] = $this->measureElement($this->tree(), $room, $rows) ?? [$room, $rows];
+        return [\is_int($width) ? $room : min($cols, $w), \is_int($height) ? min($rows, $height) : $h];
     }
 
     protected function render(): Element
     {
+        return $this->tree();
+    }
+
+    private function tree(): Element
+    {
         $rows = [];
         if ($this->title !== '') {
-            $rows[] = new Text([new Span($this->title, style: self::props($this->style('title')))]);
-            $rows[] = new Text('');
+            $rows[] = new Text($this->title, wrap: false, style: self::inline($this->style('title')));
+            $rows[] = new Text('', height: 1);
         }
-        $rows[] = \is_string($this->content) ? new Text($this->content) : $this->content;
+        $rows[] = $this->scroll();
         if ($this->buttons !== []) {
-            $rows[] = new Text('');
-            $runs = [];
-            $this->hits = [];
-            $x = $this->style()->padding[3];
-            $row = \count($rows);
-            foreach (array_keys($this->buttons) as $i => $label) {
-                $text = '[ ' . $label . ' ]';
-                $runs[] = $i === 0 ? '' : '  ';
-                $x += $i === 0 ? 0 : 2;
-                $runs[] = new Span($text, style: self::props($this->style('button', ...($i === $this->button ? ['focused'] : []))));
-                $this->hits[] = [$i, $x, $x + TextUtil::width($text) - 1, $row];
-                $x += TextUtil::width($text);
+            $rows[] = new Text('', height: 1);
+            $buttons = [];
+            for ($i = 0; $i < \count($this->buttons); $i++) {
+                $buttons[] = $this->button($i);
             }
-            $rows[] = new Text($runs, wrap: false);
-        }
-        // the rows of the button line: after the title and the content's lines
-        $width = max(1, $this->surface->cols() - $this->style()->padding[1] - $this->style()->padding[3]);
-        $buttonRow = ($this->title === '' ? 0 : 2) + \count($this->lines($width)) + 1;
-        foreach ($this->hits as $k => $hit) {
-            $this->hits[$k][3] = $buttonRow;
+            $rows[] = new Row($buttons, gap: 2, height: 1);
         }
         return new Box(new Column($rows), style: ['border' => 'none', 'padding' => implode(' ', $this->style()->padding)]);
     }
 
-    /** A computed style as inline properties, for a span. */
-    private static function props(\phasync\Tui\ComputedStyle $c): array
+    /** A computed style as inline properties, for the title's text. */
+    private static function inline(ComputedStyle $c): array
     {
         $s = $c->text;
         $out = ['color' => $s->fg, 'background' => $s->bg];

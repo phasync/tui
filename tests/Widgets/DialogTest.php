@@ -158,3 +158,94 @@ it('opens over a component that returns a layout and over one that draws itself'
         expect($app->answers)->toBe([false])->and($t->text())->not->toContain('Yes');
     });
 });
+
+/** A form dialog that stays open until its name field is filled. */
+final class NameAsker extends Dialog
+{
+    public int $refused = 0;
+
+    public function __construct()
+    {
+        parent::__construct('Who?', new Column([
+            new Text('Your name:'),
+            (new Editor(maxLines: 1))->with(id: 'name'),
+            (new Editor(maxLines: 1))->with(id: 'city'),
+        ]), ['Save' => 'save', 'Cancel' => null]);
+    }
+
+    public function field(string $id): Editor
+    {
+        foreach ($this->children()['scroll']->children() as $child) {
+            if ($child->attribute('id') === $id) {
+                return $child;
+            }
+        }
+        throw new LogicException("no field $id");
+    }
+
+    protected function accept(mixed $answer): bool
+    {
+        if ($this->field('name')->value() === '') {
+            $this->refused++;
+            return false;
+        }
+        return true;
+    }
+}
+
+it('keeps a dialog open while accept() refuses, and moves with Tab through its fields, then its buttons', function () {
+    mountOn(new Asker(), 40, 14, function (FakeTerminal $t, Asker $app) {
+        $dialog = new NameAsker();
+        $app->ask($dialog);
+        frame();
+        $t->type('x');                                  // the first field has the focus
+        expect($dialog->field('name')->value())->toBe('x');
+        $t->press('backspace', 'tab');
+        $t->type('Oslo');
+        expect($dialog->field('city')->value())->toBe('Oslo');
+        $t->press('tab');                               // the first button
+        $t->press('enter');                             // Save: refused, the name is empty
+        frame();
+        expect($dialog->refused)->toBe(1)->and($dialog->isMounted())->toBeTrue()->and($app->answers)->toBe([]);
+        $t->press('tab', 'tab');                        // Cancel, then around to the name
+        $t->type('Ada');
+        $t->press('enter');                             // Enter in a field: the first button
+        frame();
+        expect($app->answers)->toBe(['save'])->and($dialog->isMounted())->toBeFalse();
+    });
+});
+
+it('sizes a dialog with element content to the content', function () {
+    mountOn(new Asker(), 60, 20, function (FakeTerminal $t, Asker $app) {
+        $app->ask(new Dialog('Hi', new Text('a short line'), ['OK' => true]));
+        frame();
+        $rows = explode("\n", $t->text());
+        $top = array_values(array_filter($rows, fn($r) => str_contains($r, '╭')))[0];
+        expect(mb_strwidth(trim($top)))->toBe(16)->and($t->text())->toContain('│ a short line │');
+    });
+});
+
+it('shrinks a dialog larger than the terminal and scrolls its content; the buttons stay', function () {
+    mountOn(new Asker(), 30, 9, function (FakeTerminal $t, Asker $app) {
+        $lines = [];
+        for ($i = 1; $i <= 20; $i++) {
+            $lines[] = "line $i";
+        }
+        $app->ask(new Dialog('Long', implode("\n", $lines), ['OK' => true]));
+        frame();
+        $screen = $t->text();
+        expect($screen)->toContain('line 1')->and($screen)->not->toContain('line 20')->and($screen)->toContain('[ OK ]');
+        $t->press(...array_fill(0, 10, 'pagedown'));
+        frame();
+        expect($t->text())->toContain('line 20')->and($t->text())->toContain('[ OK ]')->and($t->text())->not->toContain('line 1 ');
+        $t->resize(30, 30);                              // room again: all of it
+        frame();
+        expect($t->text())->toContain('line 1')->and($t->text())->toContain('line 20');
+        $t->resize(12, 5);                               // a tiny terminal: still inside, still answerable
+        frame();
+        expect(explode("\n", $t->text())[0])->toStartWith('╭')->and($t->text())->toContain('OK');
+        $t->press('enter');
+        frame();
+        expect($app->answers)->toBe([true]);
+    });
+});

@@ -4,6 +4,8 @@ namespace phasync\Tui\Component;
 
 use phasync\Tui\Ansi;
 use phasync\Tui\Key;
+use phasync\Tui\Mouse;
+use phasync\Tui\Overlay;
 use phasync\Tui\Text;
 
 /**
@@ -28,10 +30,21 @@ use phasync\Tui\Text;
  * filtering; when the current item is gone, the one at its place becomes current.
  *
  * **Keys**: those of `Table` (Up/Down, Page Up/Down, Home/End, Left/Right for wide tables),
- * Enter activates the current item (as does a click on it). Typing filters: only the items
- * whose text contains what was typed (ignoring case) are shown, under them the filter line;
- * Backspace takes a character back, Escape clears it (an Escape with no filter goes on to the
- * parent). With `multiple`, Space marks or unmarks the current item and Alt-A marks all shown.
+ * Enter activates the current item (as does a click on it). With `multiple`, Space marks or
+ * unmarks the current item and Alt-A marks all shown.
+ *
+ * **Filtering** is a mode: typing a character (or `/`) starts it, and while it is on, what is
+ * typed goes into the filter, Space included; only the items whose text contains it (ignoring
+ * case) are shown, under them the filter line. Up/Down still move. Backspace takes a character
+ * back, Escape clears the filter and ends the mode (an Escape with no filter goes on to the
+ * parent). Enter ends the mode with `multiple`, keeping the filter, so Space marks again (and
+ * typing goes on with the filter); without `multiple` Enter activates the current item.
+ *
+ * **Dropdown** (`dropdown: true`): a one-line field showing the current item; Enter, Space,
+ * Down or a click opens the list under it (above it near the bottom of the screen; shrunk and
+ * scrolling when neither side has room), an overlay (`Component::overlay()`). Enter or a click
+ * there picks an item and closes it, Escape or a click outside closes it unchanged. Typing on
+ * the closed field opens it, filtering.
  *
  * **Callbacks**: `onSelect($key, $select)` when the current item changed, `onActivate($key,
  * $select)` on Enter or a click on the current item, `onChange($keys, $select)` when the
@@ -40,11 +53,13 @@ use phasync\Tui\Text;
  * **Style** parts: those of `Table`, with the row state `selected` for a marked item (and the
  * current one without `multiple`), and `Select::filter` for the filter line.
  */
-final class Select extends Table
+final class Select extends Table implements Field
 {
     /** @var array<int|string, true> the marked items */
     private array $marked = [];
     private string $filter = '';
+    private bool $filtering = false;
+    private ?Overlay $list = null;
 
     /**
      * @param array<int|string, string|list<string>> $items a label or the cells of each item, by key
@@ -52,6 +67,7 @@ final class Select extends Table
      *        column titles and sizes for items with cells (see `Table`); none: no header
      * @param bool $multiple    several items can be marked (Space)
      * @param bool $filterable  typing filters the items
+     * @param bool $dropdown    a one-line field that opens the list in an overlay
      * @param (\Closure(int|string $key, Select $select): void)|null $onSelect   the current item changed
      * @param (\Closure(int|string $key, Select $select): void)|null $onActivate Enter or a click on the current item
      * @param (\Closure(list<int|string> $keys, Select $select): void)|null $onChange the marked items changed
@@ -64,6 +80,7 @@ final class Select extends Table
         private readonly ?\Closure $onSelect = null,
         private readonly ?\Closure $onActivate = null,
         private readonly ?\Closure $onChange = null,
+        public bool $dropdown = false,
     ) {
         parent::__construct($columns, self::rows($items), $columns !== []);
     }
@@ -137,6 +154,18 @@ final class Select extends Table
         $this->requestRender();
     }
 
+    /** The value in a `Form`: the current item's key, or with `multiple` the marked items' keys. */
+    public function value(): mixed
+    {
+        return $this->multiple ? $this->selection() : $this->selected();
+    }
+
+    /** True while typed text goes into the filter (see the class description). */
+    public function isFiltering(): bool
+    {
+        return $this->filtering;
+    }
+
     /** What was typed to filter the items ('' for none). */
     public function filter(): string
     {
@@ -157,6 +186,9 @@ final class Select extends Table
 
     protected function bindings(): array
     {
+        if ($this->dropdown) {
+            return ['enter' => 'open', 'space' => 'open', 'down' => 'open', 'alt+down' => 'open'];
+        }
         return [
             ...parent::bindings(),
             'enter' => 'activate',
@@ -167,20 +199,33 @@ final class Select extends Table
         ];
     }
 
-    /** Activate the current item (`onActivate`). */
+    /**
+     * Enter: activate the current item (`onActivate`). While filtering with `multiple`, end
+     * the filtering instead (the filter stays). False when no item is shown.
+     */
     public function activate(): bool
     {
+        if ($this->filtering && $this->multiple) {
+            $this->filtering = false;
+            $this->requestRender();
+            return true;
+        }
         $current = $this->current();
         if ($current === null) {
             return false;
         }
+        $this->filtering = false;
         $this->call($this->onActivate, $current, $this);
         return true;
     }
 
-    /** Mark or unmark the current item; false without `multiple` (Space then types a space into the filter). */
+    /** Space: while filtering, a space in the filter; else mark or unmark the current item (false without `multiple`). */
     public function toggle(): bool
     {
+        if ($this->filtering) {
+            $this->setFilter($this->filter . ' ');
+            return true;
+        }
         $current = $this->current();
         if (!$this->multiple || $current === null) {
             return false;
@@ -214,12 +259,13 @@ final class Select extends Table
         return true;
     }
 
-    /** Clear the filter; false when there is none. */
+    /** Escape: clear the filter and end the filtering; false when there is neither. */
     public function clearFilter(): bool
     {
-        if ($this->filter === '') {
+        if ($this->filter === '' && !$this->filtering) {
             return false;
         }
+        $this->filtering = false;
         $this->setFilter('');
         return true;
     }
@@ -229,8 +275,107 @@ final class Select extends Table
         if (!$this->filterable || !$key->isText()) {
             return false;
         }
+        if ($this->dropdown) {
+            $this->open();
+            $this->list()?->onKey($key);
+            return true;
+        }
+        if (!$this->filtering) {
+            $this->filtering = true;
+            if ($key->text === '/') {
+                $this->requestRender();
+                return true;
+            }
+        }
         $this->setFilter($this->filter . $key->text);
         return true;
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Dropdown
+
+    /** Open the list of a dropdown (see the class description); false when it is not one or is open already. */
+    public function open(): bool
+    {
+        if (!$this->dropdown || $this->list?->isOpen() || !$this->isMounted()) {
+            return false;
+        }
+        $list = new Select(
+            $this->rows,
+            $this->columns,
+            multiple: $this->multiple,
+            filterable: $this->filterable,
+            onActivate: function (int|string $key): void {
+                $this->setCurrent($key);
+                $this->list?->close($key);
+                $this->call($this->onActivate, $key, $this);
+            },
+            onChange: fn(array $keys) => $this->setSelection($keys),
+        );
+        $list->setSelection($this->selection());
+        [$natural] = $list->measure(\PHP_INT_MAX >> 8, 1);
+        $list->with(width: max($this->surface->cols(), $natural));
+        $this->list = $this->overlay($list, place: 'below');
+        if ($this->current() !== null) {
+            $list->setCurrent($this->current());
+        }
+        return true;
+    }
+
+    /** True while the list of a dropdown is open. */
+    public function isOpen(): bool
+    {
+        return $this->list?->isOpen() ?? false;
+    }
+
+    /** The open list of a dropdown (a `Select`), or null. */
+    public function list(): ?Select
+    {
+        $c = $this->list?->isOpen() ? $this->list->content : null;
+        return $c instanceof Select ? $c : null;
+    }
+
+    /** Close the list of a dropdown, unchanged. */
+    public function close(): void
+    {
+        $this->list?->close();
+    }
+
+    protected function onMouse(Mouse $mouse): bool
+    {
+        if (!$this->dropdown) {
+            return parent::onMouse($mouse);
+        }
+        if ($this->attribute('disabled')) {
+            return false;
+        }
+        if ($mouse->action === Mouse::PRESS && $mouse->button === Mouse::LEFT) {
+            $this->focus();
+            $this->isOpen() ? $this->close() : $this->open();
+        }
+        return true;
+    }
+
+    public function measure(int $cols, int $rows): ?array
+    {
+        if (!$this->dropdown) {
+            return parent::measure($cols, $rows);
+        }
+        [$w] = parent::measure($cols, $rows);
+        return [min($cols, $w + 2), 1];
+    }
+
+    protected function render(): null
+    {
+        if (!$this->dropdown) {
+            return parent::render();
+        }
+        $cols = $this->surface->cols();
+        $current = $this->current();
+        $label = $current === null ? '' : implode(' ', $this->rows[$current]);
+        $style = Ansi::style($this->style()->text);
+        $this->surface->write("\e[?25l\e[2J\e[H" . $style . Text::truncate($label, max(0, $cols - 2)) . Ansi::moveTo(max(0, $cols - 1), 0) . $style . ($this->isOpen() ? '▴' : '▾'));
+        return null;
     }
 
     protected function shown(): array
@@ -264,12 +409,12 @@ final class Select extends Table
 
     protected function footerRows(): int
     {
-        return $this->filter === '' ? 0 : 1;
+        return $this->filter === '' && !$this->filtering ? 0 : 1;
     }
 
     protected function footer(int $y): string
     {
-        if ($this->filter === '') {
+        if ($this->footerRows() === 0) {
             return '';
         }
         $line = Text::truncate('/' . $this->filter, $this->surface->cols());

@@ -17,14 +17,30 @@ use phasync\Tui\Text;
  *         onSubmit: fn(string $value) => $this->save($value)));
  *     $body = $this->child('body', fn() => new Editor());        // multi-line, fills its box
  *
- * **Lines.** `maxLines: 1` is a single-line field: Enter submits, pasted line breaks become
- * spaces, the text scrolls sideways, and Up/Down are left to the parent (to move between
- * fields). `maxLines: 0` (the default) takes any number of lines; Enter starts a new line and
- * Alt-Enter (or Ctrl-Enter where the terminal tells it apart) submits. A larger `maxLines`
- * stops new lines at that number. Without a `height`, a single-line editor is one row high and
- * one with a `maxLines` as high as its text up to that; an editor of any number of lines fills
- * the room it is given. With `wrap` (the default) long lines wrap between words, else they are
- * cut at the edge and the view scrolls sideways with the cursor.
+ * **Lines.** `maxLines: 1` is a single-line field: Enter submits (without `onSubmit` the key
+ * goes on, to the `Dialog` or `Form` it is in), pasted line breaks become spaces, the text
+ * scrolls sideways, and Up/Down are left to the parent (to move between fields). Otherwise it
+ * takes any number of lines: Enter starts a new line and Alt-Enter (or Ctrl-Enter where the
+ * terminal tells it apart) submits; nothing typed or pasted is ever joined or dropped.
+ * `maxLines` above 1 is how many rows it **shows** at most: without a `height` it is as high as
+ * its text up to that (a chat input that grows as you type, and a `Box` around it with it), and
+ * scrolls beyond. `maxLines: 0` (the default) fills the room it is given. With `wrap` (the
+ * default) long lines wrap between words, else they are cut at the edge and the view scrolls
+ * sideways with the cursor.
+ *
+ * **History** (`history: true`): submitted texts are remembered, and Up on the first row (Down
+ * on the last) walks through them as in a shell; the text being written comes back after the
+ * newest. `history()` and `setHistory()` save and restore them.
+ *
+ * **Completion** (`complete:`): a function that gets the word before the cursor and returns
+ * candidates; Tab (or typing, once open) shows them in a list under the cursor, an overlay
+ * (`Component::overlay()`): Up/Down choose, Tab or Enter accepts (the word is replaced),
+ * Escape closes it, typing on filters it.
+ *
+ * **Extending it**: subclass it for a chat input, a command line or a form field of your own.
+ * `bindings()` can add or change keys (`[...parent::bindings(), 'ctrl+l' => 'clear']`); the
+ * actions below are public methods to call from yours; `insert()` types text at the cursor;
+ * `onKey()`, `onPaste()` and `measure()` can be overridden and call the parent's.
  *
  * **Keys** (actions you can rebind with `bind()`; see docs/widgets.md for the table): arrows,
  * Home/End (Ctrl-A/Ctrl-E), Ctrl-Home/Ctrl-End, Page Up/Down, Ctrl-Left/Right or Alt-B/Alt-F by
@@ -43,7 +59,7 @@ use phasync\Tui\Text;
  * editor a panel background), `Editor::placeholder`, `Editor::selection`; states `:focused`,
  * `:disabled` (a disabled editor takes no input).
  */
-final class Editor extends Component
+class Editor extends Component implements Field
 {
     /** @var list<list<string>> the lines, as grapheme clusters */
     private array $lines = [[]];
@@ -69,6 +85,14 @@ final class Editor extends Component
     /** @var array{int, int, int, int}|null the text the last yank inserted (from, to) and the kill shown */
     private ?array $yanked = null;
     private int $yankAt = 0;
+    /** @var list<string> submitted texts, oldest first */
+    private array $past = [];
+    /** The position in `$past` while walking it (null: not walking), and the text being written. */
+    private ?int $walk = null;
+    private string $draft = '';
+    private ?\phasync\Tui\Overlay $completion = null;
+    /** @var array{int,int} where the word being completed starts (line, column) */
+    private array $wordAt = [0, 0];
 
     /**
      * @param string $value       the initial text
@@ -77,6 +101,8 @@ final class Editor extends Component
      * @param bool   $wrap        wrap long lines between words (else they scroll sideways)
      * @param (\Closure(string $value, Editor $editor): void)|null $onSubmit Enter (one line) or Alt-Enter
      * @param (\Closure(string $value, Editor $editor): void)|null $onChange after every change of the text
+     * @param bool   $history     remember submitted texts; Up/Down on the edge rows walk them
+     * @param (\Closure(string $word, Editor $editor): iterable<string>)|null $complete candidates for the word before the cursor
      */
     public function __construct(
         string $value = '',
@@ -85,6 +111,8 @@ final class Editor extends Component
         public bool $wrap = true,
         private readonly ?\Closure $onSubmit = null,
         private readonly ?\Closure $onChange = null,
+        private readonly bool $history = false,
+        private readonly ?\Closure $complete = null,
     ) {
         $this->lines = $this->split($value);
         $this->row = \count($this->lines) - 1;
@@ -109,6 +137,9 @@ final class Editor extends Component
             'ctrl+c' => 'copy', 'ctrl+x' => 'cut', 'escape' => 'clearSelection',
             'enter' => 'enter', 'alt+enter' => 'submit', 'ctrl+enter' => 'submit',
         ];
+        if ($this->complete !== null) {
+            $keys['tab'] = 'completeWord';
+        }
         if ($this->maxLines !== 1) {
             $keys['alt+enter'] = ['submit', 'submit'];
         }
@@ -185,12 +216,27 @@ final class Editor extends Component
     /** Cursor one row up; false (key not taken) on the first row, so a parent may use it. */
     public function up(): bool
     {
+        if ($this->completion() !== null) {
+            $this->completion()->previous();
+            return true;
+        }
+        if ($this->history && ($this->maxLines === 1 || $this->visual($this->row, $this->col, max(1, $this->surface->cols()))[0] === 0) && $this->historyBack()) {
+            return true;
+        }
         return $this->vertical(-1, false);
     }
 
     /** Cursor one row down; false on the last row. */
     public function down(): bool
     {
+        if ($this->completion() !== null) {
+            $this->completion()->next();
+            return true;
+        }
+        $cols = max(1, $this->surface->cols());
+        if ($this->history && ($this->maxLines === 1 || $this->visual($this->row, $this->col, $cols)[0] === $this->visualRows($cols) - 1) && $this->historyForward()) {
+            return true;
+        }
         return $this->vertical(1, false);
     }
 
@@ -299,6 +345,10 @@ final class Editor extends Component
     /** Drop the selection; false when there was none (Escape goes on to the parent then). */
     public function clearSelection(): bool
     {
+        if ($this->completion() !== null) {
+            $this->completion->close();
+            return true;
+        }
         if ($this->selection() === null) {
             return false;
         }
@@ -412,21 +462,163 @@ final class Editor extends Component
         return true;
     }
 
-    /** Enter: submit a single-line editor, else start a new line (up to `maxLines`). */
-    public function enter(): void
+    /**
+     * Enter: submit a single-line editor, else start a new line. False for a single-line editor
+     * without `onSubmit`: the key goes on (to the dialog or form it is in, which submits).
+     */
+    public function enter(): bool
     {
-        if ($this->maxLines === 1) {
-            $this->submit();
-        } elseif ($this->maxLines === 0 || \count($this->lines) - $this->selectedLines() < $this->maxLines) {
-            $this->type("\n");
+        if ($this->completion() !== null) {
+            return $this->acceptCompletion();
         }
+        if ($this->maxLines === 1) {
+            if ($this->onSubmit === null) {
+                return false;
+            }
+            $this->submit();
+            return true;
+        }
+        $this->type("\n");
+        return true;
     }
 
-    /** Call `onSubmit` with the text. */
+    /** Call `onSubmit` with the text (and remember it, with `history`). */
     public function submit(): void
     {
         $this->last = 'submit';
+        if ($this->history && $this->value() !== '' && end($this->past) !== $this->value()) {
+            $this->past[] = $this->value();
+            $this->past = \array_slice($this->past, -500);
+        }
+        $this->walk = null;
         $this->call($this->onSubmit, $this->value(), $this);
+    }
+
+    /** Type $text at the cursor, over the selection, as typing or pasting it does (one undo step). */
+    public function insert(string $text): void
+    {
+        $this->type($text, 'paste');
+    }
+
+    /** The submitted texts remembered with `history`, oldest first. */
+    public function history(): array
+    {
+        return $this->past;
+    }
+
+    /** @param list<string> $texts submitted texts to remember, oldest first (to restore a saved history) */
+    public function setHistory(array $texts): void
+    {
+        $this->past = array_values(array_map('strval', $texts));
+        $this->walk = null;
+    }
+
+    /** Up on the first row with `history`: the text submitted before. False when there is none. */
+    public function historyBack(): bool
+    {
+        if (!$this->history || $this->past === [] || $this->walk === 0) {
+            return false;
+        }
+        if ($this->walk === null) {
+            $this->draft = $this->value();
+            $this->walk = \count($this->past);
+        }
+        $this->showPast(--$this->walk);
+        return true;
+    }
+
+    /** Down on the last row with `history`: the text submitted after, then the one being written. */
+    public function historyForward(): bool
+    {
+        if ($this->walk === null) {
+            return false;
+        }
+        if (++$this->walk >= \count($this->past)) {
+            $this->walk = null;
+            $this->showPast(null);
+        } else {
+            $this->showPast($this->walk);
+        }
+        return true;
+    }
+
+    private function showPast(?int $i): void
+    {
+        $walk = $this->walk;
+        $this->setValue($i === null ? $this->draft : $this->past[$i]);
+        $this->walk = $walk;
+    }
+
+    /**
+     * Tab with `complete`: show the candidates for the word before the cursor in a list under
+     * it (or accept the one chosen, when the list is open). False when there are none (the key
+     * goes on).
+     */
+    public function completeWord(): bool
+    {
+        if ($this->completion?->isOpen()) {
+            return $this->acceptCompletion();
+        }
+        return $this->showCompletion(true);
+    }
+
+    /** The open completion list, or null. */
+    public function completion(): ?Select
+    {
+        $c = $this->completion?->isOpen() ? $this->completion->content : null;
+        return $c instanceof Select ? $c : null;
+    }
+
+    private function showCompletion(bool $force): bool
+    {
+        if ($this->complete === null || !$this->isMounted()) {
+            return false;
+        }
+        $line = $this->lines[$this->row];
+        $c = $this->col;
+        while ($c > 0 && !\in_array($line[$c - 1], [' ', "\t"], true)) {
+            $c--;
+        }
+        $word = implode('', \array_slice($line, $c, $this->col - $c));
+        if ($word === '' && !$force) {
+            $this->completion?->close();
+            return false;
+        }
+        $items = [];
+        foreach (($this->complete)($word, $this) as $candidate) {
+            $items[(string) $candidate] = (string) $candidate;
+        }
+        if ($items === []) {
+            $this->completion?->close();
+            return false;
+        }
+        $this->wordAt = [$this->row, $c];
+        if ($this->completion?->isOpen()) {
+            $this->completion()->setItems($items);
+            return true;
+        }
+        $cols = max(1, $this->surface->cols());
+        [$vr, $vx] = $this->visual($this->row, $c, $cols);
+        $left = !$this->wrap || $this->maxLines === 1 ? $this->left : 0;
+        $list = new Select($items, filterable: false, onActivate: fn() => $this->acceptCompletion());
+        $width = min(40, max(array_map(Text::width(...), $items)) + 1);
+        $this->completion = $this->overlay($list->with(width: $width, height: min(8, \count($items))), new \phasync\Tui\Rect($vx - $left, $vr - $this->top, 1, 1), 'below');
+        $this->focus();     // the editor keeps the keys; the list follows them
+        return true;
+    }
+
+    private function acceptCompletion(): bool
+    {
+        $pick = $this->completion()?->current();
+        $this->completion?->close();
+        if ($pick === null) {
+            return false;
+        }
+        [$r, $c] = $this->wordAt;
+        if ($r === $this->row && $c <= $this->col) {
+            $this->edit('paste', $r, $c, $this->row, $this->col, (string) $pick);
+        }
+        return true;
     }
 
     // ------------------------------------------------------------------------------------------
@@ -438,6 +630,9 @@ final class Editor extends Component
             return false;
         }
         $this->type($key->text);
+        if ($this->completion() !== null) {
+            $this->showCompletion(false);      // typing filters the open list
+        }
         return true;
     }
 
@@ -482,12 +677,7 @@ final class Editor extends Component
         $text = str_replace(["\r\n", "\r", "\t"], ["\n", "\n", '    '], $text);
         $text = preg_replace('/[\x00-\x09\x0b-\x1f\x7f]/', '', $text);
         if ($this->maxLines === 1) {
-            $text = str_replace("\n", ' ', $text);
-        } elseif ($this->maxLines > 1) {
-            // line breaks beyond the limit become spaces
-            $room = $this->maxLines - (\count($this->lines) - $this->selectedLines());
-            $parts = explode("\n", $text);
-            $text = implode("\n", \array_slice($parts, 0, $room + 1)) . (\count($parts) > $room + 1 ? ' ' . implode(' ', \array_slice($parts, $room + 1)) : '');
+            $text = str_replace("\n", ' ', $text);     // (only a single-line field joins lines)
         }
         $sel = $this->selection();
         [$r1, $c1, $r2, $c2] = $sel ?? [$this->row, $this->col, $this->row, $this->col];
@@ -589,6 +779,9 @@ final class Editor extends Component
 
     private function changed(): void
     {
+        if ($this->walk !== null && $this->last !== 'set') {
+            $this->walk = null;     // (edited: no longer a past text)
+        }
         $this->goal = null;
         $this->free = false;
         $this->call($this->onChange, $this->value(), $this);
@@ -614,12 +807,6 @@ final class Editor extends Component
         $a = $this->anchor;
         $b = [$this->row, $this->col];
         return $a <= $b ? [...$a, ...$b] : [...$b, ...$a];
-    }
-
-    private function selectedLines(): int
-    {
-        $sel = $this->selection();
-        return $sel === null ? 0 : $sel[2] - $sel[0];
     }
 
     private function textBetween(int $r1, int $c1, int $r2, int $c2): string

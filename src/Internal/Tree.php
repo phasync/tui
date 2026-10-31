@@ -68,6 +68,17 @@ final class Tree
         return $layout;
     }
 
+    /**
+     * The outer size $root needs within $cols x $rows (null: it takes any), as the next build
+     * lays it out: the surfaces and child components it makes are those the build uses.
+     *
+     * @return array{int,int}|null
+     */
+    public function measure(Element $root, int $cols, int $rows, Stylesheet $sheet, ComputedStyle $base): ?array
+    {
+        return $this->item($root, 'r', $sheet, $base)->natural($cols, $rows);
+    }
+
     private function container(Column|Row|Layers $node, string $path, Stylesheet $sheet, ComputedStyle $style): ElementLayout
     {
         $items = [];
@@ -91,7 +102,8 @@ final class Tree
     private function item(Element $node, string $path, Stylesheet $sheet, ComputedStyle $parent): LayoutItem
     {
         if ($node instanceof Component) {
-            $component = $node->isMounted() ? $node : ($this->place)("\0" . ($node->attribute('key') ?? $path), $node);
+            $key = $node->attribute('key');
+            $component = $node->isMounted() ? $node : ($this->place)($key !== null ? "\0k:" . $key : "\0p:" . $path, $node);
             $component->inheritStyle($parent);
             $style = $component->style();
             $item = $this->frame(new LayoutItem($component->surface), $component, $style, 'auto', 'auto');

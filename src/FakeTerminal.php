@@ -35,6 +35,11 @@ use function fiber\sleep;
  *     $terminal->feed("\e[1;5A\e[<0;3;2M");        // raw bytes, exactly as a terminal sends them
  *
  * `paste()`, `mouse()`, `click()`, `drag()`, `scroll()` and `focus()` send the other events.
+ *
+ * **Reading the screen after input**: renders come in the next frame, so call `settle()` after
+ * the input and before `text()`. Never `usleep()` in a coroutine: it blocks the loop, so nothing
+ * renders while it sleeps. Wrap a test in `run()`, which detaches the terminal afterwards also
+ * when the test throws, so a failing test fails instead of hanging `fiber\run()`.
  */
 final class FakeTerminal extends TerminalDevice
 {
@@ -144,6 +149,57 @@ final class FakeTerminal extends TerminalDevice
                 return false;
             }
             sleep(0.01);
+        }
+    }
+
+    /**
+     * Run $code with this terminal attached and detach it afterwards, also when $code throws:
+     * the program on it ends (the root is closed, the component tree disposed), so the
+     * exception reaches `fiber\run()` instead of the terminal's coroutines keeping it running.
+     * The way to write a headless test or a scripted session; returns what $code returned.
+     *
+     *     fiber\run(function () {
+     *         $terminal = new FakeTerminal(40, 10);
+     *         $app = (new App())->start($terminal);
+     *         $terminal->run(function (FakeTerminal $t) use ($app) {
+     *             $t->type('hello');
+     *             $t->settle();
+     *             assert(str_contains($t->text(), 'hello'));      // a failure ends the run
+     *         });
+     *     });
+     *
+     * @template T
+     * @param \Closure(FakeTerminal): T $code
+     * @return T
+     */
+    public function run(\Closure $code): mixed
+    {
+        try {
+            return $code($this);
+        } finally {
+            $this->detach();
+        }
+    }
+
+    /**
+     * Wait until the program has drawn what the input so far makes it draw: the renders that
+     * the last key, click or state change asked for have run and the screen is up to date. Read
+     * the screen after it, not right after `type()` or `press()` (which return once the input was
+     * dispatched; renders come in the next frame). Waits cooperatively (never `usleep()` in a
+     * coroutine: it blocks every coroutine, the program's included), at most $timeout seconds.
+     * For output of programs in ptys, which come later still, use `waitFor()`.
+     */
+    public function settle(float $timeout = 1.0): void
+    {
+        $deadline = microtime(true) + $timeout;
+        $quiet = 0;
+        $last = null;
+        while ($quiet < 3 && microtime(true) < $deadline) {
+            sleep(0);
+            $this->refresh();
+            $now = [\strlen($this->output), $this->surface->version()];
+            $quiet = $now === $last ? $quiet + 1 : 0;
+            $last = $now;
         }
     }
 

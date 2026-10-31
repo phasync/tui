@@ -174,13 +174,20 @@ it('is a one-line field with maxLines 1: Enter submits, breaks become spaces, it
     });
 });
 
-it('limits the lines to maxLines and is as high as its text up to there', function () {
+it('shows at most maxLines rows, as high as its text up to there, and keeps every line beyond', function () {
     $editor = new Editor(maxLines: 3);
     mountOn(new EditorForm($editor), 10, 6, function (FakeTerminal $t) use ($editor) {
-        $t->type("1\n2\n3\n4");
+        $t->type("1\n2");
         frame();
-        expect($editor->value())->toBe("1\n2\n34")
-            ->and($t->text())->toBe("Label\n1\n2\n34\nend\n");
+        expect($t->text())->toBe("Label\n1\n2\nend\n\n");     // grows with its text
+        $t->type("\n3\n4");
+        $t->paste("5\n6");
+        frame();
+        expect($editor->value())->toBe("1\n2\n3\n45\n6")    // nothing joined
+            ->and($t->text())->toBe("Label\n3\n45\n6\nend\n");  // three rows, scrolled to the cursor
+        $t->press('ctrl+home');
+        frame();
+        expect($t->text())->toBe("Label\n1\n2\n3\nend\n");
     });
 });
 

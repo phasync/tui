@@ -36,11 +36,7 @@ function mountOn(\phasync\Tui\Component $component, int $cols, int $rows, Closur
     \fiber\run(function () use ($component, $cols, $rows, $test) {
         $t = new \phasync\Tui\FakeTerminal($cols, $rows);
         $component->start($t);
-        try {
-            $test($t, $component);
-        } finally {
-            $t->detach();
-        }
+        $t->run(fn() => $test($t, $component));
     });
 }
 

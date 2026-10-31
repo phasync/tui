@@ -329,10 +329,26 @@ class Table extends Component
         return 0;
     }
 
-    /** As high as its rows, the header and a footer line; as wide as it is given. */
+    /**
+     * As high as its rows, the header and a footer line; as wide as its columns need (fixed
+     * widths as given, the others as their widest cell and title), up to $cols.
+     */
     public function measure(int $cols, int $rows): ?array
     {
-        return [$cols, max(1, \count($this->shown()) + ($this->header ? 1 : 0) + $this->footerRows())];
+        $spec = $this->spec();
+        $width = max(0, \count($spec) - 1);
+        foreach ($spec as $i => [$title, $w]) {
+            if (\is_int($w)) {
+                $width += $w;
+                continue;
+            }
+            $n = Text::width($title) + ($this->sortColumn === $i ? 2 : 0);
+            foreach ($this->rows as $cells) {
+                $n = max($n, Text::width((string) (array_values($cells)[$i] ?? '')));
+            }
+            $width += $n;
+        }
+        return [min($cols, max(1, $width)), max(1, \count($this->shown()) + ($this->header ? 1 : 0) + $this->footerRows())];
     }
 
     protected function onMouse(Mouse $mouse): bool

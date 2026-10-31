@@ -5,7 +5,8 @@ namespace phasync\Tui;
 use fiber\Deferred;
 use fiber\TimeoutException;
 use phasync\Tui\Component\Dialog;
-use phasync\Tui\Element\Layers;
+use phasync\Tui\Internal\Floating;
+use phasync\Tui\Internal\OverlayLayout;
 use phasync\Tui\Internal\Runtime;
 use phasync\Tui\Internal\Signal;
 use phasync\Tui\Internal\Tree;
@@ -169,13 +170,22 @@ abstract class Component extends Element
     private ?ComputedStyle $inherited = null;
     /** @var array{array{int,int}, ?array}|null the room a parent's layout measured this component in, and the answer */
     private ?array $measured = null;
+    /** @var array<string, true> states of its own for the stylesheet (`setStyleState()`) */
+    private array $styleStates = [];
     /** @var array<string, mixed> bindings of this instance over its class's (`bind()`) */
     private array $bound = [];
     /** @var array<string, array<string, mixed>> bindings for components of a class in the subtree */
     private array $boundFor = [];
-    /** @var array<string, array{Dialog, ?Surface}> open dialogs by child key, with the surface focused before */
-    private array $dialogs = [];
-    private static int $dialogCount = 0;
+    /** @var array<string, Overlay> the open overlays this component opened, by the key of their content child */
+    private array $overlays = [];
+    /** The overlay this component is the content of. */
+    private ?Overlay $overlaid = null;
+    /** @var list<Overlay> on a root: the open overlays of the whole tree, in the order they opened */
+    private array $floating = [];
+    private ?OverlayLayout $overlayLayout = null;
+    private static int $overlayCount = 0;
+    /** @var array<int, Component> the roots that have overlays open */
+    private static array $floatingRoots = [];
     /** The component whose render() runs now (focus() remembers what renders ask for). */
     private static ?Component $inRender = null;
     /** @var array<int, true> the components this component's last render focused, and the one in progress */
@@ -344,8 +354,8 @@ abstract class Component extends Element
         $s = $this->surface;
         $this->offs = [
             $s->on('key', fn(Key $e) => $this->key($e)),
-            $s->on('mouse', fn(Mouse $e) => $this->pointer($e) || $this->modal($e) || $this->handle(fn() => $this->onMouse($e))),
-            $s->on('paste', fn(Paste $e) => ($this->dialogs === [] && !$this->attribute('disabled') && $this->handle(fn() => $this->onPaste($e))) || $this->toUnshown($e)),
+            $s->on('mouse', fn(Mouse $e) => $this->pointer($e) || $this->overlayMouse($e) || $this->handle(fn() => $this->onMouse($e))),
+            $s->on('paste', fn(Paste $e) => (!$this->suspended() && !$this->attribute('disabled') && $this->handle(fn() => $this->onPaste($e))) || $this->toUnshown($e)),
             $s->on('focus', function (Focus $e): void {
                 $this->handle(fn() => $this->onFocus($e));
                 $this->markDirty();
@@ -444,7 +454,10 @@ abstract class Component extends Element
             $off();
         }
         $this->offs = [];
+        // an overlay showing it closes with it (cancelled)
+        $this->overlaid?->cancel();
         if ($this->parent === null) {
+            unset(self::$floatingRoots[spl_object_id($this)]);
             // the program ends: give the terminal back at once
             $this->surface->close();
         } else {
@@ -520,6 +533,26 @@ abstract class Component extends Element
             throw new \LogicException(static::class . ' has not been started');
         }
         return $this->stopped;
+    }
+
+    /**
+     * The child components, by key, in the order they were made: those made with `child($key)`
+     * under their key, those placed in the tree with `key:` (or `with(key:)`) under that key,
+     * and the rest (placed by position, the contents of overlays) under keys of the library's,
+     * which begin with "\0". How a parent or a test reaches a child: `$app->children()['log']`.
+     * Children that were disposed are not in it.
+     *
+     * @return array<string, Component>
+     */
+    public function children(): array
+    {
+        $out = [];
+        foreach ($this->children as $key => $child) {
+            if ($child->mounted) {
+                $out[str_starts_with($key, "\0k:") ? substr($key, 3) : $key] = $child;
+            }
+        }
+        return $out;
     }
 
     /** The component this one is a child of, or null for a root. */
@@ -663,6 +696,14 @@ abstract class Component extends Element
             $component->renderPending = false;
             $component->markDirty();
         }
+        // after the layout pass, before painting: every overlay goes where its anchor is now
+        foreach (self::$floatingRoots as $root) {
+            try {
+                $root->placeOverlays();
+            } catch (\Throwable $e) {
+                $error ??= $e;
+            }
+        }
         if ($error !== null) {
             throw $error;
         }
@@ -753,6 +794,11 @@ abstract class Component extends Element
     {
         if (!$this->mounted) {
             return false;
+        }
+        foreach ($this->overlays as $overlay) {
+            if ($overlay->content->hasFocus()) {
+                return true;    // (a dropdown's field while its list has the keys)
+            }
         }
         // keys come down from the root of the tree the nearest shown component is in
         $c = $this;
@@ -937,6 +983,8 @@ abstract class Component extends Element
         $this->focusAsked = [];
         $this->asked = false;
         try {
+            // the pen is the component's style: what render() clears (ESC [2J) or writes plainly is in its colours
+            $this->surface->write("\e[0m" . Ansi::style($this->style()->text));
             $result = $this->render();
             $layout = $this->layoutOf($result);
             $used = $this->used;
@@ -945,10 +993,12 @@ abstract class Component extends Element
             $this->used = null;
             $this->rendering = false;
         }
+        $returned = $layout;
+        if ($this->parent === null && ($this->floating !== [] || $this->overlayLayout !== null)) {
+            $layout = $this->withOverlays($layout);
+        }
         if ($layout !== null) {
             $this->surface->setLayout($layout);
-        } elseif ($this->dialogs !== []) {
-            $this->hostDialogs();
         }
         if ($this->measured !== null && $this->measure(...$this->measured[0]) !== $this->measured[1]) {
             $this->measured = null;
@@ -960,7 +1010,7 @@ abstract class Component extends Element
                 $child->firstRender();
             }
         }
-        if ($layout !== null) {
+        if ($returned !== null) {
             foreach ($this->children as $key => $child) {
                 if (!isset($used[$key]) && !$child->isShownIn($this->surface)) {
                     if ($child->parent === $this) {
@@ -973,16 +1023,13 @@ abstract class Component extends Element
         }
     }
 
-    /** The layout for what render() returned (an element tree laid out), with the open dialogs over it. */
+    /** The layout for what render() returned (an element tree laid out). */
     private function layoutOf(Layout|Element|null $result): ?Layout
     {
-        foreach ($this->dialogs as $key => [$dialog]) {
-            $this->child($key);         // (keeps them)
+        foreach ($this->overlays as $key => $_) {
+            $this->child($key);         // (keeps their content)
         }
         if ($result instanceof Element) {
-            if ($this->dialogs !== []) {
-                $result = new Layers([$result, ...array_column($this->dialogs, 0)]);
-            }
             $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
             $layout = $this->tree->build($result, $this->stylesheet(), $this->style());
             self::$helpShown ??= new \WeakMap();
@@ -993,52 +1040,37 @@ abstract class Component extends Element
             }
             return $layout;
         }
-        if ($result instanceof Layout && $this->dialogs !== []) {
-            $stack = (new Stack())->add($result);
-            foreach ($this->dialogs as [$dialog]) {
-                [$w, $h] = $this->dialogSize($dialog);
-                $stack->add($dialog->surface, $w, $h);
-            }
-            $result = $stack;
-        }
-        if ($result instanceof Layout) {
-            foreach ($this->dialogs as [$dialog]) {
-                $this->frameDialog($dialog);
-            }
-        }
         return $result;
     }
 
-    /** Dialogs over a component that draws itself: windows of its surface, centered. */
-    private function hostDialogs(): void
+    /**
+     * $element laid out as a layout of this component's, without setting it: for a component
+     * that shows an element tree somewhere other than its own surface (a `ScrollView` puts it
+     * on a surface taller than itself). The surfaces and child components behind the elements
+     * persist across calls as they do for `render()`; call it from `render()`.
+     */
+    final protected function layoutElement(Element $element): Layout
     {
-        $s = $this->surface;
-        foreach ($this->dialogs as [$dialog]) {
-            [$w, $h] = $this->dialogSize($dialog);
-            $s->host($dialog->surface, intdiv($s->cols() - $w, 2), intdiv($s->rows() - $h, 2), $w, $h)->setFit(true);
-            $s->raise($dialog->surface);
-            $this->frameDialog($dialog);
-        }
+        $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
+        return $this->tree->build($element, $this->stylesheet(), $this->style());
     }
 
-    /** @return array{int,int} the outer size of $dialog's window */
-    private function dialogSize(Dialog $dialog): array
+    /**
+     * The size an element tree needs within $cols x $rows, as the library would lay it out
+     * (null: it takes the room it is given): for the `measure()` of a component whose size is
+     * that of the tree it renders.
+     *
+     *     public function measure(int $cols, int $rows): ?array
+     *     {
+     *         return $this->measureElement($this->render(), $cols, $rows);
+     *     }
+     *
+     * @return array{int,int}|null
+     */
+    final protected function measureElement(Element $element, int $cols, int $rows): ?array
     {
-        $style = $dialog->style();
-        $b = $style->border === false ? 0 : 2;
-        $cols = $this->surface->cols();
-        $rows = $this->surface->rows();
-        [$w, $h] = $dialog->measure(max(1, $cols - $b), max(1, $rows - $b)) ?? [$cols - $b, $rows - $b];
-        return [min($cols, $w + $b), min($rows, $h + $b)];
-    }
-
-    private function frameDialog(Dialog $dialog): void
-    {
-        $style = $dialog->style();
-        $view = $this->surface->viewport($dialog->surface);
-        if ($view !== null && $style->border !== false) {
-            $view->setBorder($style->border, $style->borderStyle, $style->borderStyle);
-        }
+        $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
+        return $this->tree->measure($element, $cols, $rows, $this->stylesheet(), $this->style());
     }
 
     // ------------------------------------------------------------------------------------------
@@ -1212,7 +1244,34 @@ abstract class Component extends Element
         if ($this->attribute('disabled')) {
             $states[] = 'disabled';
         }
-        return $states;
+        return [...$states, ...array_keys($this->styleStates)];
+    }
+
+    /**
+     * Put the component in a state of its own for the stylesheet, or take it out of it: a card
+     * that is `:selected`, a field that is `:invalid`, a button that is `:pressed`. Rules such as
+     * `'.card:selected' => ['border' => 'double $accent']` then apply to it, in `style()` and
+     * in the element tree around it; it renders again when a state changes. The built-in
+     * states (`focused`, `disabled`, `hover`) are the library's.
+     */
+    public function setStyleState(string $state, bool $on = true): void
+    {
+        if ($on === isset($this->styleStates[$state])) {
+            return;
+        }
+        if ($on) {
+            $this->styleStates[$state] = true;
+        } else {
+            unset($this->styleStates[$state]);
+        }
+        $this->parent?->markDirty();       // (a Box around it in the parent's tree shows it too)
+        $this->markDirty();
+    }
+
+    /** True if the component is in $state (one of its own, see `setStyleState()`, or a built-in one). */
+    public function hasStyleState(string $state): bool
+    {
+        return \in_array($state, $this->states(), true);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -1221,23 +1280,31 @@ abstract class Component extends Element
     /**
      * A key on its way down the focus path. On the way, each component's `onKey()` may take it
      * (the root's first). At the component it ends at (nothing focused further down): its own
-     * bindings, its `onKey()`, then its parents' bindings, nearest first. A component with an
-     * open dialog passes keys on to it untouched.
+     * bindings, its `onKey()`, then its parents' bindings, nearest first; Escape closes a
+     * non-modal overlay on the way. A component with a modal overlay open is suspended: only
+     * its bindings marked `always` work, its parents' do.
      */
     private function key(Key $key): bool
     {
         if (!$this->mounted) {
             return false;
         }
-        $mine = $this->dialogs === [] && !$this->attribute('disabled');
+        $mine = !$this->suspended() && !$this->attribute('disabled');
         if (!$this->isKeyEnd()) {
             return ($mine && $this->handle(fn() => $this->onKey($key))) || $this->toUnshown($key);
         }
         if ($mine && ($this->runBinding($key) || $this->handle(fn() => $this->onKey($key)))) {
             return true;
         }
-        for ($c = $this->parent; $c !== null; $c = $c->parent) {
-            if ($c->dialogs === [] && !$c->attribute('disabled') && $c->runBinding($key)) {
+        for ($c = $this; $c !== null; $c = $c->parent) {
+            if ($c !== $this && !$c->attribute('disabled') && $c->runBinding($key, $c->suspended())) {
+                return true;
+            }
+            if ($c === $this && $this->suspended() && $this->runBinding($key, true)) {
+                return true;
+            }
+            if ($c->overlaid !== null && !$c->overlaid->modal && (string) $key === 'escape') {
+                $c->overlaid->cancel();
                 return true;
             }
         }
@@ -1258,13 +1325,14 @@ abstract class Component extends Element
         return true;
     }
 
-    /** Run the method bound to $key; true if it took the key. */
-    private function runBinding(Key $key): bool
+    /** Run the method bound to $key (with $always, only a binding marked `always`); true if it took the key. */
+    private function runBinding(Key $key, bool $always = false): bool
     {
-        $method = $this->bindingsInForce()[(string) $key][0] ?? null;
-        if ($method === null) {
+        $binding = $this->bindingsInForce()[(string) $key] ?? null;
+        if ($binding === null || ($always && !$binding[2])) {
             return false;
         }
+        $method = $binding[0];
         if (!method_exists($this, $method) || !(new \ReflectionMethod($this, $method))->isPublic()) {
             throw new \LogicException(static::class . ": the key '$key' is bound to '$method', which is not a public method");
         }
@@ -1300,9 +1368,9 @@ abstract class Component extends Element
 
     /**
      * The keys in force for this component: `bindings()` with what `bind()` changed, as
-     * [method, description or null] by key notation (`ctrl+s`).
+     * [method, description or null, always] by key notation (`ctrl+s`).
      *
-     * @return array<string, array{string, ?string}>
+     * @return array<string, array{string, ?string, bool}>
      */
     public function bindingsInForce(): array
     {
@@ -1323,7 +1391,7 @@ abstract class Component extends Element
 
     /**
      * @param array<string, mixed> $bindings
-     * @return array<string, array{string, ?string}|null>
+     * @return array<string, array{string, ?string, bool}|null>
      */
     private static function normalize(array $bindings): array
     {
@@ -1333,9 +1401,9 @@ abstract class Component extends Element
             if ($action === null) {
                 $out[$key] = null;
             } elseif (\is_array($action)) {
-                $out[$key] = [(string) $action[0], isset($action[1]) ? (string) $action[1] : null];
+                $out[$key] = [(string) $action[0], isset($action[1]) ? (string) $action[1] : null, (bool) ($action['always'] ?? false)];
             } else {
-                $out[$key] = [(string) $action, null];
+                $out[$key] = [(string) $action, null, false];
             }
         }
         return $out;
@@ -1352,16 +1420,13 @@ abstract class Component extends Element
         $at = $for ?? self::keyEnd($this->surface->root()) ?? $this;
         $out = [];
         for ($c = $at; $c !== null; $c = $c->parent) {
-            if ($c->attribute('disabled') || ($c !== $at && $c->dialogs !== [])) {
+            if ($c->attribute('disabled')) {
                 continue;
             }
-            foreach ($c->bindingsInForce() as $key => [, $description]) {
-                if ($description !== null) {
+            foreach ($c->bindingsInForce() as $key => [, $description, $always]) {
+                if ($description !== null && (!$c->suspended() || $always)) {
                     $out[$key] ??= $description;
                 }
-            }
-            if ($c->dialogs !== []) {
-                break;      // (a dialog's keys only: the rest are not reachable)
             }
         }
         return array_map(fn($k, $d) => [(string) $k, $d], array_keys($out), $out);
@@ -1387,55 +1452,275 @@ abstract class Component extends Element
     }
 
     // ------------------------------------------------------------------------------------------
-    // Dialogs
+    // Overlays and dialogs
 
     /**
-     * Show $dialog over this component, modal, and return an awaitable for its answer:
+     * Show $element floating over everything, outside this component's rectangle and its
+     * parents' clipping: a dropdown's list, a completion popup, a context menu, a tooltip, a
+     * command palette. Returns the `Overlay` (close it, await `closed()` for its result).
+     *
+     *     $menu = $this->overlay(new Select(['copy' => 'Copy', 'paste' => 'Paste'],
+     *         onActivate: fn($key) => $menu->close($key)), place: 'below');
+     *
+     * - **Where**: next to `$anchor`, a rectangle in this component's coordinates (default: the
+     *   whole component), by `$place`: `'below'` or `'above'` it (the other side when it does
+     *   not fit there; else the side with more room, the overlay shrunk to it and its content
+     *   scrolling), `'center'` of the screen, or a `Rect` (in this component's coordinates).
+     *   Horizontally it is shifted to stay on the screen; nothing of it is ever outside the root
+     *   (see `Placement`). It follows the anchor when this component moves or the terminal is
+     *   resized (placed again after the layout of that frame), keeping its state, and is
+     *   cancelled when this component is no longer shown.
+     * - **Size**: the element's `width`/`height` when given (cells or a share of the screen),
+     *   else what it measures (`measure()`), else the screen; with the border its style gives it.
+     * - **Order**: later overlays above earlier ones.
+     * - **Focus**: the overlay gets it (a component that wants to keep the keys, as an editor
+     *   with a completion list, calls `$this->focus()` after); closing gives it back.
+     * - **Modal** (`$modal`): it takes all input until it is closed: clicks outside it reach
+     *   nothing, and this component's own keys are suspended (its bindings marked `always`
+     *   and those of its parents still work: the application's Ctrl-Q quits). **Not modal**:
+     *   Escape (when the overlay's content does not take it), a press outside it and this
+     *   component, or the focus moving elsewhere cancels it.
+     *
+     * The element is shown by a child component of this one (the element itself when it is a
+     * component, not started yet): disposing this component cancels the overlay, so a coroutine
+     * awaiting it goes on. Cancelled, it closes with null (a `Dialog`: its `$cancel`).
+     *
+     * @param 'below'|'above'|'center'|Rect $place
+     * @throws \LogicException when this component is not mounted or the element was started already
+     */
+    protected function overlay(Element $element, ?Rect $anchor = null, string|Rect $place = 'below', bool $modal = false): Overlay
+    {
+        if (!$this->mounted) {
+            throw new \LogicException(static::class . ': overlay() needs a mounted component');
+        }
+        if (!$place instanceof Rect && !\in_array($place, ['below', 'above', 'center'], true)) {
+            throw new \InvalidArgumentException("Unknown placement '$place': use 'below', 'above', 'center' or a Rect");
+        }
+        $content = $element instanceof Component ? $element : new Floating($element);
+        if ($content->stopped !== null) {
+            throw new \LogicException(static::class . ': the overlay\'s ' . $content::class . ' was started already');
+        }
+        $root = $this->rootComponent();
+        $before = null;
+        for ($s = $root->surface; ($next = $s->focused()) !== null; $s = $next) {
+            $before = $next;
+        }
+        $key = "\0o:" . ++self::$overlayCount;
+        $overlay = new Overlay($content, $anchor, $place, $modal, $content instanceof Dialog ? $content->cancel : null, $before ?? $root->surface,
+            fn(Overlay $o) => $this->closeOverlay($key, $o));
+        $content->overlaid = $overlay;
+        $this->overlays[$key] = $overlay;
+        $root->floating[] = $overlay;
+        self::$floatingRoots[spl_object_id($root)] = $root;
+        $this->child($key, fn() => $content);
+        if (!$overlay->isOpen()) {
+            return $overlay;    // (its mount() failed)
+        }
+        $root->placeOverlays();
+        if ($content->mounted) {
+            $content->focus();
+        }
+        $this->markDirty();
+        return $overlay;
+    }
+
+    /**
+     * Show $dialog over the screen, modal, and return an awaitable for its answer:
      *
      *     $this->go(function () {
      *         if (fiber\await($this->dialog(new Confirm('Delete the file?')))) { ... }
      *     });
      *
-     * The dialog is centered over the component, at the size it needs, in its own border, and
-     * gets the focus. While it is open, this component's own keys and mouse are the dialog's:
-     * keys go to the dialog, clicks outside it do nothing. When it closes (a button, Enter on
-     * it, Escape for null), the awaitable resolves with the answer, the dialog is disposed, and
-     * the focus goes back where it was. Await the answer in a coroutine (`go()`), not in a key
+     * The dialog is an overlay (see `overlay()`) in the middle of the screen, as large as it
+     * needs (shrunk to the screen, its content scrolling), in its own border, and gets the
+     * focus. While it is open it takes this component's keys and the mouse (its bindings
+     * marked `always` and its parents' bindings still work). When it closes (a button, Enter,
+     * Escape for its cancel answer), the awaitable resolves with the answer, the dialog is
+     * disposed, and the focus goes back where it was; when this component is disposed while it
+     * is open, it resolves with the cancel answer. Await it in a coroutine (`go()`), not in a key
      * handler: the keys that answer it come through the handlers.
      */
     protected function dialog(Dialog $dialog): object
     {
-        $before = null;
-        for ($s = $this->surface->root(); ($next = $s->focused()) !== null; $s = $next) {
-            $before = $next;
-        }
-        $key = "\0dialog" . ++self::$dialogCount;
-        $this->child($key, fn() => $dialog);
-        $this->dialogs[$key] = [$dialog, $before];
-        $dialog->on('close', function () use ($key, $dialog): void {
-            [, $before] = $this->dialogs[$key] ?? [null, null];
-            unset($this->dialogs[$key]);
-            $this->surface->unhost($dialog->surface);       // (at once; the render that follows draws what was under it)
-            if ($before !== null && ($before->viewport() !== null || $before->parent() === null)) {
-                $before->focus();
-            } else {
-                $this->focus();
-            }
-        });
-        $dialog->focus();
-        $this->markDirty();
+        $this->overlay($dialog, place: 'center', modal: true);
         return $dialog->result();
     }
 
-    /** While a dialog is open: mouse events outside it are taken (nothing below gets them). */
-    private function modal(Mouse $mouse): bool
+    /** The overlay this component is the content of, or null when it is not shown in one. */
+    public function inOverlay(): ?Overlay
     {
-        if ($this->dialogs === []) {
+        return $this->overlaid;
+    }
+
+    /** True while an overlay this component opened is modal and open: its own keys wait. */
+    private function suspended(): bool
+    {
+        foreach ($this->overlays as $overlay) {
+            if ($overlay->modal) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function rootComponent(): Component
+    {
+        $c = $this;
+        while ($c->parent !== null) {
+            $c = $c->parent;
+        }
+        return $c;
+    }
+
+    /** The opener's part of closing $overlay: it leaves the screen and the tree, the focus goes back. */
+    private function closeOverlay(string $key, Overlay $overlay): void
+    {
+        unset($this->overlays[$key]);
+        $root = $this->rootComponent();
+        $root->floating = array_values(array_filter($root->floating, fn(Overlay $o) => $o !== $overlay));
+        if ($root->floating === []) {
+            unset(self::$floatingRoots[spl_object_id($root)]);
+        }
+        $content = $overlay->content;
+        $hadFocus = $content->surface->hasFocus();
+        if ($root->mounted) {
+            $root->surface->changeTree(function () use ($root, $content, $overlay, $hadFocus): void {
+                $root->surface->unhost($content->surface);      // (at once; what was under it shows again)
+                if ($root->floating === [] && $root->overlayLayout !== null && $root->overlayLayout->inner === null) {
+                    $root->overlayLayout = null;
+                    $root->surface->setLayout(null);
+                }
+                if ($hadFocus || $overlay->modal) {
+                    $before = $overlay->focusBefore;
+                    if ($before !== null && $before !== $root->surface && ($before->viewport() !== null || $before->parent() === null)) {
+                        $before->focus();
+                    } elseif ($this->mounted) {
+                        $this->focus();
+                    }
+                }
+            });
+        }
+        if ($content->mounted) {
+            $content->stop();
+        }
+        $this->markDirty();
+    }
+
+    /** A root's layout with the overlays of its tree over it (null: it draws itself, then only the overlays). */
+    private function withOverlays(?Layout $inner): ?Layout
+    {
+        if ($this->floating === []) {
+            if ($inner === null && $this->overlayLayout !== null) {
+                $this->surface->setLayout(null);
+            }
+            $this->overlayLayout = null;
+            return $inner;
+        }
+        if ($this->overlayLayout === null || $this->overlayLayout->inner !== $inner) {
+            $this->overlayLayout = new OverlayLayout($inner, fn() => $this->floating);
+        }
+        return $this->overlayLayout;
+    }
+
+    /**
+     * On a root: decide where each open overlay goes now (`Placement`), cancel those whose
+     * opener is gone, not shown, or (not modal) no longer focused, and arrange them.
+     */
+    private function placeOverlays(): void
+    {
+        if (!$this->mounted) {
+            return;
+        }
+        $cols = $this->surface->cols();
+        $rows = $this->surface->rows();
+        $origin = $this->surface->area();
+        $changed = false;
+        foreach ($this->floating as $overlay) {
+            $opener = $overlay->content->parent;
+            if ($opener === null || !$opener->mounted || !$overlay->content->mounted
+                || ($opener !== $this && !$opener->isShownIn($this->surface)) || $opener->surface->area()->isEmpty()) {
+                $overlay->cancel();     // the anchor is no longer shown
+                $changed = true;
+                continue;
+            }
+            if (!$overlay->modal) {
+                $focused = $opener->hasFocus();
+                if ($overlay->wasFocused && !$focused) {
+                    $overlay->cancel();
+                    $changed = true;
+                    continue;
+                }
+                $overlay->wasFocused = $overlay->wasFocused || $focused;
+            }
+            $area = $opener->surface->area();
+            $ox = $area->x - $origin->x;
+            $oy = $area->y - $origin->y;
+            $a = $overlay->anchor;
+            $anchor = $a === null ? new Rect($ox, $oy, $area->width, $area->height) : new Rect($ox + $a->x, $oy + $a->y, $a->width, $a->height);
+            $place = $overlay->place instanceof Rect
+                ? new Rect($ox + $overlay->place->x, $oy + $overlay->place->y, $overlay->place->width, $overlay->place->height)
+                : $overlay->place;
+            $rect = Placement::for($anchor, new Rect(0, 0, $cols, $rows), self::desired($overlay->content, $cols, $rows), $place);
+            if ($rect != $overlay->rect) {
+                $overlay->rect = $rect;
+                $changed = true;
+            }
+        }
+        if ($changed || ($this->floating !== [] && $this->surface->layout() !== $this->overlayLayout)) {
+            $this->surface->setLayout($this->withOverlays($this->overlayLayout?->inner ?? $this->surface->layout()));
+        }
+        foreach ($this->floating as $overlay) {
+            if ($overlay->content->mounted && !$overlay->content->rendered && $overlay->content->surface->viewport() !== null) {
+                $overlay->content->firstRender();
+            }
+        }
+    }
+
+    /** @return array{int,int} the outer size $content would like as an overlay on a root of $cols x $rows */
+    private static function desired(Component $content, int $cols, int $rows): array
+    {
+        $b = $content->style()->border === false ? 0 : 2;
+        $size = $content->measureFor(max(1, $cols - $b), max(1, $rows - $b));
+        $out = [];
+        foreach ([0 => [$content->attribute('width'), $cols], 1 => [$content->attribute('height'), $rows]] as $i => [$spec, $total]) {
+            if (\is_int($spec)) {
+                $out[$i] = $spec;
+            } elseif (\is_string($spec) && str_ends_with($spec, '%')) {
+                $out[$i] = (int) floor($total * (float) $spec / 100);
+            } else {
+                $out[$i] = $size === null ? $total : $size[$i] + $b;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * On a root, a mouse event before anything else gets it: outside a modal overlay it is
+     * taken (nothing below gets it); a press outside a non-modal overlay and its opener
+     * cancels it, and goes on.
+     */
+    private function overlayMouse(Mouse $mouse): bool
+    {
+        if ($this->parent !== null || $this->floating === []) {
             return false;
         }
-        [$dialog] = end($this->dialogs);
-        $view = $this->surface->viewport($dialog->surface);
-        return $view === null || !$view->contains($mouse->x, $mouse->y);
+        $inAbove = false;
+        foreach (array_reverse($this->floating) as $overlay) {
+            $rect = $this->surface->viewport($overlay->content->surface)?->rect();
+            $inside = $rect !== null && $mouse->x >= $rect[0] && $mouse->x < $rect[0] + $rect[2] && $mouse->y >= $rect[1] && $mouse->y < $rect[1] + $rect[3];
+            if ($overlay->modal) {
+                return !$inside && !$inAbove;
+            }
+            if (!$inside && !$inAbove && $mouse->action === Mouse::PRESS) {
+                $opener = $overlay->content->parent;
+                $o = $this->surface->area();
+                if ($opener === null || !$opener->surface->area()->contains($mouse->x + $o->x, $mouse->y + $o->y)) {
+                    $overlay->cancel();
+                }
+            }
+            $inAbove = $inAbove || $inside;
+        }
+        return false;
     }
 
     /** True if this component's surface shows on $surface, directly or through windows in between. */
