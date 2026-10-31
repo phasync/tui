@@ -234,3 +234,88 @@ it('keeps an element with onKey: and nothing focusable inside a stop of the Tab 
         }
     });
 });
+
+/*
+ * TODO-0.0.3-beta4 item 3: after a dialog closes, the focus is back where it was before it opened.
+ */
+
+use phasync\Tui\Component\Confirm;
+use phasync\Tui\Component\Editor;
+
+dataset('dialog openers', [
+    'a keys: handler' => 'keys',
+    'a Button' => 'button',
+    'an onKey: card' => 'card',
+    'a coroutine' => 'go',
+]);
+
+it('gives the focus back to where it was when a dialog closes', function (string $opener) {
+    fiber\run(function () use ($opener) {
+        $s = new State(['answers' => []]);
+        $ask = function () use ($s) {
+            $s->answers = [...$s->answers, fiber\await(Confirm::ask('Delete', 'Really?'))];
+        };
+        $editors = [];
+        $t = Tui::headless(fn() => new Column([
+            $editors[0] ??= new Editor('one', maxLines: 1),
+            new Text('card A', onKey: ['d' => $ask], class: 'focus:inverse'),
+            $editors[1] ??= new Editor('two', maxLines: 1),
+            new Text('card B', onKey: ['d' => $ask], class: 'focus:inverse'),
+            new Button('Delete', $ask),
+        ]), 40, 12, keys: ['ctrl+d' => $ask]);
+        try {
+            $t->settle();
+            // the stop the dialog is opened from (or the one focused when it opens): the second editor, card B, the Button
+            $tabs = match ($opener) { 'keys', 'go' => 2, 'card' => 3, 'button' => 4 };
+            for ($i = 0; $i < $tabs; $i++) {
+                $t->press('tab');
+            }
+            $t->settle();
+            $before = focusedKind($t);
+            expect($before)->toBe(match ($opener) { 'keys', 'go' => 'Editor:two', 'card' => 'card B', 'button' => 'Button' });
+            match ($opener) {
+                'keys' => $t->press('ctrl+d'),
+                'card' => $t->press('d'),
+                'button' => $t->press('enter'),
+                'go' => Tui::go($ask),
+            };
+            $t->settle();
+            expect($t->text())->toContain('Really?');
+            $t->press('enter');             // Yes
+            $t->settle();
+            expect($s->answers)->toBe([true])->and($t->text())->not->toContain('Really?')
+                ->and(focusedKind($t))->toBe($before);
+            $t->press('escape');            // (nothing open: nothing happens)
+            $t->settle();
+            match ($opener) {
+                'keys' => $t->press('ctrl+d'),
+                'card' => $t->press('d'),
+                'button' => $t->press('enter'),
+                'go' => Tui::go($ask),
+            };
+            $t->settle();
+            $t->press('escape');            // cancelled: back too
+            $t->settle();
+            expect($s->answers)->toBe([true, false])->and(focusedKind($t))->toBe($before);
+        } finally {
+            $t->detach();
+        }
+    });
+})->with('dialog openers');
+
+/** What has the keys: "Editor:<value>", "Button", or the text of a focused element with onKey. */
+function focusedKind(FakeTerminal $t): string
+{
+    $end = null;
+    $last = null;
+    for ($s = $t->component()->surface->root(); $s !== null; $s = $s->focused()) {
+        $end = Component::of($s) ?? $end;
+        $last = $s;
+    }
+    return match (true) {
+        $end instanceof Editor => 'Editor:' . $end->value(),
+        $end instanceof Button => 'Button',
+        $last !== null && Component::of($last) === null => trim($last->line(0)),
+        default => $end === null ? 'nothing' : $end::class,
+    };
+}

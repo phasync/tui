@@ -515,18 +515,21 @@ $tabs->setTabs([...$open, 'new' => ['label' => 'New', 'content' => new Editor()]
 | `?Closure $onChange` | `fn(string $key, Tabs $tabs)`: the current tab changed. Also the event `change`. |
 | `?Closure $onClose` | `fn(string $key, Tabs $tabs)`: a tab is asked to close (the `×`, a middle click, Delete). It decides: call `setTabs()` without it. Without it the tab is removed and its component disposed, and **it stays closed** while the program goes on listing it (a `render()` that passes the same tabs every time): it comes back when `setTabs()` names it as `$current`, or once a `setTabs()` without it has listed it again. The event `close` is emitted either way. |
 
-**Hidden tabs keep their state.** A content that is a component is started when the tabs are
-and lives until its tab goes (it is a kept child, see [kept-alive children](components.md#kept-alive-children)):
-hidden, it is not laid out but it is not stopped either; `setTabs()` without it stops it. A
-`Terminal` in a hidden tab goes on running and receiving output (it starts when its tab is
-first shown, because a terminal starts when it is sized); an `Editor` keeps its text, a `Log`
-goes on collecting. A content that is an element tree holding components
-(`Row([$select, new Box($tree)])`) keeps them the same way: the components in it are kept
-children of the tabs, alive while their tab is hidden; the elements around them are built while
-the tab is shown.
+**Each tab is a pane laid out like any render.** The tabs show each tab's content in a pane of
+its own, kept while the tab exists, that lays the content out as a component lays out what its
+`render()` returns: the components in it are matched **by their place** (or `key:`), so a
+`render()` that calls `setTabs()` every time with `new Row([$this->table, new Box(new Tree(...))])`
+shows one `Tree` all along, which takes the new props and keeps its state and the focus.
+
+**Hidden tabs keep their state.** A hidden tab's pane is not laid out and not stopped either;
+`setTabs()` without the tab stops it with what it holds. A `Terminal` in a hidden tab goes on
+running and receiving output (it starts when its tab is first shown, because a terminal starts
+when it is sized); an `Editor` keeps its text, a `Log` goes on collecting, whether it is the
+content itself or somewhere in an element tree (`Row([$select, new Box($tree)])`). A component
+of a tab never shown yet is started when the tab is first shown.
 
 **Whose the components are.** A component made by the tabs from the props (`new Log()` in the
-array) is the tabs': `content($key)` returns it, and it is stopped when its tab goes. A
+array, started by the pane) is the tabs': it is stopped when its tab goes. A
 component you made with `child()` and gave as a content stays yours: the tabs show it and keep it
 running while its tab is hidden, `child('log')` in your component returns it all the time, and
 when its tab goes the tabs let go of it (a `child()` of yours that no render shows any more is
@@ -554,10 +557,15 @@ focus into the shown content (a content with nothing to focus keeps it on the ba
 closes the current tab when it is closable. In the content: Escape moves the focus back to the
 bar, but only when the content did not take it (an `Editor` with a selection clears it first),
 and never for a `Terminal`, which keeps Escape and all other keys. Before the content sees them,
-and from the bar or the content alike: Ctrl-Tab and Ctrl-Shift-Tab (around; bindings marked
-`first`, actions `nextTab` and `previousTab`), Alt-1 to Alt-9 (the focus follows into the new
-tab's content when it was in the content). Escape is a plain binding: it comes after the
-content. Rebind the keys with `bind()`; `Help` lists them.
+and from the bar or the content alike: Ctrl-Tab and Ctrl-Shift-Tab (around; actions `nextTab`
+and `previousTab`) and Alt-1 to Alt-9 (the tab of that number), bindings marked `first`. **The
+rule for these:** they work wherever the focus is inside the tabs: on the bar, in any component
+of the content however deep (an `Editor` in a `Box` in a `Row`, a `Terminal`, the editor of an
+inner `Tabs`), and in a list a component of the content opened (a dropdown `Select`'s list, an
+`Editor`'s completions), and the focus follows into the new tab's content when it was in the
+content. A component of the content that binds one of these keys itself does not get it (they
+come first); rebind them on the tabs with `bind()` to free a key. Escape is a plain binding: it
+comes after the content. Rebind the keys with `bind()`; `Help` lists them.
 
 **Mouse.** A click on a tab selects it and gives the bar the focus; a click on its `×` or a
 middle click closes it; the wheel over the bar steps to the previous or next tab; `‹` and `›`

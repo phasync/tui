@@ -107,6 +107,19 @@ final class Tui
     }
 
     /**
+     * End the running program, as Ctrl-Q does: the root is disposed, the terminal given back,
+     * and `Tui::run()` (`inline()`) returns. From any handler or coroutine of the program, also
+     * one started with `fiber\go()`; a key action too, without a closure:
+     * `Tui::run($screen, keys: ['q' => ['quit', 'quit']])` (a binding to `'quit'` on a component
+     * that has no `quit()` method of its own ends the program). Nothing happens when no
+     * program runs. With several roots running (nested instances), the one started last.
+     */
+    public static function quit(): void
+    {
+        Component::runningRoot()?->dispose();
+    }
+
+    /**
      * Run $root (an element, a component, or a closure returning either) full screen on the
      * terminal (`Tty`) until it quits, then restore the terminal. Returns the root component,
      * ended.

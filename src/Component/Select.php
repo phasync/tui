@@ -24,6 +24,8 @@ use phasync\Tui\Text;
  *         onChange: fn(array $keys) => $this->state->picked = $keys,
  *     )
  *
+ *     new Select(['s' => 'Small', 'm' => 'Medium', 'l' => 'Large'], value: 'm', dropdown: true)
+ *
  * **Items** by key (your ids): a label each (one column, no header), or a list of cells with
  * `columns` as for `Table` (header, widths, alignment, sorting by a click on a title). The
  * selection is kept by key: through `setItems()` (or new `items` from a render), sorting and
@@ -75,6 +77,11 @@ final class Select extends Table implements Field
      * @param (\Closure(int|string $key, Select $select): void)|null $onSelect   the current item changed
      * @param (\Closure(int|string $key, Select $select): void)|null $onActivate Enter or a click on the current item
      * @param (\Closure(list<int|string> $keys, Select $select): void)|null $onChange the marked items changed
+     * @param int|string|list<int|string>|null $value what is picked at the start: the key of the
+     *        current item, or with `multiple` the keys of the marked items (a key that is not an
+     *        item is left out; null: the first item is current, none marked). Like `Checkbox`'s
+     *        `checked:`, the first instance's only: a render that makes the Select anew does not
+     *        take the user's choice back (use `setCurrent()` or `setSelection()` for that)
      */
     public function __construct(
         array $items = [],
@@ -85,8 +92,19 @@ final class Select extends Table implements Field
         private readonly ?\Closure $onActivate = null,
         private readonly ?\Closure $onChange = null,
         public bool $dropdown = false,
+        int|string|array|null $value = null,
     ) {
         parent::__construct($columns, self::rows($items), $columns !== []);
+        if ($multiple) {
+            foreach ((array) $value as $key) {
+                if (isset($this->rows[$key])) {
+                    $this->marked[$key] = true;
+                }
+            }
+        } elseif ($value !== null && !\is_array($value) && isset($this->rows[$value])) {
+            $this->currentKey = $value;
+            $this->currentAt = (int) array_search($value, array_keys($this->rows), true);
+        }
     }
 
     /** @return array<int|string, list<string>> */

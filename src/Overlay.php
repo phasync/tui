@@ -28,6 +28,8 @@ final class Overlay
     public ?Rect $rect = null;
     /** @internal The anchor and the root it was placed for last: [Rect, Rect]. */
     public ?array $placedFor = null;
+    /** @var list<Surface> @internal The focus path when it opened, from the root's first window down. */
+    public array $focusPath = [];
     /** @internal The focus path had reached the opener or the overlay since it opened. */
     public bool $wasFocused = false;
 

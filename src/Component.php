@@ -360,6 +360,8 @@ abstract class Component extends Element
      * the key, which goes on. A render follows. `onKey()` is for what a map cannot say (any
      * letter, a key with a computed meaning); it runs on the way down (after the `first`
      * bindings) in a component the key passes, after all its bindings in the focused one.
+     * The method name `'quit'`, on a component without a `quit()` method of its own, ends the
+     * program (`Tui::quit()`): `'q' => ['quit', 'quit']`.
      *
      * @return array<string, string|array<int|string, string|bool>>
      */
@@ -1133,6 +1135,13 @@ abstract class Component extends Element
         foreach ($this->overlays as $overlay) {
             if ($overlay->content->hasFocus()) {
                 return true;    // (a dropdown's field while its list has the keys)
+            }
+        }
+        // (an overlay opened by a component shown inside this one: the focus is inside it too)
+        foreach ($this->rootComponent()->floating as $overlay) {
+            $opener = $overlay->content->parent;
+            if ($opener !== null && $opener !== $this && $opener->isShownIn($this->surface) && $overlay->content->hasFocus()) {
+                return true;
             }
         }
         // keys come down from the root of the tree the nearest shown component is in
@@ -2189,6 +2198,9 @@ abstract class Component extends Element
             return false;
         }
         $method = $binding[0];
+        if ($method === 'quit' && !method_exists($this, 'quit')) {
+            $method = static fn() => Tui::quit();      // (the library's: the program ends)
+        }
         if ($method instanceof \Closure) {
             // (a closure: run as a handler of this component's, given the key; a bound key is
             // taken, whatever it returns: `fn() => $s->open = false` gives false and took it)
@@ -2392,13 +2404,14 @@ abstract class Component extends Element
             throw new \LogicException(static::class . ': the overlay\'s ' . $content::class . ' was started already');
         }
         $root = $this->rootComponent();
-        $before = null;
+        $path = [];
         for ($s = $root->surface; ($next = $s->focused()) !== null; $s = $next) {
-            $before = $next;
+            $path[] = $next;
         }
         $key = "\0o:" . ++self::$overlayCount;
-        $overlay = new Overlay($content, $anchor, $place, $modal, $content instanceof Dialog ? $content->cancel : null, $before ?? $root->surface,
+        $overlay = new Overlay($content, $anchor, $place, $modal, $content instanceof Dialog ? $content->cancel : null, end($path) ?: $root->surface,
             fn(Overlay $o) => $this->closeOverlay($key, $o));
+        $overlay->focusPath = $path;
         $content->overlaid = $overlay;
         $this->overlays[$key] = $overlay;
         self::$treeVersion++;
@@ -2550,9 +2563,17 @@ abstract class Component extends Element
                     $root->surface->setLayout(null);
                 }
                 if ($hadFocus || $overlay->modal) {
-                    $before = $overlay->focusBefore;
-                    if ($before !== null && $before !== $root->surface && ($before->viewport() !== null || $before->parent() === null)) {
-                        $before->focus();
+                    // back where the keys went when it opened: the deepest window of that path
+                    // that is still shown (a field a render made anew leaves its component)
+                    $back = null;
+                    foreach (array_reverse($overlay->focusPath) as $s) {
+                        if ($s->root() === $root->surface) {
+                            $back = $s;
+                            break;
+                        }
+                    }
+                    if ($back !== null) {
+                        $back->focus();
                     } elseif ($this->mounted) {
                         $this->focus();
                     }

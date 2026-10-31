@@ -11,7 +11,6 @@ use phasync\Tui\Element\Row;
 use phasync\Tui\Element\Span;
 use phasync\Tui\Element\Text as TextElement;
 use phasync\Tui\Internal\Live;
-use phasync\Tui\Key;
 use phasync\Tui\Mouse;
 use phasync\Tui\Text;
 
@@ -31,14 +30,16 @@ use phasync\Tui\Text;
  * (`child()`, or `$tabs ??= new Tabs(...)`) and change the tabs with `setTabs()`; tabs the
  * user closed stay closed while the program goes on listing them.
  *
- * Each tab is `key => ['label' => ..., 'content' => Component|Element, 'closable' => ?bool]`. A
- * content that is a component, and every component in a content's element tree
- * (`new Row([$list, new Box($preview)])`), is a child kept alive while its tab is hidden (see
- * `Component::keep()`): it keeps its state, and a `Terminal` goes on running and receiving
- * output (it starts when its tab is first shown, as it is sized then); it is stopped when its
- * tab goes. A component made elsewhere (with the owner's `child()`) stays its owner's, which
- * keeps finding it with `child()` while the tab holds it; `content()` gives a tab's content.
- * An element is built into the tree while its tab is shown. Hidden tabs are not laid out.
+ * Each tab is `key => ['label' => ..., 'content' => Component|Element, 'closable' => ?bool]`.
+ * Each tab's content is shown by a pane of its own, kept while the tab exists, which lays it out
+ * as a component lays out its render: the components in it (`new Row([$list, new Box($preview)])`)
+ * are matched by their place or `key:`, so a render that calls `setTabs()` every time with new
+ * instances keeps the running ones (with the new props). A hidden tab's pane is not laid out
+ * and not stopped: its components keep their state, and a `Terminal` goes on running and
+ * receiving output (it starts when its tab is first shown, as it is sized then); they are
+ * stopped when the tab goes. A component made elsewhere (with the owner's `child()`) stays its
+ * owner's, which keeps finding it with `child()` while the tab holds it; `content()` gives a
+ * tab's content as given.
  *
  * **Focus.** When the tab changes while the focus is in the content (Ctrl-Tab, Alt-number,
  * `select()`), it follows into the new tab's content: to its first component that takes keys,
@@ -49,8 +50,9 @@ use phasync\Tui\Text;
  * shown content, Delete closes the current tab when it is closable. In the content: Escape
  * moves the focus back to the bar (when the content did not take it; a `Terminal` keeps its
  * Escape): a plain binding, which comes after the content. Everywhere in the tabs, before the
- * content sees them: Ctrl-Tab and Ctrl-Shift-Tab (around; bindings marked `first`), Alt-1 to
- * Alt-9 (in `onKey()`, which sees keys on their way to the content). **Mouse**: a click on a tab
+ * content sees them, wherever the focus is in the content (a field, a shell, a list a dropdown
+ * of the content opened): Ctrl-Tab and Ctrl-Shift-Tab (around) and Alt-1 to Alt-9 (the tab of
+ * that number), bindings marked `first`. **Mouse**: a click on a tab
  * selects it and focuses the bar, on its
  * `×` closes it, a middle click closes it, the wheel on the bar changes tab, `‹` and `›` step
  * to the previous or next one. When the labels are wider than the bar it scrolls, with `‹` and
@@ -128,7 +130,7 @@ class Tabs extends Component
 
     protected function bindings(): array
     {
-        return [
+        $keys = [
             'left' => ['previous', 'previous tab'], 'right' => ['next', 'next tab'],
             'home' => 'first', 'end' => 'last',
             'tab' => ['focusContent', 'into the tab'], 'enter' => 'focusContent',
@@ -137,6 +139,18 @@ class Tabs extends Component
             'ctrl+tab' => ['nextTab', 'next tab', 'first' => true],
             'ctrl+shift+tab' => ['previousTab', 'first' => true],
         ];
+        // Alt-1 to Alt-9: before the content, wherever the focus is in it (a list it opened included)
+        foreach (range(1, 9) as $n) {
+            $keys["alt+$n"] = [fn() => $this->selectAt($n - 1), 'first' => true];
+        }
+        return $keys;
+    }
+
+    /** Make the tab at $index (from 0) current, as Alt-number does; false when there is none. */
+    private function selectAt(int $index): bool
+    {
+        $keys = array_keys($this->tabs);
+        return isset($keys[$index]) && $this->select((string) $keys[$index]);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -435,16 +449,6 @@ class Tabs extends Component
         }
         $this->focus();
         return true;
-    }
-
-    /** Alt-1 to Alt-9, on their way to the content: a map of nine bindings would say less. */
-    protected function onKey(Key $key): bool
-    {
-        if ($key->alt && !$key->ctrl && !$key->shift && preg_match('/^[1-9]$/', $key->name)) {
-            $keys = array_keys($this->tabs);
-            return isset($keys[(int) $key->name - 1]) && $this->select((string) $keys[(int) $key->name - 1]);
-        }
-        return false;
     }
 
     // ------------------------------------------------------------------------------------------
