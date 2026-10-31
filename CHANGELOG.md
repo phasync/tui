@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+**Markdown**
+
+- New widget `Component\Markdown`: CommonMark in the terminal (headings, wrapped paragraphs,
+  emphasis, strong, code spans, links, nested lists, block quotes, fenced code with a simple
+  php/js/sh/json highlighter, tables, thematic breaks), styled by one stylesheet part per
+  kind (`Markdown::h1`, `Markdown::code`, ...; the default theme sets them), scrolling with the
+  keys and the wheel, following the end with `tail: true`, and streaming: `append()` takes text
+  that ends mid-construct, remembers the rows of unchanged blocks and writes only the screen
+  rows that changed. `set()` replaces the text. Example: `examples/markdown.php`.
+
 ## 0.0.2-beta2 (2026-10-31)
 
 Overlays, and what the first applications on the components layer ran into. Everything from

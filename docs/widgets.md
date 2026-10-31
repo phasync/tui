@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`ProgressBar` and `Spinner`. Each is an element (place it in a tree where it
+`ProgressBar` and `Spinner`, and `Markdown`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -359,3 +359,63 @@ new Spinner('saving')                                            // ⠹ saving, 
 |---|---|
 | `new ProgressBar(?float $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label after it, or the percentage without one. Null: indeterminate, a block moving to and fro (animated by the bar itself). `$value` and `$label` are props; `setValue(?float $value, ?string $label = null)`. Style: `ProgressBar`, part `ProgressBar::bar`. |
 | `new Spinner(string $label = '', array $frames = Spinner::DOTS, float $interval = 0.08, ...attributes)` | A sign cycling through `$frames` (`Spinner::DOTS`, `Spinner::LINE`, or yours) every `$interval` seconds while it is shown, then the label. No coroutine of yours: show it while something runs, take it out of the tree after. `frame(): int`. Style: `Spinner`, part `Spinner::sign`. |
+
+## Markdown
+
+CommonMark in the terminal, scrolling, and fed by a stream: a README, a help page, a model's
+answer as it arrives.
+
+```php
+$md = $this->child('answer', fn() => new Markdown(tail: true));
+foreach ($tokens as $chunk) {
+    $md->append($chunk);          // may end mid-fence, mid-emphasis, mid-link
+}
+```
+
+| | |
+|---|---|
+| `new Markdown(string $text = '', bool $tail = false, bool $hyperlinks = false, ...attributes)` | The initial text. `$tail` and `$hyperlinks` are props. With `$tail` the view follows the end as text arrives, until the user scrolls back. With `$hyperlinks` a link is its text as an OSC 8 hyperlink; else the text with its address dimmed after it. |
+| `set(string $text)`, `append(string $chunk)`, `text(): string` | Replace, add to, and read back the Markdown text. |
+| `scrollTo(int $row)`, `scrollBy(int $rows): bool`, `topRow(): int`, `rowCount(): int` | Rows of the laid-out document (they depend on the width). `scrollBy` is false when it could not move. |
+| `follow()`, `isFollowing(): bool` | Follow the end again (with `tail`); whether the view is following. |
+| `lineUp`, `lineDown`, `pageUp`, `pageDown`, `toTop`, `toBottom` | The actions of Up/k, Down/j, Page Up, Page Down/Space, Home, End; a key the view can not use goes on to the parent. The wheel scrolls three rows. End follows the stream again. |
+
+Event `scroll` (with the Markdown): the rows in view or `isFollowing()` changed.
+
+**Supported**: headings (ATX and setext), paragraphs wrapped between words (hard breaks with two
+trailing spaces or a backslash), `*emphasis*`, `**strong**`, `~~strike~~`, `` `code` ``,
+`[links](url)` and `<autolinks>` (images show their alt text as a link), bullet and numbered lists
+to any depth (a numbered list keeps its numbers aligned; items wrap under their marker), block
+quotes (holding any block), fenced and indented code, tables (column alignment from the `:--:`
+row, cells shrunk and wrapped to fit the width), thematic breaks. Text is laid out by display
+width: wide characters and emoji take two cells. Not supported: raw HTML (shown as text),
+reference links, footnotes, task-list boxes. Escape sequences and control characters in the text
+are dropped, so text from outside can not drive the terminal.
+
+**Code blocks** are filled across the width; a fence with `php`, `js` (also `javascript`, `ts`),
+`sh` (`bash`, `zsh`) or `json` info gets a simple keyword, string, comment, number and variable
+highlighter; other fences are plain.
+
+**Streaming.** The whole text is read again at every change, so what shows is the best the text
+so far allows: an open fence is a code block to the end, an emphasis with no end is its asterisk,
+`[text](` with no address yet is text. The cost stays small: the rows of every block that did not
+change are remembered (the last block, the tail, is laid out anew), and only the screen rows
+that differ are written. Feeding a document in any chunking ends on the screen `set()` of the
+whole gives.
+
+**Style**: one part per kind, `Markdown::h1` to `Markdown::h6`, `paragraph`, `strong`, `emphasis`,
+`strike`, `code` (a span), `codeblock` (the block and its background), `keyword`, `string`,
+`comment`, `number`, `variable`, `key` (the highlighter), `link`, `url`, `quote` (text and bar),
+`bullet`, `rule`, `th`, `td` and `border` (tables). Parts that apply together combine (`strong`
+in `h2`, `link` in `quote`): attributes add up and the innermost colour wins.
+
+```php
+$app->setStylesheet(Stylesheet::default()->with([
+    'Markdown::h1' => ['color' => 'yellow', 'underline' => false],
+    'Markdown::codeblock' => ['background' => '#202830'],
+]));
+```
+
+A hyperlink needs a terminal that shows OSC 8, and the Surface passes none today: until it does
+`hyperlinks: true` shows the link text only (a link inside a pane shows its text without the
+address either way).
