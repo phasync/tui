@@ -43,6 +43,12 @@ use phasync\Tui\Rect;
  * answer; any other button than the cancel one submits it first and answers only when it is
  * valid (the messages show in the form); the cancel button and Escape do not validate.
  *
+ * **A dialog that closes itself**: with `timeout:` it closes after that many seconds with the
+ * `$cancel` answer unless it was answered before, for a notice that needs no key ("Saved",
+ * "The program ended") or a question with a default:
+ *
+ *     Dialog::open(new Dialog('Bye', "The shell exited with status $code", buttons: ['OK' => true], timeout: 3));
+ *
  * **Subclass it** for dialogs of your own (see `Confirm`): `accept($answer)` decides whether a
  * button's answer closes the dialog (a form dialog checks its fields there and stays open with
  * its error messages; with a `Form` inside, after the form was valid), `close($answer)` ends
@@ -64,12 +70,14 @@ class Dialog extends Component
      * @param string|Element       $content the message (wrapped), or an element tree
      * @param array<string, mixed> $buttons the answer of each button, by label, in order
      * @param mixed                $cancel  the answer for Escape, and when it ends unanswered
+     * @param float|null           $timeout seconds after which it closes by itself with `$cancel`
      */
     public function __construct(
         public string $title = '',
         public string|Element $content = '',
         public array $buttons = ['OK' => true],
         public mixed $cancel = null,
+        public ?float $timeout = null,
     ) {
     }
 
@@ -144,6 +152,13 @@ class Dialog extends Component
 
     protected function mount(): void
     {
+        if ($this->timeout !== null) {
+            $this->go(function (): void {
+                if ($this->sleep($this->timeout) && !$this->result()->isSettled()) {
+                    $this->close($this->cancel);
+                }
+            });
+        }
         // (measuring the tree makes the fields and buttons, so one can have the focus before the
         // first render; also when a size given with with() makes measure() skip the tree)
         $this->measureElement($this->tree(), max(1, $this->surface->cols()), max(1, $this->surface->rows()));

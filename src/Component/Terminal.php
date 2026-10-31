@@ -23,11 +23,15 @@ use phasync\Tui\Pty;
  * size of their pane; a Terminal that no render shows has not started its program yet.
  *
  * When the program exits, the component stays as it is, showing the last output, and announces
- * it: `$onExit` is called with the exit status (in a coroutine of the component), and the
- * `exited()` awaitable resolves with it. The host can then close the pane, `restart()` the
+ * it: `$onExit` is called with the exit status (in a coroutine of the component), the event
+ * `exit` is emitted with the status and the component (`$terminal->on('exit', fn(int $code) =>
+ * ...)`), and the `exited()` awaitable resolves with it. The host can then close the pane, `restart()` the
  * program or show the status. Disposing the component hangs the program up (SIGHUP, then
  * SIGKILL if it is still there after half a second); so does quitting, since detaching the
  * terminal device disposes the component tree.
+ *
+ * As an element: `new Terminal('htop', onExit: fn(int $code) => $s->status = "htop: $code",
+ * class: 'grow border-round')` takes `key:`, `id:`, `class:` and `style:` like every widget.
  *
  * **Keys.** While it has the focus, its program gets every key: a shell needs Ctrl-D, Ctrl-C,
  * Ctrl-R, Ctrl-A/E/K/U/W, Tab, Escape and the arrows, an editor Ctrl-S, Ctrl-Q and the function
@@ -48,13 +52,20 @@ final class Terminal extends Component
      * @param string|null                $cwd     working directory, default the current one
      * @param array<string,string>       $env     variables added to the inherited environment
      * @param (\Closure(int $code, Terminal $terminal): void)|null $onExit called when the program has ended
+     * @param string|list<string>|null $class
+     * @param array<string, mixed>|null $style
      */
     public function __construct(
         private readonly string|array $command,
         private readonly ?string $cwd = null,
         private readonly array $env = [],
         private readonly ?\Closure $onExit = null,
+        ?string $key = null,
+        ?string $id = null,
+        string|array|null $class = null,
+        ?array $style = null,
     ) {
+        $this->with($key, $id, $class, $style);
     }
 
     protected function mount(): void
@@ -73,8 +84,11 @@ final class Terminal extends Component
         $this->pty = Pty::start($this->command, $this->surface, $this->cwd, $this->env, function (int $code, Pty $pty) use ($exited): void {
             $exited->resolve($code);
             // a program ended by restart() is not announced
-            if ($pty === $this->pty && $this->onExit !== null && $this->isMounted()) {
-                $this->go(fn() => $this->call($this->onExit, $code, $this));
+            if ($pty === $this->pty && $this->isMounted()) {
+                $this->go(function () use ($code): void {
+                    $this->call($this->onExit, $code, $this);
+                    $this->emit('exit', $code, $this);
+                });
             }
         });
     }

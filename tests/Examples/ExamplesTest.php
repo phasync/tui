@@ -45,6 +45,11 @@ it('runs split-shells: two shells, switching, quitting', function () {
             ->and($app->surface->isAltScreen())->toBeFalse()    // it gave its terminal back
             ->and($app->surface->mode(1002))->toBeFalse();
     });
+    example('split-shells.php', [], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor(fn() => substr_count($t->text(), '$') >= 2, 10))->toBeTrue();
+        $t->press('ctrl+b', 'ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0);
+    });
 });
 
 it('runs split-shells: arrows move the focus, and it ends when both shells have exited', function () {
@@ -62,12 +67,21 @@ it('runs split-shells: arrows move the focus, and it ends when both shells have 
     });
 });
 
-it('runs host.php with a command and closes with it', function () {
-    example('host.php', ['sh', '-c', "printf '\\033]2;the title\\007hosted \\033[31mred\\033[0m\\n'; read x"], function (FakeTerminal $t, Terminal $app) {
+it('runs host.php with a command, says goodbye with its exit status for three seconds and closes', function () {
+    example('host.php', ['sh', '-c', "printf '\\033]2;the title\\007hosted \\033[31mred\\033[0m\\n'; read x; exit 3"], function (FakeTerminal $t, Terminal $app) {
         expect($t->waitFor('hosted red', 10))->toBeTrue()
             ->and($t->waitFor('the title'))->toBeTrue()
-            ->and($t->surface->title())->toBe('the title');
+            ->and($t->surface->title())->toBe('the title')
+            ->and($t->text())->toContain('Ctrl-B q: quit');
         $t->press('enter');
+        $ended = microtime(true);
+        expect($t->waitFor('exited with status 3', 5))->toBeTrue()
+            ->and($app->pty()->wait(6))->toBe(0)
+            ->and(microtime(true) - $ended)->toBeGreaterThan(2.5);
+    });
+    example('host.php', ['sh'], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('$', 10))->toBeTrue();
+        $t->press('ctrl+b', 'ctrl+q');
         expect($app->pty()->wait(5))->toBe(0);
     });
 });
@@ -77,10 +91,23 @@ it('runs coroutine-pane: a shell and a printing coroutine', function () {
         expect($t->waitFor('Round 1', 10))->toBeTrue()
             ->and($t->waitFor(fn() => preg_match('/download\s+\[█+/u', $t->text()) === 1, 5))->toBeTrue()
             ->and($t->waitFor('$'))->toBeTrue();
+        expect($t->text())->toContain('Ctrl-B q quit');
         $t->press('ctrl+b', 'q');
         expect($app->pty()->wait(5))->toBe(0);
     };
     example('coroutine-pane.php', [], $test);
+    // Ctrl-B Ctrl-Q quits too; the shell exiting shows a goodbye, then the program ends
+    example('coroutine-pane.php', [], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('$', 10))->toBeTrue();
+        $t->press('ctrl+b', 'ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0);
+    });
+    example('coroutine-pane.php', [], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('$', 10))->toBeTrue();
+        $t->type("exit 7\n");
+        expect($t->waitFor('exited with status 7', 5))->toBeTrue()->and($t->text())->toContain('goodbye')
+            ->and($app->pty()->wait(6))->toBe(0);
+    });
     $ext = __DIR__ . '/../../vendor/phasync/phasync/ext/phasync-8.5-nts-x86_64-glibc.so';
     if (is_file($ext) && \PHP_VERSION_ID >= 80500 && !extension_loaded('phasync')) {
         example('coroutine-pane.php', [], function (FakeTerminal $t, Terminal $app) use ($test) {

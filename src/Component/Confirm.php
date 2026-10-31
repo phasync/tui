@@ -13,7 +13,8 @@ namespace phasync\Tui\Component;
  *
  * The labels are `$yes` and `$no`; `$yes` has the focus. Keys: Enter presses the focused
  * button, Escape answers false, and the first letter of each label answers at once (`y` and
- * `n` for the default labels; none when the two labels start with the same letter). Styled as
+ * `n` for the default labels; none when the two labels start with the same letter). With
+ * `timeout:` it answers false by itself when nobody answered in time. Styled as
  * a `Dialog` (and as `Confirm`, for rules of its own).
  */
 final class Confirm extends Dialog
@@ -21,10 +22,13 @@ final class Confirm extends Dialog
     /** @var array<string, string> the key of each answer, 'yes' and 'no' (see bindings()) */
     private array $letters = [];
 
-    /** Ask $question with the buttons $yes (true, focused) and $no (false). */
-    public function __construct(string $question, string $yes = 'Yes', string $no = 'No', string $title = '')
+    /**
+     * Ask $question with the buttons $yes (true, focused) and $no (false); with $timeout, it
+     * answers false by itself after that many seconds.
+     */
+    public function __construct(string $question, string $yes = 'Yes', string $no = 'No', string $title = '', ?float $timeout = null)
     {
-        parent::__construct($title, $question, [$yes => true, $no => false], false);
+        parent::__construct($title, $question, [$yes => true, $no => false], false, $timeout);
         $y = mb_strtolower(mb_substr(trim($yes), 0, 1));
         $n = mb_strtolower(mb_substr(trim($no), 0, 1));
         if ($y !== $n && preg_match('/^\pL$/u', $y) === 1 && preg_match('/^\pL$/u', $n) === 1) {
@@ -60,8 +64,8 @@ final class Confirm extends Dialog
      *
      * @throws \LogicException when no program is running
      */
-    public static function ask(string $title, string $text, string $yes = 'Yes', string $no = 'No'): object
+    public static function ask(string $title, string $text, string $yes = 'Yes', string $no = 'No', ?float $timeout = null): object
     {
-        return self::open(new self($text, $yes, $no, $title));
+        return self::open(new self($text, $yes, $no, $title, $timeout));
     }
 }

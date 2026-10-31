@@ -15,6 +15,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use phasync\Tui\Component\ProgressBar;
 use phasync\Tui\Element\Column;
+use phasync\Tui\Element\Help;
 use phasync\Tui\Element\Text;
 use phasync\Tui\State;
 use phasync\Tui\Tui;
@@ -26,7 +27,7 @@ fiber\run(function () use ($s, $full) {
     $screen = fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),
-        new Text('<dim>ctrl+q quit</>'),
+        new Help(),
     ]);
     $full ? Tui::run($screen) : Tui::inline($screen);
 });

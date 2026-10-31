@@ -30,7 +30,7 @@ use function fiber\sleep;
  * While attached, the device:
  *
  * - draws the root's damage as the minimum cursor moves and SGR runs against the previous frame,
- *   at most 60 frames a second and only when something changed, in a coroutine of its own;
+ *   at most 60 frames a second (`setFrameRate()`) and only when something changed, in a coroutine of its own;
  *   frames are wrapped in synchronized output (mode 2026), and the cursor shown is the root's
  *   `activeCursor()` (that of the focused window);
  * - decodes the terminal's input into `Key`, `Mouse`, `Paste` and `Focus` events and gives them
@@ -106,6 +106,8 @@ abstract class TerminalDevice
     private bool $drawing = false;
     private bool $redraw = true;
     private float $lastFrame = 0.0;
+    /** The least time between two frames (see setFrameRate()). */
+    private float $frameTime = 1 / 60;
     private int $drawnVersion = -1;
     /** @var array<int, array{list<string>, list<Style>}> the frame on the terminal, per row */
     private array $frame = [];
@@ -538,6 +540,23 @@ abstract class TerminalDevice
     public function terminalName(): string
     {
         return $this->terminalName;
+    }
+
+    /**
+     * Draw at most $fps frames a second (default 60): fewer for a program over a slow link or
+     * one that should use less CPU (a dashboard at 10), more for a terminal that shows more.
+     * Changes that come faster are drawn together in the next frame; nothing is lost.
+     * `Tui::run(..., fps: 30)` sets it.
+     */
+    public function setFrameRate(int $fps): void
+    {
+        $this->frameTime = 1 / max(1, $fps);
+    }
+
+    /** The most frames a second the device draws (see `setFrameRate()`). */
+    public function frameRate(): int
+    {
+        return (int) round(1 / $this->frameTime);
     }
 
     /** True between `attach()` and `detach()`. */
@@ -1173,7 +1192,7 @@ abstract class TerminalDevice
         }
     }
 
-    /** The frame loop: draw when damaged, at most 60 times a second. */
+    /** The frame loop: draw when damaged, at most frameRate() times a second. */
     private function frames(): void
     {
         while ($this->root !== null) {
@@ -1181,7 +1200,7 @@ abstract class TerminalDevice
                 $this->wake->wait();
                 continue;
             }
-            $wait = $this->lastFrame + 1 / 60 - microtime(true);
+            $wait = $this->lastFrame + $this->frameTime - microtime(true);
             if ($wait > 0) {
                 sleep($wait);
             }

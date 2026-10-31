@@ -8,7 +8,7 @@
  *     php examples/inline-progress.php                # inline
  *     php examples/inline-progress.php --fullscreen   # the same component, full screen
  *
- * Ctrl-C stops early.
+ * Ctrl-C stops early (the help line under the bars says so).
  */
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -17,6 +17,7 @@ use phasync\Tui\Component;
 use phasync\Tui\Component\ProgressBar;
 use phasync\Tui\Element;
 use phasync\Tui\Element\Column;
+use phasync\Tui\Element\Help;
 use phasync\Tui\Element\Row;
 use phasync\Tui\Element\Text;
 use phasync\Tui\TerminalDevice;
@@ -36,7 +37,7 @@ final class Jobs extends Component
 
     protected function bindings(): array
     {
-        return ['ctrl+c' => 'quit'];
+        return ['ctrl+c' => ['quit', 'stop']];
     }
 
     public function quit(): void
@@ -72,6 +73,9 @@ final class Jobs extends Component
         }
         $total = array_sum($this->done) / \count($this->done);
         $rows[] = new Text(sprintf('total %3d%%', round($total * 100)), class: 'title');
+        if ($total < 1) {
+            $rows[] = new Help();       // (the last frame, which stays, has no keys to tell)
+        }
         return new Column($rows);
     }
 }

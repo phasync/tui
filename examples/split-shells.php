@@ -11,7 +11,7 @@
  *     Ctrl-B Tab      switch shell (Ctrl-B Shift-Tab: the other way); clicking a shell also works
  *     Ctrl-B arrow    the shell in that direction
  *     Ctrl-B Ctrl-B   send Ctrl-B to the shell (to reach a split-shells running inside it)
- *     Ctrl-B q        quit
+ *     Ctrl-B q        quit (Ctrl-B Ctrl-Q too)
  *
  * The mouse wheel scrolls a shell's scrollback, a drag selects and copies text, a pasted text
  * goes to the focused shell. Everything follows the terminal's size. The program ends when you
@@ -55,7 +55,7 @@ final class SplitShells extends Component
         }
         $status = $this->child('status', fn() => new StatusBar());
         $status->set(
-            $this->prefix ? ' [prefix] Tab/arrows: switch  Ctrl-B: send Ctrl-B  q: quit' : ' split-shells',
+            $this->prefix ? ' [prefix] Tab/arrows: switch  Ctrl-B: send Ctrl-B  q, Ctrl-Q: quit' : ' split-shells',
             'Ctrl-B Tab: switch  Ctrl-B q: quit ',
         );
         return Split::vertical()
@@ -77,7 +77,7 @@ final class SplitShells extends Component
                 $key->is('shift+tab') => $this->surface->focusNext(backwards: true),
                 $key->is('left'), $key->is('right'), $key->is('up'), $key->is('down') => $this->surface->focusToward($key->name),
                 $key->is('ctrl+b') => $this->surface->focused()?->dispatch($key),    // on down the focus path
-                $key->is('q') => $this->dispose(),      // quit: the shells are hung up
+                $key->is('q'), $key->is('ctrl+q') => $this->dispose(),      // quit: the shells are hung up
                 default => null,
             };
         }

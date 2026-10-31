@@ -241,11 +241,12 @@ final class Tui
      * @param Element|(\Closure(): ?Element) $root
      * @param string|null $theme `'dark'`, `'light'`, `'mono'`; null: the one asked with `--theme=` or `TUI_THEME`, else the one for the terminal's background
      * @param array<string, \Closure|string|array<int|string, mixed>> $keys keys bound on the root (see the class description)
+     * @param int $fps the most frames a second drawn (see `TerminalDevice::setFrameRate()`)
      * @throws \RuntimeException when STDIN or STDOUT is not a terminal
      */
-    public static function run(Element|\Closure $root, ?string $theme = null, array $keys = []): Component
+    public static function run(Element|\Closure $root, ?string $theme = null, array $keys = [], int $fps = 60): Component
     {
-        return self::starting(fn() => self::until(self::headlessSize() === null ? new Tty() : null, $root, $theme ?? self::themeAsked(), $keys));
+        return self::starting(fn() => self::until(self::headlessSize() === null ? new Tty() : null, $root, $theme ?? self::themeAsked(), $keys, false, $fps));
     }
 
     /**
@@ -260,9 +261,9 @@ final class Tui
      * @param array<string, \Closure|string|array<int|string, mixed>> $keys as for `run()`
      * @throws \RuntimeException when STDIN or STDOUT is not a terminal
      */
-    public static function inline(Element|\Closure $root, bool $keep = true, ?string $theme = null, array $keys = []): Component
+    public static function inline(Element|\Closure $root, bool $keep = true, ?string $theme = null, array $keys = [], int $fps = 60): Component
     {
-        return self::starting(fn() => self::until(self::headlessSize() === null ? Tty::inline(keep: $keep) : null, $root, $theme ?? self::themeAsked(), $keys, true));
+        return self::starting(fn() => self::until(self::headlessSize() === null ? Tty::inline(keep: $keep) : null, $root, $theme ?? self::themeAsked(), $keys, true, $fps));
     }
 
     /**
@@ -281,10 +282,13 @@ final class Tui
      * @param string|null $theme      `'dark'`, `'light'`, `'mono'`; null: the one for the terminal's background (`TUI_THEME` is for `run()` and `inline()`)
      * @param string|null $background what the terminal says its background is: `'dark'`, `'light'`, null for nothing (see `FakeTerminal`)
      * @param array<string, \Closure|string|array<int|string, mixed>> $keys as for `run()`
+     * @param int    $fps    as for `run()`
+     * @param string $images the image protocol the terminal has: `'none'`, `'kitty'`, `'iterm2'` (see `FakeTerminal`)
      */
-    public static function headless(Element|\Closure $root, int $cols = 80, int $rows = 24, bool $inline = false, ?string $theme = null, ?string $background = 'dark', array $keys = []): FakeTerminal
+    public static function headless(Element|\Closure $root, int $cols = 80, int $rows = 24, bool $inline = false, ?string $theme = null, ?string $background = 'dark', array $keys = [], int $fps = 60, string $images = 'none'): FakeTerminal
     {
-        $terminal = $inline ? FakeTerminal::inline($cols, $rows, background: $background) : new FakeTerminal($cols, $rows, background: $background);
+        $terminal = $inline ? FakeTerminal::inline($cols, $rows, background: $background, images: $images) : new FakeTerminal($cols, $rows, background: $background, images: $images);
+        $terminal->setFrameRate($fps);
         self::starting(fn() => self::start($root, $terminal, $theme, $keys));
         return $terminal;
     }
@@ -317,13 +321,15 @@ final class Tui
      *
      * @param array<string, mixed> $keys
      */
-    private static function until(?TerminalDevice $device, Element|\Closure $root, ?string $theme, array $keys, bool $inline = false): Component
+    private static function until(?TerminalDevice $device, Element|\Closure $root, ?string $theme, array $keys, bool $inline = false, int $fps = 60): Component
     {
-        return \fiber\run(static function () use ($device, $root, $theme, $keys, $inline): Component {
+        $device?->setFrameRate($fps);
+        return \fiber\run(static function () use ($device, $root, $theme, $keys, $inline, $fps): Component {
             // (this coroutine waits for the program and disposes it whatever happens: it owns it)
             if ($device === null) {
                 [$cols, $rows, $seconds] = self::headlessSize();
                 $terminal = $inline ? FakeTerminal::inline($cols, $rows) : new FakeTerminal($cols, $rows);
+                $terminal->setFrameRate($fps);
                 $app = Internal\Runtime::owned(fn() => self::start($root, $terminal, $theme, $keys));
                 try {
                     \fiber\sleep($seconds);

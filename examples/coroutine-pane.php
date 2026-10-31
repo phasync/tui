@@ -11,16 +11,20 @@
  * writes with `$surface->write()` instead. Either way its colors, `\r` progress bars and cursor
  * movement render as in a terminal, because the pane is one.
  *
- * Built from the lower layers only (no components): surfaces, a Split, a Pty, a Tty.
- * Ctrl-B Tab switches pane (or click one), Ctrl-B q quits.
+ * Built from the lower layers only (no components): surfaces, a Split in a Stack, a Pty, a Tty.
+ * The bottom line shows the keys: Ctrl-B Tab switches pane (or click one), Ctrl-B q or
+ * Ctrl-B Ctrl-Q quits. When the shell exits, a goodbye with its exit status floats over the
+ * panes for three seconds (a window on top of the Stack), then the program ends.
  */
 
 require __DIR__ . '/../vendor/autoload.php';
 
+use phasync\Tui\Ansi;
 use phasync\Tui\Color;
 use phasync\Tui\Key;
 use phasync\Tui\Pty;
 use phasync\Tui\Split;
+use phasync\Tui\Stack;
 use phasync\Tui\Style;
 use phasync\Tui\Surface;
 use phasync\Tui\Tty;
@@ -35,28 +39,43 @@ fiber\run(function () use ($tty) {
     $root = new Surface();
     $shell = new Surface();
     $php = new Surface();
-    $root->setLayout(Split::horizontal()->add($shell)->add($php));
-    $focus = Style::of(Color::CYAN, attrs: Style::BOLD);
-    $root->host($shell)->setBorder(true, focusStyle: $focus)->setTitle('shell');
-    $root->host($php)->setBorder(true, focusStyle: $focus)->setTitle(Surface::canCaptureOutput() ? 'php: echo' : 'php: $surface->write()');
+    $help = new Surface(80, 1);
+    $panes = Split::horizontal()
+        ->add($shell, title: 'shell')
+        ->add($php, title: Surface::canCaptureOutput() ? 'php: echo' : 'php: $surface->write()');
+    // the panes over the help line; the stack floats windows over both (the goodbye)
+    $stack = (new Stack())->add(Split::vertical()->add($panes)->add($help, 1));
+    $root->setLayout($stack);
     $root->setFocusOnClick(true);
+    $showHelp = function (bool $prefix) use ($help): void {
+        $keys = $prefix ? 'Tab switch  q quit  Ctrl-Q quit  Ctrl-B send Ctrl-B' : 'Ctrl-B Tab switch  Ctrl-B q quit  Ctrl-B Ctrl-Q quit';
+        $help->write("\e[?25l\e[H\e[2K" . Ansi::styled(" $keys", Style::of(Color::BRIGHT_BLACK)));
+    };
+    $help->on('resize', fn() => $showHelp(false));
+    $showHelp(false);
 
     $prefix = false;
-    $root->on('key', function (Key $key) use (&$prefix, $root, $tty) {
+    $root->on('key', function (Key $key) use (&$prefix, $root, $tty, $showHelp) {
         if ($prefix) {
             $prefix = false;
+            $showHelp(false);
             match (true) {
                 $key->is('tab') => $root->focusNext(),
-                $key->is('q') => $tty->detach(),
+                $key->is('q'), $key->is('ctrl+q') => $tty->detach(),
                 $key->is('ctrl+b') => $root->focused()?->dispatch($key),
                 default => null,
             };
             return true;
         }
-        return $prefix = $key->is('ctrl+b');
+        $prefix = $key->is('ctrl+b');
+        if ($prefix) {
+            $showHelp(true);
+        }
+        return $prefix;
     });
 
     $tty->attach($root);
+    $shell->focus();
     $pty = Pty::start(getenv('SHELL') ?: '/bin/sh', $shell);
 
     $php->run(function (Surface $pane) use ($tty) {
@@ -79,6 +98,21 @@ fiber\run(function () use ($tty) {
                 fiber\sleep(0.05);
             }
         }
+    });
+
+    // the shell exited (or the program quit, which hangs it up): say goodbye, then end
+    fiber\go(function () use ($pty, $tty, $stack) {
+        $code = fiber\await($pty->exited());
+        if (!$tty->isAttached()) {
+            return;
+        }
+        $bye = new Surface(38, 3);
+        $bye->write("\e[?25l\r\n  The shell exited with status \e[1m$code\e[0m.");
+        $stack->add($bye, width: 40, height: 5, title: 'goodbye');
+        for ($i = 0; $i < 30 && $tty->isAttached(); $i++) {
+            fiber\sleep(0.1);
+        }
+        $tty->detach();
     });
 
     $tty->wait();
