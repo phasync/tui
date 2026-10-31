@@ -171,7 +171,7 @@ final class FakeTerminal extends TerminalDevice
         return $out;
     }
 
-    /** The screen as text (see `Surface::text()`), after drawing what is pending. */
+    /** The screen as text (see `Surface::text()`), after drawing what is pending (pending renders included, see `refresh()`). */
     public function text(): string
     {
         $this->refresh();

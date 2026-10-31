@@ -26,6 +26,11 @@ use phasync\Tui\Viewport;
  * on when it cannot scroll further, to move to the next field). Without a size of its own it
  * is as high as its content (`measure()`), so it only scrolls when its box is smaller: in a
  * dialog shrunk to a small terminal, for instance.
+ *
+ * Content that does not fit is cropped, never squeezed: it is laid out at the height it needs
+ * (content with a part that takes any room, an `Editor` without `maxLines`, at least as high as
+ * its parts need), so a `Box` around a field stays whole. A focused field comes into view with
+ * the largest window around it that holds no other field and fits (its `Box`).
  */
 class ScrollView extends Component
 {

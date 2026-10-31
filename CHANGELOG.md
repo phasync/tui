@@ -1,5 +1,83 @@
 # Changelog
 
+## 0.0.2-beta5 (2026-10-31)
+
+Frames cost a fraction of what they did, the focus follows into every kind of tab, and a
+dialog taller than the terminal scrolls instead of squeezing its fields. Everything from
+0.0.2-beta4 works as before, except where an entry says what changed.
+
+**Faster**
+
+- A program that re-renders a big tree no longer eats a core. A component rendering a `Column`
+  of 50 `Row([Text, Text])` that changes a counter in one `Text` at 10 Hz took about 44 ms of
+  CPU a frame (44% of a core); it takes about 1.3 ms (about 1.3%). A 50-row monitor with a
+  component per row (a `ProgressBar`, two `Text`s and two `Button`s) whose rows tick at 10 Hz
+  went from a whole core to about 20% with one row in twenty changing (most of the rest is the
+  runtime waking 50 coroutines ten times a second), and its key-to-screen latency from 47 ms
+  (spikes to 97 ms) to under 1 ms (at most about 10 ms). What changed: styles are computed once
+  per question; the windows, layouts and measures of what did not change are kept from frame to
+  frame; a render that returns the same tree keeps its layout and paint; a component's measure
+  stands until it renders, so a parent does not measure its unchanged rows again; a child that
+  re-renders at the same size does not make its parent lay out again; text runs are written
+  and parsed as runs; the focus is settled only when it may have moved; the timed waits of all
+  coroutines share one clock (fifty rows sleeping 0.1 s wake in one frame). docs/surface.md,
+  "Performance", has the numbers and what to do when a tree is big.
+
+**Fixed**
+
+- Tabs whose content is an element tree holding components (`Row([$select, new Box($tree)])`)
+  no longer lose the focus: going to such a tab by key (Ctrl-Tab, Alt-number), by `select()` or
+  by mouse while the focus is in the content gives it to the first component that takes keys,
+  and the components in it keep their state while the tab is hidden (they were disposed, and
+  showing the tab again failed with "was disposed"). A tab with nothing to focus in it gives the
+  focus to the bar, so Ctrl-Tab goes on from there.
+- A dialog taller than the terminal no longer squeezes its fields: what does not fit is cropped
+  and scrolls, a `Box` around a field stays three rows (it showed as its top and bottom border
+  with nothing between, so the focused field was invisible and Down opened nothing), also with a
+  field that takes any room (an `Editor` without `maxLines`) in the form. Giving a field the
+  focus brings its whole `Box` into view, border and title included. A dropdown opened from a
+  field of a scrolled dialog opens under the row the field is shown on (keys going through the
+  dialog's scroll area no longer scroll it to its bottom for a moment, which closed the list at
+  once).
+- In a `Column` or `Row`, an item whose content fits is no longer squeezed to give a sibling
+  that fills the room more: when all the `'auto'` items fit with what the filling ones need at
+  least, they get what they need (a 15-row text above a `Log` in 24 rows gets 15, not 12).
+  When they do not all fit, the room is shared as before.
+- `freeze()` keeps the final row: it draws what is pending first, so the row frozen right after
+  the last `setValue()` shows that value (it showed the frame before, 75% instead of 100%,
+  unless the program slept first). `FakeTerminal::text()`, `region()` and `refresh()` draw the
+  pending renders first too.
+- A component made with `child('log')` and given to `Tabs` as a tab's content stays the
+  owner's: `child('log')` keeps returning it while its tab is hidden, and it is stopped when
+  its tab goes. docs/widgets.md says whose a tab's components are.
+- A public method of a component named like a private one of the library (`key()`, `end()`)
+  is bound to its key like any other (it was ignored, or the library's own ran).
+- `focus()` on a component that is not started yet takes effect when it starts.
+
+**Added**
+
+- `Component::device()`: the terminal device the component's tree is shown on, also one that
+  `Tui::run()`, `Tui::inline()` or `Tui::headless()` made, so a program started by the runner
+  can `println()` and `freeze()` (`$this->device()?->println('copied a.txt')`).
+  `TerminalDevice::of($root)` is the same for a root surface.
+- `Tabs::content($key)`: what a tab shows (its running component, or its element).
+- `Viewport::setFollowOnInput(false)`: a window that keeps its scroll position when keys go
+  through it (as a `ScrollView`'s does).
+
+**Changed**
+
+- The methods of `Component` that the library relies on are `final` (`children()`, `focus()`,
+  `child()`, `on()`, `style()`, `device()` and the others in the docs' method table; the hooks
+  such as `render()`, `mount()`, `onKey()`, `measure()` and `bindings()` are not). A component
+  that declared one of them for itself silently broke the library before; it now fails where it
+  is declared, with "Cannot override final method phasync\Tui\Component::children()". Rename
+  the method.
+- `Component::measure()` is asked once per room until the component is marked for a render or
+  renders: compute it from what goes with a render (state, props, style). One that read
+  something else that changes without a render should call `requestRender()` when it changes.
+- fiber-interop/api and fiber-interop/phasync are still required at their development
+  branches (0.3.x-dev, 0.4.x-dev): no versions newer than 0.3.1 / 0.4.1 are tagged yet.
+
 ## 0.0.2-beta4 (2026-10-31)
 
 Nothing hangs silently any more, overlays in dialogs survive resizes, and two contributed

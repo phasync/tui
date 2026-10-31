@@ -214,9 +214,12 @@ stylesheet (`width`, `height`), and `max-width`/`max-height` cap an `'auto'` siz
 with `max-height: 10` takes up to ten rows). When a component's `measure()` changes (an
 editor grew a line), its parent lays the tree out again by itself.
 
-The room is given out in this order: fixed sizes (cells, percentages) first; then the `'auto'`
-and `'1fr'` items share the rest, **each `'auto'` item getting what it needs, but no more than
-a `'1fr'` share** while others still need room. So an item that needs little gets exactly that,
+The room is given out in this order: fixed sizes (cells, percentages) first; then, **when
+every `'auto'` item fits with what its siblings that take any room need at least** (one row each
+for a field that fills, its parts for a container), the `'auto'` items get what they need and the
+`'1fr'` items share what is left. When they do not all fit, the `'auto'` and `'1fr'` items share
+the rest, **each `'auto'` item getting what it needs, but no more than a `'1fr'` share** while
+others still need room. So an item that needs little gets exactly that,
 and one whose content is larger than the room (a `Table` of 10,000 rows, a one-line `Editor`
 that measures as wide as it is given) acts as `'1fr'` and leaves its siblings theirs: a `Help`
 line under such a table keeps its row, a `Text(width: 20)` beside such a field is drawn. Give
@@ -344,6 +347,15 @@ remedies, both in the rule above: give the child a **callback** made in the pare
 (`new Tabs($tabs, onChange: fn() => null)`: the parent renders after its closure ran, whatever
 it does), or **listen** to the child's event (`$tabs->on('change', fn() => $this->requestRender())`,
 for a child made by someone else). Every widget says which callbacks and events it has.
+
+**Where a coroutine lives decides what renders.** A step of a coroutine renders the component
+the coroutine belongs to, with its whole tree. A monitor whose parent runs one `go()` loop per
+job and keeps the jobs in its own state renders all fifty rows on every step of every job; the
+same monitor with a component per row whose coroutine (its `run()`, or a `go()` of the row)
+updates the row's own state renders one row per step, and the parent not at all (a row whose size
+did not change does not make the parent lay out again). So: state in the row, the row's
+coroutine in the row, and a parent that only lists its rows. See "Performance" in
+[surface.md](surface.md#performance) for what a frame costs.
 
 `$state->set(count: 0, label: 'x')` assigns several properties at once. A write of the value a
 property has already renders nothing; a write of a wrong type is a `TypeError` as for any typed
@@ -681,6 +693,13 @@ panes this way.
 
 ## Methods
 
+The methods of the library are `final` (all in the table that are not hooks to override:
+`render()`, `mount()`, `run()`, `measure()`, `onKey()` and the other hooks of "Hooks to
+override", `canFocus()`, `wantsPointer()`, `bindings()`): a method of yours with the name of one
+fails where it is declared ("Cannot override final method"), not somewhere at run time. A name
+the library uses privately (`key()`, `end()`) is free: a public `key()` of yours is bound like
+any other method.
+
 | Method | What it does |
 |---|---|
 | `surface` | The component's surface (readonly; set by `start()`). |
@@ -691,13 +710,14 @@ panes this way.
 | `stopped(): object` | An awaitable that resolves on disposal. |
 | `requestRender()` | Ask for a render in the next frame (batched). Rarely needed: see "State: rendering by itself". |
 | `with(key:, id:, class:, style:, width:, height:, disabled:): static` | Set element attributes (see "Element trees"); returns the component. `attribute(string $name)` reads one. |
-| `measure(int $cols, int $rows): ?array` | The size it needs as `[cols, rows]`, or null to take what it is given; for `'auto'` sizes. By default the size of the element tree its last render returned (null for one that draws itself); override it in a component that draws itself and knows its size. |
+| `measure(int $cols, int $rows): ?array` | The size it needs as `[cols, rows]`, or null to take what it is given; for `'auto'` sizes. By default the size of the element tree its last render returned (null for one that draws itself); override it in a component that draws itself and knows its size. The answers are remembered until the component is marked for a render (a state write, a handler, `requestRender()`) or renders, so compute it from what goes with a render: state, props, style. |
+| `device(): ?TerminalDevice` | The terminal device its tree is shown on (`Tty`, `FakeTerminal`, also one `Tui::run()`, `Tui::inline()` or `Tui::headless()` made), or null when the tree is not attached: `$this->device()?->println('done')`, `freeze()`. |
 | `style(string\|array\|null $part = null, string ...$states): ComputedStyle` | Its look from the stylesheet in its current states, or that of a part, or of several parts composed (innermost last; see "Stylesheets"). |
 | `stylesheet(): Stylesheet` / `setStylesheet(Stylesheet $s)` | The stylesheet in force (its own, else its parent's, else the default); set one for the subtree. |
 | `bind(array $bindings, ?string $for = null): static` | Change the keys of this component, or of every component of class `$for` below it (see "Key bindings"). `bindingsInForce()` lists the keys in force. |
 | `types(): array` | The type names it matches in a stylesheet (its class's short name and its parents'). |
 | `focusNext(bool $wrap = true): bool`, `focusPrevious(bool $wrap = true): bool` | Move the focus to the next (previous) field inside it, around; with `$wrap` false, false at the last (first) one so the key goes on. Bind them to Tab and Shift-Tab. |
-| `focus()` | Give it the focus, and through it to the descendant it focused (see "Focus" above): every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). It takes effect at once, for the very next key, also for a component not shown yet (a dialog created in a key handler, shown by the render that follows). The focus stays with it through every re-render, also one that moves it into a different nested layout; when it is no longer shown, the component focused before it gets the focus back. |
+| `focus()` | Give it the focus (on a component not started yet: when it starts), and through it to the descendant it focused (see "Focus" above): every host from the root down focuses the way to it, components or plain surfaces or nested layouts (see `Surface::focus()`). It takes effect at once, for the very next key, also for a component not shown yet (a dialog created in a key handler, shown by the render that follows). The focus stays with it through every re-render, also one that moves it into a different nested layout; when it is no longer shown, the component focused before it gets the focus back. |
 | `hasFocus(): bool` | True if keys go to it or through it to a descendant, also while it is not shown yet: it follows the path the keys take. False once disposed. |
 | `on(string $event, Closure $listener): Closure` | Listen to an event of the component (the built-ins document theirs: `Log` and `ListView` emit `scroll`); returns a function that removes the listener. See "Showing another component's state". |
 | `parent(): ?Component` | The parent, null for a root. |

@@ -212,3 +212,36 @@ the text in your component, and on every render (which runs after each resize) w
 
 About 5 MB/s of plain text and 1.5-2 MB/s of heavily coloured output on PHP 8.5 without JIT:
 far more than a terminal program produces.
+
+### What a frame of components costs
+
+Measured on PHP 8.5 without JIT, FakeTerminal 120x60 (`tests/Benchmark/RenderCostTest.php`
+holds the budgets, with 10x headroom):
+
+| What | Cost |
+|---|---|
+| A component rendering a `Column` of 50 `Row([Text, Text])` (about 150 elements) in which one `Text` changed: render, layout, paint, compose, draw | about 1.3 ms of CPU a frame; at 10 Hz about 1.3% of a core |
+| The same tree rendered again unchanged (the render returns an equal tree) | the `render()` call and a comparison of the trees: the layout, the windows and the paint stand |
+| One `Text` changes in that tree | one surface painted; nothing measured again but the row it is in (a component in an unchanged row is not measured: its answer stands until it renders) |
+| A row that is a component of its own changes its state | that row renders, measures and paints; the parent does not render (the row's size did not change) |
+| A changed row of a `ProgressBar`, two `Text`s and two `Button`s, 4 levels of surfaces deep | about 0.7-1 ms (the writes and their parsing at each level up to the screen, its layout) |
+| A key to the screen, with 50 such rows ticking at 10 Hz | median under 1 ms, at most about 10 ms |
+
+**Budget.** A few hundred elements of which a few change make a frame of one or two
+milliseconds. What costs is what changed, times the levels of surfaces it is composited
+through: a frame is cheap when little in it changed, whatever the size of the tree.
+
+**When a tree is big:**
+
+- **A component per row, state in the row.** A change renders the row, not the list; a
+  coroutine that updates a row belongs in the row (a `go()` of the parent renders the parent and
+  all its rows on each step, see "State: rendering by itself" in
+  [components.md](components.md#state-rendering-by-itself)).
+- **Keep what does not change the same.** A `render()` that returns the same tree as before
+  costs almost nothing; one that changes a counter in one `Text` repaints that `Text`.
+- **Fewer coroutines that wake.** Each wake of a coroutine is a step that renders its component.
+  Fifty rows each sleeping 0.1 s are 500 wakes a second, which the runtime pays for apart from
+  the render (on the phasync adapter about 20% of a core for 50 rows ticking at 10 Hz when one
+  row in twenty changes, most of it the loop and the fiber switches; about 50-60% when every row
+  changes on every tick). Wake at the rate the screen needs (2-4 Hz for a progress display),
+  or let one coroutine update the rows' states.

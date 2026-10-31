@@ -3,21 +3,62 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
-## Status (0.0.2-beta5; TODO-0.0.2-beta5.md) — in progress
+## Status (0.0.2-beta5; TODO-0.0.2-beta5.md)
 
-- [ ] 1. Render cost: done so far (commits 624ba14, a9a05e6): Stylesheet memo, Tree item and
-      layout reuse, ElementLayout keeps placed windows, measure by the built items, focus
-      settled only when it may move, hasFocus cache, one frame coroutine, Host viewports by
-      surface and only stale windows composed, grammar: one-terminal CSI, no item probes at
-      the end; showsAgain() (same tree = no layout), pen written only when needed, shared
-      clock for Signal timeouts, mouse-wanting surfaces registry, one-cell runs stored at once.
-      Numbers (this machine, FakeTerminal 120x60): flat 50x Row[Text,Text] 6.5 ms -> 1.4 ms per
-      frame; monitor of 50 row components at 10 Hz: 91% -> 55% of a core when every row changes
-      every tick, 43% -> 17% when one row in 20 changes; key latency 55 ms -> < 5 ms.
-      Left: tests (timing, work count), docs/surface.md "Performance".
-- [ ] 2. Tabs focus into element content
-- [ ] 3. Dialog taller than the terminal
-- [ ] 4. small items
+All items of TODO-0.0.2-beta5.md done, in CHANGELOG.md; tests green with and without
+ext-phasync (fiber-interop/api 0.3.x-dev and fiber-interop/phasync 0.4.x-dev: still no tags
+newer than 0.3.1 / 0.4.1, so the dev pins stay).
+
+- [x] 1. Render cost (624ba14, a9a05e6, 3946cc2): Stylesheet::compute() memo, Tree items and
+      ElementLayouts reused by path and signature, ElementLayout keeps placed windows, measure
+      by the built items, LayoutItem::natural() memo, Component::measureFor() remembered until
+      markDirty()/render, focus settled only when it may move, hasFocus() cache, one frame
+      coroutine, Host composes only stale windows, one-terminal CSI in the grammar, runs of
+      single-width cells printed at once, showsAgain() (an equal tree keeps layout and paint),
+      Signal timeouts on one shared clock. Numbers (FakeTerminal 120x60): flat 50x
+      Row[Text,Text] 44 ms (TODO's machine) / 6.5 ms (beta4 here) -> 1.3 ms a frame; monitor
+      of 50 row components at 10 Hz: ~20% of a core with one row in 20 changing, 50-60% with
+      every row every tick; key latency < 1 ms median. tests/Benchmark/RenderCostTest.php
+      (100 frames < 1.5 s CPU; one Text changing paints 1 surface, measures <= 1 probe, the
+      parent of a row component does not render); docs/surface.md "Performance".
+- [x] 2. Tabs: components inside element contents kept (tabComponents()) and focused
+      (focusContent(): first canFocus(), else first; else the bar); content($key);
+      tests/Widgets/TabsFocusTest.php (both shapes, keys, select(), click, child() ownership).
+- [x] 3. Tall dialogs (a71ea0e): LayoutItem::least()/ElementLayout::least()/
+      Component::leastRows() give the fewest rows content needs, ScrollView sizes its content
+      at least that; Size::distribute() gives 'auto' items their need when all fit with the fr
+      items' least; ScrollView::follow() shows the largest frame around the focused field that
+      holds no other field; Viewport::setFollowOnInput(false) for the ScrollView's window;
+      tests/Widgets/DialogTallTest.php (80x14, 80x16, 40x12, scrolled dropdown, 80x30->80x14).
+- [x] 4. Component::device() / TerminalDevice::of(); Surface::flush() (pending renders before
+      freeze()/refresh()/text()); child() given to Tabs stays the owner's (heldBy); final
+      library methods, bindings invoked by reflection (a user's key()/end()); focus() before
+      start(); docs/components.md on where a coroutine lives; tests/Component/SmallBeta5Test.php.
+
+## Design decisions (0.0.2-beta5)
+
+- **Least height, not a minimum attribute.** A ScrollView must not squeeze, but its content
+  may hold something that takes any room (measure null), which made the whole content measure
+  null and get laid out at the view's height. `least()` walks the items: a known measure is its
+  height, a container sums (Column) or maxes (Row, Layers) its items' least, a component asks
+  its built tree (leastRows()), a filling leaf is one row. A component whose least changes
+  after a render relayouts its parent like a changed measure.
+- **Distribution when it fits.** The old rule capped 'auto' items at a fair share even when
+  the room sufficed for all of them, so a 3-row Box beside a filling Editor got 2 rows. Now the
+  fair-share rule only applies when the auto needs plus the fr items' least do not fit.
+- **A measure stands until a render.** Component::measureFor() caches per room and is cleared
+  by markDirty() and after each render pass; the size check after a render uses it too. The
+  contract: measure() depends on what goes with a render. This is what keeps a parent's render
+  from measuring fifty unchanged row components.
+- **Typing follows the bottom, except in a ScrollView.** Host::route() makes a viewport follow
+  the source's bottom on keys (terminal behaviour). The ScrollView's window was thereby at its
+  bottom between a key and the next arrange, and an overlay anchored then saw its field
+  outside the view and closed. The window now opts out (Viewport::setFollowOnInput(false)).
+- **Finding (fiber\ costs):** on the phasync adapter `fiber\await($d, $timeout)` costs about
+  4x a `fiber\sleep()` and `fiber\go()` about 30-45 µs; 50 coroutines each with a timed wait
+  per tick dominated the monitor's idle cost. Worked around inside the API: Signal keeps one
+  clock coroutine for all timed waits (a static deadline list), waits are plain Deferreds.
+  The remaining idle cost of 500 wakes/s is the runtime's loop and fiber switches.
 
 ## Status (0.0.2-beta4; TODO-0.0.2-beta4.md)
 

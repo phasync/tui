@@ -452,6 +452,15 @@ to the next field). Without a size it is as high as its content, so it only scro
 is smaller. `top()`, `scrollTo(int $row)`, `scrollBy(int $rows): bool`. A `Dialog` puts its
 content in one, and so does an overlay of a plain element.
 
+**Cropped, never squeezed.** Content that does not fit is laid out at the height it needs and
+cropped by the view: a `Box` around a one-line field stays three rows (border, field, border)
+and scrolls. Content with something that takes any room (an `Editor` without `maxLines`, a
+`Log`) is as high as its parts need at least, one row for each such thing (so a form with a
+notes field still scrolls instead of shrinking its boxes to their borders). Giving a field the
+focus brings it into view with what frames it: the largest window around it that holds no other
+field and fits the view (its `Box`, with the border and the title). A dropdown opened from a
+field of a scrolled view opens under the row where the field is shown.
+
 ## Tabs
 
 A tab bar (top or bottom) and one content per tab: panes of a workspace, open files, shells.
@@ -481,18 +490,34 @@ and lives until its tab goes (it is a kept child, see [kept-alive children](comp
 hidden, it is not laid out but it is not stopped either; `setTabs()` without it stops it. A
 `Terminal` in a hidden tab goes on running and receiving output (it starts when its tab is
 first shown, because a terminal starts when it is sized); an `Editor` keeps its text, a `Log`
-goes on collecting. A content that is a plain element is built into the tree while its tab is
-shown (an element is rebuilt on every render anyway).
+goes on collecting. A content that is an element tree holding components
+(`Row([$select, new Box($tree)])`) keeps them the same way: the components in it are kept
+children of the tabs, alive while their tab is hidden; the elements around them are built while
+the tab is shown.
+
+**Whose the components are.** A component made by the tabs from the props (`new Log()` in the
+array) is the tabs': `content($key)` returns it, and it is stopped when its tab goes. A
+component you made with `child()` and gave as a content stays yours: the tabs show it and keep it
+running while its tab is hidden, `child('log')` in your component returns it all the time, and
+when its tab goes the tabs let go of it (a `child()` of yours that no render shows any more is
+stopped then, as always).
+
+**The focus follows into a tab.** Going to a tab while the focus is in the content (by key,
+by `select()`, Alt-number) gives the focus to the first component of the new content that takes
+keys itself (`canFocus()`), whatever elements wrap it, else to its first component; a tab with no
+component in it gives the focus to the bar. So Ctrl-Tab from a shell in tab B to a tab A of
+`Row([$select, Box($tree)])` lands in the `Select`, and Ctrl-Tab back lands in the shell.
 
 | Method | What it does |
 |---|---|
 | `tabs(): array` | The keys, in order. |
+| `content(string $key): Component\|Element\|null` | What a tab shows: the running component for a component content (the tabs' own or the one you gave), the element for an element content; null for an unknown key. |
 | `current(): ?string` | The current key; null without tabs. |
 | `select(string $key): bool` | Make a tab current (the focus follows when it was in the content); false for an unknown key. |
 | `next()`, `previous()` | The actions of Right/Left (false at the ends, so the key goes on). |
 | `setTabs(array $tabs, ?string $current = null)` | Add, remove, reorder and rename. The current tab stays **by key**; if it is gone the tab at its place takes over (a `change`). Components of tabs that went are disposed, the others keep their state. |
 | `close(string $key): bool`, `closeCurrent()` | As the `×` and Delete do (see `$onClose`). |
-| `focusContent()`, `focusBar()`, `inContent(): bool` | Move the focus into the shown content or back to the bar; where it is. |
+| `focusContent()`, `focusBar()`, `inContent(): bool` | Move the focus into the shown content (its first component that takes keys, see above) or back to the bar; where it is (true when any component of the content has it). |
 
 **Keys.** On the bar: Left/Right, Home/End change tab (not around), Tab or Enter move the
 focus into the shown content (a content with nothing to focus keeps it on the bar), Delete

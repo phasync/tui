@@ -51,7 +51,8 @@ fiber\run(function () use ($tty) {
 | `detach()` | Give the terminal back: modes off, main screen, cursor shown, settings restored. Its coroutines end, and the root is closed (`Surface::close()`), which disposes a component on it. Safe to call twice. |
 | `isAttached(): bool`, `root(): ?Surface` | |
 | `wait()` | Wait until `detach()` (returns at once when not attached). |
-| `refresh()` | Draw what changed now instead of at the next frame. |
+| `refresh()` | Draw what changed now instead of at the next frame: the renders that are pending run first. |
+| `TerminalDevice::of(Surface $root): ?TerminalDevice` | The device a root is attached to, or null. A component reaches its own with `$this->device()`. |
 | `size(): array` | The terminal's size as `[cols, rows]`. |
 | `hasKittyKeyboard(): bool` | True once the terminal answered the kitty keyboard query. |
 | `supportsHyperlinks(): bool` | True if the terminal shows OSC 8 hyperlinks, so the device writes the cells' links (see below). |
@@ -132,13 +133,15 @@ second formatting for `println()`:
 ```php
 // in the component's coroutine, when a job ends
 $this->state->done[$job] = 1.0;
-$this->sleep(0);                                  // the render that shows 100% runs meanwhile
-$this->tty->freeze($this->child("job:$job")->surface);
+$this->device()?->println("copied $job");
+$this->device()?->freeze($this->child("job:$job")->surface);    // the row as it shows 100%
 unset($this->state->done[$job]);                  // the next render leaves it out
 ```
 
-`freeze()` takes the rows as the root shows them at the call, so let the render that drew the
-final state run first (renders come in the next frame).
+`freeze()` takes the rows as the root shows them after the renders that are pending ran, so
+the row it keeps is the one the last state change drew (100%, not the 75% of the frame before).
+`device()` is the device the component's tree is shown on, also one that `Tui::inline()` or
+`Tui::headless()` made, and null once the tree is no longer attached.
 
 | Method | What it does |
 |---|---|
@@ -146,6 +149,9 @@ final state run first (renders come in the next frame).
 | `FakeTerminal::inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true)` | An in-memory terminal in inline mode, for tests. |
 | `FakeTerminal::frozen(): string` | The text above the region (the terminal's scrollback first): the lines written above it as the root scrolled and by `println()`, as they were then, and what the terminal showed before. |
 | `FakeTerminal::region(): string` | The text of the live region (`''` when not attached). |
+
+`FakeTerminal::text()`, `region()` and `refresh()` draw what is pending first, renders
+included, so a test reads the screen as the next frame would show it.
 
 ## How a program ends
 

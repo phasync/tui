@@ -327,8 +327,6 @@ final class Copy extends Component
 {
     private float $done = 0.0;
 
-    public function __construct(private readonly TerminalDevice $tty) {}
-
     protected function render(): Element
     {
         return new Row([new Text('copying', width: 8), new ProgressBar($this->done)]);
@@ -338,7 +336,7 @@ final class Copy extends Component
     {
         foreach (['a.txt', 'b.txt', 'c.txt', 'd.txt'] as $i => $file) {
             $this->sleep(0.2);
-            $this->tty->println("copied $file");        // above the region, scrolled out with the rest
+            $this->device()?->println("copied $file");  // above the region, scrolled out with the rest
             $this->done = ($i + 1) / 4;
             $this->requestRender();
         }
@@ -346,8 +344,7 @@ final class Copy extends Component
     }
 }
 
-$tty = Tty::inline();
-fiber\run(fn() => (new Copy($tty))->start($tty));
+fiber\run(fn() => Tui::inline(new Copy()));          // or (new Copy())->start(Tty::inline())
 ```
 
 `examples/inline-progress.php` runs five jobs this way, or full screen with `--fullscreen`.
@@ -377,8 +374,10 @@ fiber\run(function () {
 });
 ```
 
-Renders come in the next frame: read the screen after `settle()`, not right after the input
-(and never `usleep()` in a coroutine: it stops the whole program, renders included).
+Renders come in the next frame: `settle()` lets the frames that input asked for run (keys
+and output may take a few). `text()` draws what is pending first, renders included, so it reads
+what the next frame shows. Never `usleep()` in a coroutine: it stops the whole program, renders
+included.
 
 ## Examples
 

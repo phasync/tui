@@ -114,7 +114,7 @@ it('runs the README\'s inline example: lines printed above a progress bar that s
     run(function () {
         $t = FakeTerminal::inline(40, 10);
         $t->surface->write("$ php copy.php\r\n");
-        (new Copy($t))->start($t);
+        (new Copy())->start($t);
         $t->run(function (FakeTerminal $t) {
             expect($t->waitFor('copied d.txt', 3))->toBeTrue();
             $t->wait();                                 // until the program ends
