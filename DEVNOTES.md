@@ -3,6 +3,18 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.3-beta2, in progress; TODO-0.0.3-beta2.md, SPEC 9.4-9.6)
+
+- [x] 1. Themes (b1a7326): Stylesheet::theme(dark|light|mono), Component::setTheme()/theme(),
+      TerminalDevice::background() (OSC 11 in the attach probe), FakeTerminal background:,
+      Tui theme:, dialog shadow (Viewport::setShadow), constructor args; tests/Release/ThemesTest.php
+- [ ] 2. Cookbook (docs/cookbook.md + tests)
+- [ ] 3. examples/dashboard.php under 60 lines + README opening + tests
+- [x] 4. freeze(): not reproduced in this tree; tests in the reported shapes (tests/Release/FreezeTest.php)
+- [x] 5. Variants on elements, min-width breakpoints, onFocus/onBlur (tests/Release/VariantsTest.php)
+- [x] 6. Small items (tests/Release/SmallTest.php)
+- [ ] docs (styling.md, components.md, widgets.md, terminal.md), CHANGELOG, tag
+
 ## Status (0.0.3-beta1; TODO-0.0.3-beta1.md, SPEC 9.1-9.3)
 
 All items of TODO-0.0.3-beta1.md done, in CHANGELOG.md. Tests green with and without

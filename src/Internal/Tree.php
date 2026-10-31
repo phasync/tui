@@ -17,6 +17,7 @@ use phasync\Tui\Layout;
 use phasync\Tui\Markup;
 use phasync\Tui\Stylesheet;
 use phasync\Tui\Surface;
+use phasync\Tui\TerminalDevice;
 use phasync\Tui\Text as TextUtil;
 
 /**
@@ -75,14 +76,22 @@ final class Tree
         $this->hovers = [];
         $this->focusing = [];
         $style = null;
-        if ($root instanceof Column || $root instanceof Row || $root instanceof Layers) {
+        // a root shown inline is as tall as its content (the region is), not the terminal
+        $inline = $this->owner->surface->viewport() === null && (TerminalDevice::of($this->owner->surface)?->isInline() ?? false);
+        if ($inline) {
+            $item = $this->item($root, 'r', $sheet, $base);
+            $layout = new ElementLayout(ElementLayout::COLUMN, $item === null ? [] : [$item], fill: $base->text);
+            $item ??= self::nothing();
+        } elseif ($root instanceof Column || $root instanceof Row || $root instanceof Layers) {
             // the root container arranges the component's own surface
             $style = $sheet->compute($root, $this->states($root, $this->owner->surface, 'r'), $base);
             if ($style->hoverAware) {
                 $this->hovers['r'] = $this->owner->surface;
             }
         }
-        if ($style !== null && !$style->hidden) {
+        if ($inline) {
+            // (laid out above)
+        } elseif ($style !== null && !$style->hidden) {
             $layout = $this->container($root, 'r', $sheet, $style);
             $item = $this->frame(new LayoutItem($this->owner->surface), $root, $style, 'auto', 'auto');
             $item->measure = self::containerMeasure($layout, $item->border === false ? 0 : 2);

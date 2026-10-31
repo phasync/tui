@@ -1,132 +1,59 @@
 <?php
 
-/**
- * A dashboard: graphs and boxes drawn with escape sequences from coroutines.
- *
- *     php examples/dashboard.php
- *
- * Each graph is a component whose coroutine samples a value a few times a second and redraws
- * a bar chart with `Ansi` (block characters, colors by level). The boxes are `Box` components,
- * the event list a `Log`, the header a `StatusBar`. q or Ctrl-C quits.
- */
+// The sixty-line dashboard: three jobs updated by coroutines, their events and the release
+// notes, styled with utility classes only, stacked under 80 columns. Ctrl-Q quits.
+//     php examples/dashboard.php [--inline] [--theme=dark|light|mono]
 
 require __DIR__ . '/../vendor/autoload.php';
 
-use phasync\Tui\Ansi;
-use phasync\Tui\Color;
-use phasync\Tui\Component;
-use phasync\Tui\Component\Box;
-use phasync\Tui\Component\Log;
-use phasync\Tui\Component\StatusBar;
-use phasync\Tui\Key;
-use phasync\Tui\Layout;
-use phasync\Tui\Split;
-use phasync\Tui\Style;
-use phasync\Tui\Text;
-use phasync\Tui\Tty;
+use phasync\Tui\Component\{Log, Markdown, ProgressBar, Spinner};
+use phasync\Tui\Element\{Box, Column, Help, Row, Text};
+use phasync\Tui\{State, Tui};
 
-/** A bar chart of the last values of a sampled number. */
-final class Graph extends Component
-{
-    private const BLOCKS = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    /** @var list<float> */
-    private array $values = [];
+$jobs = ['build' => 0.07, 'test' => 0.15, 'deploy' => 0.4];          // seconds per step
+$s = new State(['done' => array_map(fn() => 0.0, $jobs), 'runs' => array_map(fn() => 0, $jobs), 'steps' => array_map(fn() => [], $jobs)]);
+$log = new Log();
+$notes = new Markdown(<<<'MD'
+    # Release 2.4
+    - **Faster** start-up, half the memory
+    - `--json` output for every command
+    - Wide characters line up: 日本語 ✓
+    > Thanks to everyone who reported bugs!
+    MD);
+$spark = fn(array $steps) => implode('', array_map(fn(float $v) => mb_substr(' ▁▂▃▄▅▆▇█', (int) min(8, $v * 9), 1), $steps));
+$box = fn(string $job) => new Box(new Column([
+    new ProgressBar(fn() => $s->done[$job], label: '{percent}'),
+    new Text(fn() => "<dim>run</dim> {$s->runs[$job]}  <span class=\"text-accent\">{$spark($s->steps[$job])}</span>"),
+]), "<b>$job</b>", class: 'grow px-1 hover:border-accent');
+$boxes = fn() => new Row(array_map($box, array_keys($jobs)), class: 'flex-col md:flex-row md:gap-1');
+$screen = fn() => new Column([
+    new Row([new Spinner('<b>deploying</b> v2.4'), new Text('staging · eu-west', class: 'grow text-right text-muted')], class: 'px-1'),
+    $boxes(),
+    new Row([new Box($log, 'events', class: 'grow'), new Box($notes, 'release notes', class: 'grow px-1')], class: 'grow flex-col md:flex-row md:gap-1'),
+    new Help(class: 'px-1'),
+]);
 
-    /** @param \Closure(): float $sample a value between 0 and $max */
-    public function __construct(private readonly \Closure $sample, private readonly float $max, private readonly string $unit, private readonly float $interval = 0.25)
-    {
-    }
-
-    protected function run(): void
-    {
-        do {
-            $this->values[] = ($this->sample)();
-            $this->values = array_slice($this->values, -500);
-            $this->requestRender();
-        } while ($this->sleep($this->interval));
-    }
-
-    protected function render(): ?Layout
-    {
-        $cols = $this->surface->cols();
-        $rows = $this->surface->rows();
-        $values = array_slice($this->values, -$cols);
-        $values = array_pad($values, -$cols, null);
-        $out = "\e[?25l\e[0m\e[H";
-        for ($y = 0; $y < $rows; $y++) {
-            $out .= Ansi::moveTo(0, $y);
-            $pen = null;
-            foreach ($values as $v) {
-                if ($v === null) {
-                    $out .= ' ';
-                    continue;
+$theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
+\fiber\run(function () use ($jobs, $s, $log, $screen, $boxes, $theme, $argv) {
+    $running = true;
+    foreach ($jobs as $job => $every) {
+        \fiber\go(function () use ($job, $every, $s, $log, &$running) {
+            while ($running) {
+                \fiber\sleep($every * (0.5 + mt_rand() / mt_getrandmax()));
+                $step = mt_rand(2, 12) / 100;
+                $s->steps = [...$s->steps, $job => [...array_slice($s->steps[$job], -23), $step * 8]];
+                $s->done = [...$s->done, $job => min(1.0, $s->done[$job] + $step)];
+                if ($s->done[$job] >= 1.0) {
+                    $s->runs = [...$s->runs, $job => $s->runs[$job] + 1];
+                    $log->append(date('H:i:s') . " <span class=\"text-success\">✓</span> $job #{$s->runs[$job]} done\n");
+                    $s->done = [...$s->done, $job => 0.0];
                 }
-                $level = max(0.0, min(1.0, $v / $this->max));
-                $eighths = (int) round($level * $rows * 8) - ($rows - 1 - $y) * 8;
-                $color = $level > 0.8 ? Color::RED : ($level > 0.5 ? Color::YELLOW : Color::GREEN);
-                if ($pen !== $color) {
-                    $out .= Ansi::fg($color);
-                    $pen = $color;
-                }
-                $out .= self::BLOCKS[max(0, min(8, $eighths))];
             }
-            $out .= "\e[0m";
-        }
-        $last = end($this->values);
-        $label = $last === false ? '' : sprintf(' %.2f %s ', $last, $this->unit);
-        $out .= Ansi::moveTo(max(0, $cols - Text::width($label)), 0) . Ansi::styled($label, Style::of(attrs: Style::INVERSE));
-        $this->surface->write($out);
-        return null;
+        });
     }
-}
-
-final class Dashboard extends Component
-{
-    private ?Log $events = null;
-    private int $samples = 0;
-
-    protected function render(): Layout
-    {
-        $style = Style::of(Color::BLUE);
-        $box = fn(string $key, string $title, \Closure $create) => $this->child($key, fn() => new Box($create(), $title, $style));
-        $load = $box('load', 'load average', fn() => new Graph(fn() => (float) explode(' ', (string) @file_get_contents('/proc/loadavg'))[0], max(1, (int) shell_exec('nproc')), 'load'));
-        $memory = $box('memory', 'memory used', fn() => new Graph(function (): float {
-            preg_match_all('/^(MemTotal|MemAvailable):\s+(\d+)/m', (string) @file_get_contents('/proc/meminfo'), $m);
-            $kb = array_combine($m[1], $m[2]) + ['MemTotal' => 1, 'MemAvailable' => 1];
-            return 100 * (1 - $kb['MemAvailable'] / max(1, $kb['MemTotal']));
-        }, 100, '%'));
-        $walk = 50.0;
-        $random = $box('random', 'random walk', fn() => new Graph(function () use (&$walk): float {
-            $this->samples++;
-            return $walk = max(0, min(100, $walk + mt_rand(-80, 80) / 10));
-        }, 100, 'pts', 0.1));
-        $events = $box('events', 'events', fn() => new Log(wordWrap: true));
-        $this->events = $events->content();
-        $header = $this->child('header', fn() => new StatusBar(' dashboard', 'q: quit '));
-        $graphs = Split::horizontal()->add($load->surface)->add($memory->surface)->add($random->surface);
-        return Split::vertical()->add($header->surface, 1)->add($graphs, '60%')->add($events->surface);
+    try {
+        in_array('--inline', $argv, true) ? Tui::inline($boxes, theme: $theme) : Tui::run($screen, theme: $theme);
+    } finally {
+        $running = false;       // the jobs end with the screen, so fiber\run() returns
     }
-
-    protected function run(): void
-    {
-        while ($this->sleep(1)) {
-            $this->events?->append(sprintf("\e[90m%s\e[0m  %d samples, peak memory %s\n", date('H:i:s'), $this->samples, number_format(memory_get_peak_usage() / 1048576, 1) . ' MB'));
-        }
-    }
-
-    protected function onKey(Key $key): bool
-    {
-        if ($key->is('q') || $key->is('ctrl+c')) {
-            $this->dispose();       // quit: the terminal is given back
-            return true;
-        }
-        return false;
-    }
-}
-
-$tty = new Tty();
-if (!$tty->isTerminal()) {
-    fwrite(STDERR, "dashboard needs a terminal\n");
-    exit(1);
-}
-fiber\run(fn() => (new Dashboard())->start($tty));
+});

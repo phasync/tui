@@ -90,13 +90,26 @@ it('runs coroutine-pane: a shell and a printing coroutine', function () {
     }
 });
 
-it('runs the dashboard', function () {
-    example('dashboard.php', [], function (FakeTerminal $t, Terminal $app) {
+it('runs the graphs: bar charts drawn with escape sequences from coroutines', function () {
+    example('graphs.php', [], function (FakeTerminal $t, Terminal $app) {
         expect($t->waitFor('random walk', 10))->toBeTrue()
             ->and($t->waitFor(fn() => preg_match('/[▁▂▃▄▅▆▇█]/u', $t->text()) === 1, 5))->toBeTrue()
             ->and($t->waitFor('samples', 5))->toBeTrue();
         $t->press('q');
         expect($app->pty()->wait(5))->toBe(0);
+    });
+});
+
+it('runs the dashboard in a terminal, full screen and inline, and quits with Ctrl-Q', function () {
+    example('dashboard.php', [], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('release notes', 10))->toBeTrue()->and($t->waitFor('run 1', 10))->toBeTrue();
+        $t->press('ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();
+    });
+    example('dashboard.php', ['--inline', '--theme=mono'], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('╭ deploy', 10))->toBeTrue();
+        $t->press('ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0)->and($t->text())->toContain('╭ build')->not->toContain('release notes');
     });
 });
 
