@@ -43,9 +43,10 @@ namespace phasync\Tui;
  *
  * Writes are checked against the declared types as usual (a `TypeError` for a string in an
  * int). A write that does not change the value (`===`) renders nothing. Many writes in one
- * moment are one render. Assign arrays whole (`$this->state->items = [...$this->state->items,
- * $item]`): an element written through the property (`$this->state->items[] = $item`) is not
- * seen (PHP reports it as an indirect modification). Objects in the state are not watched.
+ * moment are one render. **Arrays** can be changed in place: `$s->progress[$i] = 0.5`,
+ * `$s->items[] = $item`, `unset($s->rows[$id])` count as changes (seen at the next tick, by
+ * comparing the array with what it was when the program read it), as does assigning a new
+ * array. Objects in the state are not watched: assign them anew, or keep their data in arrays.
  *
  * **Shared state.** One State object may be the `$state` of several components (a parent
  * passes its own to its children): a write renders all of them.
@@ -59,6 +60,10 @@ class State
     private bool $watching = false;
     /** Reads made during renders, counted (see `reads()`). */
     private static int $reads = 0;
+    /** @var array<string, array<mixed>> arrays handed out by reference (see __get()), as they were then */
+    private array $lent = [];
+    /** @var array<int, State>|null the states with arrays handed out, compared at the next tick */
+    private static ?array $lenders = null;
 
     /**
      * A state with these values (by property name), watched from the start: what a program
@@ -131,11 +136,14 @@ class State
     }
 
     /**
-     * A read of a property.
+     * A read of a property. It returns a reference, so that an element of an array property
+     * can be written in place (`$s->progress[$i] = 0.5`, `$s->items[] = $item`): such a write
+     * is seen at the next tick (the array is compared with what it was when it was read) and
+     * renders as any write does.
      *
      * @return mixed
      */
-    final public function __get(string $name)
+    final public function &__get(string $name)
     {
         // (read by a render: that component renders again when this changes)
         $reader = Component::reader();
@@ -151,7 +159,57 @@ class State
             }
             throw new \Error('Undefined property ' . static::class . "::\$$name");
         }
+        if ($reader === null && \is_array($this->values[$name])) {
+            $this->lend($name);     // (outside a render: perhaps written in place, see check())
+        }
         return $this->values[$name];
+    }
+
+    /** The array $name is handed out by reference: compare it with this copy at the next tick. */
+    private function lend(string $name): void
+    {
+        $this->lent[$name] ??= $this->values[$name];
+        if (self::$lenders === null) {
+            try {
+                \fiber\go(static function (): void {
+                    \fiber\sleep(0);
+                    self::check();
+                });
+            } catch (\fiber\NotInRunException) {
+                $this->lent = [];       // (no program runs: no component to render either)
+                return;
+            }
+            self::$lenders = [];
+        }
+        self::$lenders[spl_object_id($this)] = $this;
+    }
+
+    /** The arrays written in place since they were handed out render their components. */
+    private static function check(): void
+    {
+        [$states, self::$lenders] = [self::$lenders ?? [], null];
+        foreach ($states as $state) {
+            [$lent, $state->lent] = [$state->lent, []];
+            foreach ($lent as $name => $was) {
+                if (($state->values[$name] ?? null) !== $was) {
+                    $state->changed();
+                    break;
+                }
+            }
+        }
+    }
+
+    /** Render the components that hold or read this state. */
+    private function changed(): void
+    {
+        foreach ($this->owners as $id => $owner) {
+            $component = $owner->get();
+            if ($component === null) {
+                unset($this->owners[$id]);
+            } else {
+                $component->markDirty();
+            }
+        }
     }
 
     /** A write to a property: checked as the declared type, and the components holding the state render. */
@@ -172,14 +230,8 @@ class State
             return;
         }
         $this->values[$name] = $value;
-        foreach ($this->owners as $id => $owner) {
-            $component = $owner->get();
-            if ($component === null) {
-                unset($this->owners[$id]);
-            } else {
-                $component->markDirty();
-            }
-        }
+        unset($this->lent[$name]);
+        $this->changed();
     }
 
     /** True if the property is set and not null. */

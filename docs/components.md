@@ -462,10 +462,16 @@ final class Todo extends Component
 
     public function add(string $item): void
     {
-        $this->state->items = [...$this->state->items, $item];   // assign arrays whole
+        $this->state->items[] = $item;      // an array changed in place counts as a change
     }
 }
 ```
+
+**Arrays in a state** may be changed in place: `$s->items[] = $item`, `$s->progress[$i] = 0.5`,
+`unset($s->rows[$id])` render as an assignment does (the library compares the array at the
+next tick with what it was when the program read it, so the render follows a moment later, in
+the same frame). Objects in a state are not watched: assign a new one, or keep the data in
+arrays.
 
 The rule, in one paragraph: **a component renders again in the next frame after its state
 changed, after one of its handlers took an event (`onKey()` and the others returning true, a

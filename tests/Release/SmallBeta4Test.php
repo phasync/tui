@@ -194,3 +194,34 @@ it('takes markup in println(), and prints Text::raw() as written', function () {
         $t->detach();
     });
 });
+
+it('renders when an element of a State array is written in place', function () {
+    fiber\run(function () {
+        $s = new State(['p' => [0.0, 0.0, 0.0], 'log' => [], 'rows' => ['a' => 1, 'b' => 2]]);
+        $t = Tui::headless(fn() => new Column([
+            new Text(implode(' ', array_map(fn($v) => (int) ($v * 100) . '%', $s->p))),
+            new Text('log: ' . implode(',', $s->log)),
+            new Text('rows: ' . implode(',', array_keys($s->rows))),
+        ]), 40, 4);
+        try {
+            $t->settle();
+            expect($t->text())->toContain('0% 0% 0%');
+            $s->p[1] = 0.5;
+            fiber\sleep(0.05);
+            $t->settle();
+            expect($t->text())->toContain('0% 50% 0%');
+            $s->log[] = 'one';
+            $s->log[] = 'two';
+            unset($s->rows['a']);
+            fiber\sleep(0.05);
+            $t->settle();
+            expect($t->text())->toContain('log: one,two')->toContain('rows: b');
+            $copy = $s->p;               // a read that changes nothing renders nothing
+            $copy[0] = 1.0;
+            fiber\sleep(0.05);
+            expect($t->text())->toContain('0% 50% 0%');
+        } finally {
+            $t->detach();
+        }
+    });
+});
