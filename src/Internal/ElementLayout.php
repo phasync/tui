@@ -21,8 +21,8 @@ final class ElementLayout implements Layout
 
     /** @var \WeakMap<Surface, string>|null the fill last written on each host */
     private static ?\WeakMap $filled = null;
-    /** @var \WeakMap<Surface, array{int, int, list<array{int,int,int,int}>}>|null where this layout put its items on each host, at which host size */
-    private ?\WeakMap $arranged = null;
+    /** @var \WeakMap<Surface, array<int, LayoutItem>>|null the items placed on each host last, by their surface */
+    private static ?\WeakMap $placed = null;
 
     /**
      * @param list<LayoutItem>       $items
@@ -44,22 +44,27 @@ final class ElementLayout implements Layout
         $rows = $host->rows();
         $this->fill($host);
         $rects = $this->rects($cols, $rows);
-        $this->arranged ??= new \WeakMap();
-        if (($this->arranged[$host] ?? null) === [$cols, $rows, $rects] && $this->stillHosted($host)) {
-            // as arranged last time: the windows stay; only what holds components looks again,
-            // since a component below may want another size now
-            foreach ($this->items as $item) {
+        // an item placed here before, the same and in the same place, stays as it is: only what
+        // holds components looks again, since a component below may want another size now
+        self::$placed ??= new \WeakMap();
+        $before = self::$placed[$host] ?? [];
+        $now = [];
+        foreach ($this->items as $i => $item) {
+            $id = spl_object_id($item->surface);
+            [$x, $y, $w, $h] = $rects[$i];
+            $view = ($before[$id] ?? null) === $item ? $host->viewport($item->surface) : null;
+            if ($view !== null && $view->x() === $x && $view->y() === $y && $view->width() === $w && $view->height() === $h
+                && $view->hasBorder() === ($item->border !== false) && $view->title() === $item->title) {
                 $host->host($item->surface);
                 if ($item->layout !== null && $item->focusable) {
                     $item->surface->setLayout($item->layout);
                 }
+            } else {
+                self::place($host, $item, ...$rects[$i]);
             }
-            return;
+            $now[$id] = $item;
         }
-        $this->arranged[$host] = [$cols, $rows, $rects];
-        foreach ($this->items as $i => $item) {
-            self::place($host, $item, ...$rects[$i]);
-        }
+        self::$placed[$host] = $now;
         if ($this->kind === self::LAYERS) {
             // the hosting order is the z-order: keep it the layers' order
             $order = array_map(fn(LayoutItem $item) => $item->surface, $this->items);
@@ -131,17 +136,6 @@ final class ElementLayout implements Layout
                 break;
         }
         return $rects;
-    }
-
-    /** True if every item's surface is still a window of $host (nothing took one away since). */
-    private function stillHosted(Surface $host): bool
-    {
-        foreach ($this->items as $item) {
-            if ($host->viewport($item->surface) === null) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /** Fill the host with the background when it changed (so the windows are not repainted for nothing). */

@@ -192,6 +192,12 @@ abstract class Component extends Element
     private ?Tree $tree = null;
     /** The element tree the last render returned (null: it drew itself or returned a layout). */
     private ?Element $shown = null;
+    /** @var array{Stylesheet, ComputedStyle, int}|null what the layout of $shown was made with: stylesheet, style, focus version */
+    private ?array $shownWith = null;
+    /** @var array<string, true> the keys of the children the last layout of $shown placed */
+    private array $placed = [];
+    /** The next render lays the tree out again, also when it is the same (see relayout()). */
+    private bool $relayout = false;
     private ?Stylesheet $stylesheet = null;
     /** The style a parent's element tree gives this component to inherit. */
     private ?ComputedStyle $inherited = null;
@@ -1128,28 +1134,40 @@ abstract class Component extends Element
         $this->asked = false;
         try {
             // the pen is the component's style: what render() clears (ESC [2J) or writes plainly is in its colours
-            $this->surface->write("\e[0m" . Ansi::style($this->style()->text));
+            $pen = $this->style()->text;
+            if ($this->surface->pen() !== $pen) {
+                $this->surface->write("\e[0m" . Ansi::style($pen));
+            }
             if (!isset(self::$hoverAware[$this]) && $this->wantsPointer()) {
                 $this->followPointer($this->isHovered());
             }
             $result = $this->render();
-            $layout = $this->layoutOf($result);
-            $used = $this->used;
+            // the same tree as the last render's, in the same style and focus: what it laid out stands
+            $same = $this->showsAgain($result);
+            if ($same) {
+                $layout = null;
+                $used = $this->used + $this->placed;
+            } else {
+                $layout = $this->layoutOf($result);
+                $used = $this->used;
+            }
         } finally {
             self::$inRender = $outer;
             $this->used = null;
             $this->rendering = false;
         }
-        $returned = $layout;
-        if ($this->parent === null && ($this->floating !== [] || $this->overlayLayout !== null)) {
-            $layout = $this->withOverlays($layout);
-        }
-        if ($layout !== null) {
-            $this->surface->setLayout($layout);
-        }
-        if ($this->measured !== null && $this->measure(...$this->measured[0]) !== $this->measured[1]) {
-            $this->measured = null;
-            $this->parent?->markDirty();     // it needs another size: the parent lays it out again
+        $returned = $same ? $this->surface->layout() : $layout;
+        if (!$same) {
+            if ($this->parent === null && ($this->floating !== [] || $this->overlayLayout !== null)) {
+                $layout = $this->withOverlays($layout);
+            }
+            if ($layout !== null) {
+                $this->surface->setLayout($layout);
+            }
+            if ($this->measured !== null && $this->measure(...$this->measured[0]) !== $this->measured[1]) {
+                $this->measured = null;
+                $this->parent?->relayout();     // it needs another size: the parent lays it out again
+            }
         }
         // children shown for the first time draw now, at the size the layout gave them
         foreach ($this->children as $child) {
@@ -1171,6 +1189,88 @@ abstract class Component extends Element
         }
     }
 
+    /**
+     * True if render() returned a tree that describes the same as the one shown (see
+     * sameElement()), and nothing else the layout of it reads changed since: the stylesheet,
+     * the component's style, the focus anywhere, a child's size or style state (relayout()).
+     * Then the layout, the windows and the paint of the last render stand as they are, and a
+     * render that changed nothing costs the render() call and the comparison.
+     */
+    private function showsAgain(Layout|Element|null $result): bool
+    {
+        $last = $this->shownWith;
+        if (!$result instanceof Element || $this->shown === null || $last === null || $this->relayout
+            || $this->overlays !== [] || $this->floating !== [] || $this->tree?->showsHelp !== false) {
+            return false;
+        }
+        return $last[0] === $this->stylesheet() && $last[1] === $this->style() && $last[2] === Surface::focusVersion()
+            && self::sameElement($result, $this->shown);
+    }
+
+    /**
+     * True if $a describes what $b does: the same instance, or elements of the same class with
+     * the same attributes and content, children compared the same way; a component made with
+     * `new` is the same as another with the same attributes and props (what a render would hand
+     * over to the one shown), a started one only as itself.
+     */
+    private static function sameElement(Element $a, Element $b): bool
+    {
+        if ($a === $b) {
+            return true;
+        }
+        if ($a::class !== $b::class) {
+            return false;
+        }
+        if ($a instanceof Component) {
+            if ($a->stopped !== null || $b->stopped !== null || !$a->sameAttributes($b)) {
+                return false;
+            }
+            foreach (self::props($a::class) as $name) {
+                if (!self::sameValue($a->$name, $b->$name)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        $theirs = (array) $b;
+        foreach ((array) $a as $name => $value) {
+            if (!self::sameValue($value, $theirs[$name])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static function sameValue(mixed $a, mixed $b): bool
+    {
+        if ($a instanceof Element && $b instanceof Element) {
+            return self::sameElement($a, $b);
+        }
+        if (\is_array($a) && \is_array($b)) {
+            if (\count($a) !== \count($b)) {
+                return false;
+            }
+            foreach ($a as $k => $v) {
+                if (!\array_key_exists($k, $b) || !self::sameValue($v, $b[$k])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return $a === $b;
+    }
+
+    /**
+     * @internal Something the layout of this component's tree reads changed besides the tree
+     * (a child needs another size, a child's style state changed): its next render lays the
+     * tree out again even when render() returns the same tree.
+     */
+    private function relayout(): void
+    {
+        $this->relayout = true;
+        $this->markDirty();
+    }
+
     /** The layout for what render() returned (an element tree laid out). */
     private function layoutOf(Layout|Element|null $result): ?Layout
     {
@@ -1178,9 +1278,15 @@ abstract class Component extends Element
             $this->child($key);         // (keeps their content)
         }
         $this->shown = $result instanceof Element ? $result : null;
+        $this->relayout = false;
+        $this->placed = [];
+        $this->shownWith = null;
         if ($result instanceof Element) {
             $this->tree ??= new Tree($this, $this->place(...), $this->helpFor(...));
-            $layout = $this->tree->build($result, $this->stylesheet(), $this->style());
+            $sheet = $this->stylesheet();
+            $style = $this->style();
+            $layout = $this->tree->build($result, $sheet, $style);
+            $this->shownWith = [$sheet, $style, Surface::focusVersion()];
             self::$helpShown ??= new \WeakMap();
             if ($this->tree->showsHelp) {
                 self::$helpShown[$this] = true;
@@ -1255,6 +1361,9 @@ abstract class Component extends Element
      */
     private function place(string $key, Component $fresh, bool $create = true): ?Component
     {
+        if ($create) {
+            $this->placed[$key] = true;
+        }
         $existing = $this->child($key);
         if (!$create) {
             return $existing !== null && $existing::class === $fresh::class ? $existing : null;
@@ -1478,7 +1587,7 @@ abstract class Component extends Element
         } else {
             unset($this->styleStates[$state]);
         }
-        $this->parent?->markDirty();       // (a Box around it in the parent's tree shows it too)
+        $this->parent?->relayout();       // (a Box around it in the parent's tree shows it too)
         $this->markDirty();
     }
 

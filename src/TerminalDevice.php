@@ -610,8 +610,9 @@ abstract class TerminalDevice
     private function mouseModes(Surface $root): string
     {
         $out = '';
+        $below = Surface::mouseWantedBelow($root);
         if ($this->inline) {
-            $mouse = $root->wantsMouse() || self::below($root, fn(Surface $s) => $s->wantsMouse());
+            $mouse = $root->wantsMouse() || $below !== [];
             if ($mouse !== $this->mouse) {
                 $this->mouse = $mouse;
                 $out .= $mouse ? "\e[?1000h\e[?1002h\e[?1006h" : "\e[?1003l\e[?1002l\e[?1000l\e[?1006l";
@@ -621,7 +622,10 @@ abstract class TerminalDevice
                 return $out;
             }
         }
-        $motion = $root->mode(1003) || self::below($root, fn(Surface $s) => $s->mode(1003));
+        $motion = $root->mode(1003);
+        foreach ($below as $s) {
+            $motion = $motion || $s->mode(1003);
+        }
         if ($motion !== $this->motion) {
             // a program below asked for (or gave up) motion reports without a button held
             $this->motion = $motion;
@@ -629,17 +633,6 @@ abstract class TerminalDevice
             $out .= $motion ? "\e[?1003h" : "\e[?1003l\e[?1002h";
         }
         return $out;
-    }
-
-    /** True if $test holds for a surface in the tree below $surface. */
-    private static function below(Surface $surface, \Closure $test): bool
-    {
-        foreach ($surface->viewports() as $v) {
-            if ($test($v->source) || self::below($v->source, $test)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -656,12 +649,13 @@ abstract class TerminalDevice
         $links = $this->supportsHyperlinks();
         [$oldChars, $oldStyles] = $this->frame[$y] ?? [[], []];
         $this->frame[$y] = [$chars, $styles];
-        $same = static fn(int $i): bool => ($chars[$i] ?? ' ') === ($oldChars[$i] ?? ' ')
-            && ($styles[$i] ?? $plain) === ($oldStyles[$i] ?? $plain);
+        if ($chars === $oldChars && $styles === $oldStyles) {
+            return '';      // (damaged, and the same again)
+        }
         $out = '';
         $x = 0;
         while ($x < $cols) {
-            if ($same($x)) {
+            if (($chars[$x] ?? ' ') === ($oldChars[$x] ?? ' ') && ($styles[$x] ?? $plain) === ($oldStyles[$x] ?? $plain)) {
                 $x++;
                 continue;
             }
@@ -669,7 +663,7 @@ abstract class TerminalDevice
             $start = $x > 0 && ($chars[$x] ?? ' ') === '' ? $x - 1 : $x;
             $end = $x;
             for ($i = $x + 1, $gap = 0; $i < $cols && $gap <= 3; $i++) {
-                if ($same($i)) {
+                if (($chars[$i] ?? ' ') === ($oldChars[$i] ?? ' ') && ($styles[$i] ?? $plain) === ($oldStyles[$i] ?? $plain)) {
                     $gap++;
                 } else {
                     $gap = 0;

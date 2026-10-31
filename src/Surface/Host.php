@@ -25,6 +25,8 @@ final class Host
     public array $viewports = [];
     /** @var array<int, Viewport> the same viewports by the object id of their surface */
     private array $bySource = [];
+    /** @var array<int, Viewport> the viewports to look at in the next compose: their source or they changed */
+    private array $stale = [];
     public ?Viewport $focus = null;
     /** A hosted surface changed (or a viewport did) since the last compose. */
     public bool $dirty = false;
@@ -72,7 +74,7 @@ final class Host
             $this->bySource[spl_object_id($child)] = $view;
             $child->shownThrough($view, true);
             $this->offs[spl_object_id($view)] = [
-                $child->on('change', fn() => $this->markDirty()),
+                $child->on('change', fn() => $this->touched($view)),
                 $child->on('title', function (string $title) use ($view): void {
                     if ($this->focus === $view) {
                         $this->surface->write(Ansi::title($title));
@@ -83,7 +85,7 @@ final class Host
             ];
             // the focus settles when the change to the tree is complete (Surface::changeTree())
             Surface::focusMayMove($this->surface);
-            $this->markDirty();
+            $this->touched($view);
             Surface::geometryChanged();
         } else {
             if ($x !== null || $y !== null) {
@@ -125,7 +127,7 @@ final class Host
         foreach ($this->offs[$id] as $off) {
             $off();
         }
-        unset($this->offs[$id], $this->bySource[spl_object_id($child)]);
+        unset($this->offs[$id], $this->bySource[spl_object_id($child)], $this->stale[$id]);
         $this->viewports = array_values(array_filter($this->viewports, fn(Viewport $v) => $v !== $view));
         $child->shownThrough($view, false);
         if ($this->capture === $view) {
@@ -149,21 +151,21 @@ final class Host
         $this->viewports = [...array_filter($this->viewports, fn(Viewport $v) => $v !== $view), $view];
         Surface::focusMayMove($this->surface);
         $view->invalidate();
-        $this->markDirty();
+        $this->touched($view);
     }
 
     /** A viewport moved or changed size: blank where it was, repaint it where it is. */
     public function moved(Viewport $view, array $old): void
     {
         $this->blank($old);
-        $this->markDirty();
+        $this->touched($view);
         Surface::geometryChanged();
     }
 
     /** A viewport's look or scroll position changed. */
     public function changed(Viewport $view): void
     {
-        $this->markDirty();
+        $this->touched($view);
         Surface::geometryChanged();
     }
 
@@ -197,6 +199,13 @@ final class Host
         if (!$this->composing && $this->viewports !== []) {
             $this->markDirty();
         }
+    }
+
+    /** $view or its source changed: it is looked at in the next compose. */
+    private function touched(Viewport $view): void
+    {
+        $this->stale[spl_object_id($view)] = $view;
+        $this->markDirty();
     }
 
     public function markDirty(): void
@@ -277,6 +286,13 @@ final class Host
     {
         if ($view === $this->focus) {
             return;
+        }
+        // (a border shows the focus: both windows are painted again)
+        if ($this->focus !== null) {
+            $this->stale[spl_object_id($this->focus)] = $this->focus;
+        }
+        if ($view !== null) {
+            $this->stale[spl_object_id($view)] = $view;
         }
         $this->focus = $view;
         if ($view !== null) {
@@ -399,29 +415,38 @@ final class Host
             // children first; one still holding back an update keeps this host dirty too, so
             // the hosts above (and the terminal device) keep looking until it is shown
             $this->dirty = false;
-            foreach ($this->viewports as $v) {
+            $stale = $this->stale;
+            $this->stale = [];
+            foreach ($stale as $v) {
                 $v->source->compose();
                 if ($v->source->needsCompose()) {
                     $this->dirty = true;
+                    $this->stale[spl_object_id($v)] = $v;
                 }
             }
             $cols = $this->vt->cols;
             $rows = $this->vt->rows;
             // rows the host's own producer changed: the windows over them are painted again
             $own = [];
-            foreach ($this->vt->rowVersion as $y => $version) {
-                if ($version > $this->composedVersion) {
-                    $own[$y] = true;
+            if ($this->vt->version > $this->composedVersion) {
+                foreach ($this->vt->rowVersion as $y => $version) {
+                    if ($version > $this->composedVersion) {
+                        $own[$y] = true;
+                    }
                 }
             }
             $out = '';
             $count = \count($this->viewports);
             foreach ($this->viewports as $index => $v) {
+                if ($own === [] && !isset($stale[spl_object_id($v)])) {
+                    continue;   // (neither it nor what is under it changed)
+                }
                 [, $vy, , $vh] = $v->rect();
                 $age = $v->source->syncAge();
                 if ($age !== null && $age < self::SYNC_TIMEOUT) {
                     // the program is drawing a frame: show it once it is complete
                     $this->dirty = true;
+                    $this->stale[spl_object_id($v)] = $v;
                     continue;
                 }
                 $set = [];

@@ -56,6 +56,8 @@ final class Surface implements \Stringable
     private bool $focusable = true;
     /** @var list<Surface> for a root: the focus path its surfaces were last told about */
     private array $announced = [];
+    /** @var \WeakMap<Surface, true>|null the surfaces whose producer asked for mouse reports */
+    private static ?\WeakMap $mouseWanted = null;
     /** Numbers focus requests: the latest one wins. */
     private static int $focusClock = 0;
     /** Changes to the tree in progress; the focus settles when the outermost one ends. */
@@ -85,6 +87,14 @@ final class Surface implements \Stringable
         $this->vt = new Emulator($cols, $rows, $scrollback, function (string $type, mixed $data): void {
             if ($type === 'reply') {
                 $this->input->write($data);
+            } elseif ($type === 'mouse') {
+                // (a terminal device asks for the mouse reports some surface of its tree wants)
+                self::$mouseWanted ??= new \WeakMap();
+                if ($this->wantsMouse()) {
+                    self::$mouseWanted[$this] = true;
+                } else {
+                    unset(self::$mouseWanted[$this]);
+                }
             } else {
                 $this->emit($type, $data);
             }
@@ -292,6 +302,16 @@ final class Surface implements \Stringable
             $out[] = $line;
         }
         return implode("\n", $out);
+    }
+
+    /**
+     * The pen: the style the next printed character gets (colours and attributes from the last
+     * SGR sequences, and the hyperlink it is in). For a producer that wants to know whether it
+     * has to set its style again.
+     */
+    public function pen(): Style
+    {
+        return $this->vt->pen;
     }
 
     /** The cursor: position, visibility and shape. */
@@ -519,6 +539,23 @@ final class Surface implements \Stringable
     public function wantsMouse(): bool
     {
         return $this->mode(1000) || $this->mode(1002) || $this->mode(1003) || $this->mode(9);
+    }
+
+    /**
+     * @internal The surfaces below $root (not $root itself) that asked for mouse reports
+     * (`wantsMouse()`), found from the few that did rather than by walking the tree.
+     *
+     * @return list<Surface>
+     */
+    public static function mouseWantedBelow(Surface $root): array
+    {
+        $out = [];
+        foreach (self::$mouseWanted ?? [] as $surface => $_) {
+            if ($surface !== $root && $surface->root() === $root) {
+                $out[] = $surface;
+            }
+        }
+        return $out;
     }
 
     // ------------------------------------------------------------------------------------------

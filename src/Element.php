@@ -123,6 +123,12 @@ abstract class Element
         return $cache[$class];
     }
 
+    /** @internal True if $other has the same attributes. */
+    final protected function sameAttributes(Element $other): bool
+    {
+        return $other->elementAttributes === $this->elementAttributes;
+    }
+
     /** @internal Take the attributes of $other (a component made anew by a render, for the one kept). */
     final protected function adoptAttributes(Element $other): bool
     {

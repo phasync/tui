@@ -124,7 +124,11 @@ final class Emulator
         $this->top = 0;
         $this->bottom = $this->rows - 1;
         $this->resetTabs(0);
+        $mouse = isset($this->modes[9]) || isset($this->modes[1000]) || isset($this->modes[1002]) || isset($this->modes[1003]);
         $this->modes = [7 => true, 25 => true];
+        if ($mouse) {
+            ($this->emit)('mouse', null);
+        }
         $this->insertMode = $this->newlineMode = $this->keypadApplication = false;
         $this->cursorShape = 'block';
         $this->cursorBlink = true;
@@ -173,6 +177,9 @@ final class Emulator
     // ------------------------------------------------------------------------------------------
     // Parser actions
 
+    /** @var array<string, int> the width of each grapheme cluster printed so far */
+    private static array $widths = [];
+
     /** Print a run of printable characters at the cursor. */
     public function print(string $text): void
     {
@@ -180,31 +187,50 @@ final class Emulator
             $text = strtr($text, self::DEC_GRAPHICS);
         }
         if (!$this->insertMode && !preg_match('/[^\x20-\x7e]/', $text)) {
-            $this->printAscii($text);
+            $this->printCells(str_split($text));
             return;
         }
         // grapheme clusters by Unicode rules (\X): combining marks, ZWJ sequences, variation
         // selectors, flags and Hangul syllables each become one cell or two
-        foreach (Text::graphemes($text) as $i => $g) {
-            if ($i === 0 && $this->extendsLast($g)) {
-                continue;
+        $clusters = Text::graphemes($text);
+        if ($this->extendsLast($clusters[0])) {
+            array_shift($clusters);
+        }
+        $widths = [];
+        $simple = !$this->insertMode;
+        if (\count(self::$widths) > 20000) {
+            self::$widths = [];
+        }
+        foreach ($clusters as $g) {
+            $w = self::$widths[$g] ??= Text::clusterWidth($g);
+            $widths[] = $w;
+            $simple = $simple && $w === 1;
+        }
+        if ($simple) {
+            // (one cell each, as box drawing, blocks and most scripts: stored a row's share at a time)
+            if ($clusters !== []) {
+                $this->printCells($clusters);
             }
-            $w = Text::clusterWidth($g);
-            if ($w === 0) {
+            return;
+        }
+        foreach ($clusters as $i => $g) {
+            if ($widths[$i] === 0) {
                 // a cluster of only combining characters with nothing to attach to
                 continue;
             }
-            $this->put($g, $w);
+            $this->put($g, $widths[$i]);
         }
     }
 
     /**
-     * print() for ASCII text outside insert mode: each row's share is stored in one step, with the
-     * same result as put() per character.
+     * print() of characters one cell wide each, outside insert mode: each row's share is stored
+     * in one step, with the same result as put() per character.
+     *
+     * @param list<string> $cells
      */
-    private function printAscii(string $text): void
+    private function printCells(array $cells): void
     {
-        $len = \strlen($text);
+        $len = \count($cells);
         $cols = $this->cols;
         $autowrap = $this->modes[7] ?? false;
         $i = 0;
@@ -220,11 +246,11 @@ final class Emulator
             if (!$autowrap && $n < $len - $i) {
                 // without autowrap everything that does not fit lands in the last column
                 $n = max(1, $n);
-                $last = $len - 1;
-                $chunk = substr($text, $i, $n - 1) . $text[$last];
+                $chunk = \array_slice($cells, $i, $n - 1);
+                $chunk[] = $cells[$len - 1];
                 $i = $len;
             } else {
-                $chunk = substr($text, $i, $n);
+                $chunk = \array_slice($cells, $i, $n);
                 $i += $n;
             }
             $line = $this->lines[$this->y];
@@ -235,7 +261,7 @@ final class Emulator
             if ($end < $cols && $line->chars[$end] === '') {
                 $line->chars[$end] = ' ';
             }
-            array_splice($line->chars, $x, $n, str_split($chunk));
+            array_splice($line->chars, $x, $n, $chunk);
             array_splice($line->styles, $x, $n, array_fill(0, $n, $this->pen));
             $this->touch($this->y);
             $this->lastChar = $chunk[$n - 1];
@@ -1154,6 +1180,7 @@ final class Emulator
                     // the mouse tracking modes replace each other
                     unset($this->modes[9], $this->modes[1000], $this->modes[1002], $this->modes[1003]);
                     $this->modes[$mode] = $on;
+                    ($this->emit)('mouse', null);
                     break;
                 default:
                     $this->modes[$mode] = $on;
