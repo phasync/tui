@@ -177,6 +177,10 @@ abstract class Component extends Element
     private static ?\WeakMap $focusPaths = null;
     private bool $rendered = false;
     private bool $renderPending = false;
+    /** @var array{array{int,int}, list<Component>}|null unshownChildren() and the versions it was found at */
+    private ?array $unshown = null;
+    /** The pending render only lays out again what the focus changed (see markRestyle()). */
+    private bool $restyleOnly = false;
     private ?Deferred $stopped = null;
     /** Resolves when the component has ended: disposed, coroutines and children ended, unmounted. */
     private ?Deferred $ended = null;
@@ -198,7 +202,7 @@ abstract class Component extends Element
     private ?Tree $tree = null;
     /** The element tree the last render returned (null: it drew itself or returned a layout). */
     private ?Element $shown = null;
-    /** @var array{Stylesheet, ComputedStyle, int}|null what the layout of $shown was made with: stylesheet, style, focus version */
+    /** @var array{Stylesheet, ComputedStyle, int, list<string>}|null what the layout of $shown was made with: stylesheet, style, focus version, breakpoints */
     private ?array $shownWith = null;
     /** @var array<string, true> the keys of the children the last layout of $shown placed */
     private array $placed = [];
@@ -471,13 +475,11 @@ abstract class Component extends Element
                     $this->guard(fn() => $this->call($callback, $this));
                 }
                 $this->markDirty();
+                Tree::focusMoved($this);      // (its place in the tree around it may look otherwise now)
                 foreach ($this->focusReaders ?? [] as $component => $_) {
                     $component->markDirty();      // (its render asked hasFocus())
                 }
-                // a Help element shows the keys of the focused component
-                foreach (self::$helpShown ?? [] as $component => $_) {
-                    $component->markDirty();
-                }
+                self::helpMayChange();
             }),
             $s->on('resize', function (Resize $e): void {
                 $this->handle(fn() => $this->onResize($e));
@@ -855,13 +857,32 @@ abstract class Component extends Element
     final public function markDirty(): void
     {
         $this->sizes = [];
+        $this->restyleOnly = false;
+        $this->schedule();
+    }
+
+    /**
+     * @internal The focus came to or left elements of this component's element tree (or
+     * components it placed): in the next frame its tree lays those out again, without a render
+     * (Tree::restyle()), unless a render is coming anyway.
+     */
+    final public function markRestyle(): void
+    {
+        if (!$this->renderPending && $this->schedule()) {
+            $this->restyleOnly = true;
+        }
+    }
+
+    /** Put the component in the next frame's renders; false when it is not to render now. */
+    private function schedule(): bool
+    {
         if (!$this->mounted || $this->renderPending || !$this->rendered || $this->rendering) {
-            return;     // (before the first render: that one is coming)
+            return false;     // (before the first render: that one is coming)
         }
         $this->renderPending = true;
         self::$dirty[spl_object_id($this)] = $this;
         if (TerminalDevice::of($this->surface->root())?->drawsFrames()) {
-            return;     // the terminal's next frame renders it (they are at most 60 a second)
+            return true;     // the terminal's next frame renders it (they are at most 60 a second)
         }
         $now = microtime(true);
         if ($now - self::$frameAsked > 0.5) {
@@ -874,6 +895,7 @@ abstract class Component extends Element
                 self::renderFrame();
             });
         }
+        return true;
     }
 
     /**
@@ -928,10 +950,8 @@ abstract class Component extends Element
      */
     final protected static function focusOrder(Surface $surface): array
     {
-        $views = array_filter($surface->viewports(), fn(Viewport $v) => $v->width() > 0 && $v->height() > 0);
-        usort($views, fn(Viewport $a, Viewport $b) => [$a->y(), $a->x()] <=> [$b->y(), $b->x()]);
         $out = [];
-        foreach ($views as $v) {
+        foreach (self::tabViews($surface) as $v) {
             $c = self::$onSurface[$v->source] ?? null;
             if ($c !== null && (!$c->mounted || $c->attribute('disabled'))) {
                 continue;
@@ -950,6 +970,109 @@ abstract class Component extends Element
         return $out;
     }
 
+    /** The windows of $surface the Tab walk goes through, in the order it visits them: top to bottom, left to right. */
+    private static function tabViews(Surface $surface): array
+    {
+        $views = [];
+        $sorted = true;
+        $last = null;
+        foreach ($surface->viewports() as $v) {
+            if ($v->width() > 0 && $v->height() > 0) {
+                $at = [$v->y(), $v->x()];
+                $sorted = $sorted && ($last === null || $last <= $at);
+                $last = $at;
+                $views[] = $v;
+            }
+        }
+        if (!$sorted) {
+            usort($views, fn(Viewport $a, Viewport $b) => [$a->y(), $a->x()] <=> [$b->y(), $b->x()]);
+        }
+        return $views;
+    }
+
+    /**
+     * The stop of the Tab walk in $scope after $from (before it with $backwards), around, as
+     * `focusOrder($scope)` has them; the first (the last) when $from is not one of them; null
+     * when there is no other. It looks at the windows from $from on until it finds one, not at
+     * every window of the screen: a Tab costs the same in a list of two hundred rows as in two.
+     */
+    private static function nextStop(Surface $scope, Component|Surface $from, bool $backwards): Component|Surface|null
+    {
+        $f = $from instanceof Component ? $from->surface : $from;
+        // the windows from $from's up to $scope, if $from is a stop of the walk in $scope
+        $chain = [];
+        for ($s = $f; $s !== $scope; $s = $v->host()) {
+            $v = $s->viewport();
+            $c = self::$onSurface[$s] ?? null;
+            if ($v === null || $v->width() <= 0 || $v->height() <= 0 || ($c !== null && (!$c->mounted || $c->attribute('disabled')))
+                || ($c === null && !$s->isFocusable())) {
+                $chain = null;
+                break;
+            }
+            $chain[] = $v;
+        }
+        $isStop = $chain !== null && $chain !== [] && ($from instanceof Component
+            ? self::$onSurface[$f] === $from && $from->canFocus()
+            : !isset(self::$onSurface[$f]) && Tree::takesKeys($f) && self::stopIn($f, false) === null);
+        if (!$isStop) {
+            return self::stopIn($scope, $backwards);
+        }
+        if (!$backwards && $from instanceof Component && ($inner = self::stopIn($f, false)) !== null) {
+            return $inner;      // (a component comes before what is inside it)
+        }
+        foreach ($chain as $v) {
+            $host = $v->host();
+            $views = self::tabViews($host);
+            $at = array_search($v, $views, true);
+            $after = $backwards ? array_reverse(\array_slice($views, 0, (int) $at)) : \array_slice($views, (int) $at + 1);
+            foreach ($after as $w) {
+                if (($stop = self::stopAt($w, $backwards)) !== null) {
+                    return $stop;
+                }
+            }
+            $c = self::$onSurface[$host] ?? null;
+            if ($backwards && $host !== $scope && $c !== null && $c->canFocus()) {
+                return $c;
+            }
+        }
+        $around = self::stopIn($scope, $backwards);
+        return $around === $from ? null : $around;
+    }
+
+    /** The first stop of the Tab walk inside $surface (the last with $last), or null. */
+    private static function stopIn(Surface $surface, bool $last): Component|Surface|null
+    {
+        $views = self::tabViews($surface);
+        foreach ($last ? array_reverse($views) : $views as $v) {
+            if (($stop = self::stopAt($v, $last)) !== null) {
+                return $stop;
+            }
+        }
+        return null;
+    }
+
+    /** The first stop of the Tab walk in the window $v (the last with $last), or null. */
+    private static function stopAt(Viewport $v, bool $last): Component|Surface|null
+    {
+        $src = $v->source;
+        $c = self::$onSurface[$src] ?? null;
+        if ($c !== null && (!$c->mounted || $c->attribute('disabled'))) {
+            return null;
+        }
+        if ($c === null && !$src->isFocusable()) {
+            return null;
+        }
+        $self = $c !== null ? ($c->canFocus() ? $c : null) : null;
+        if (!$last && $self !== null) {
+            return $self;
+        }
+        $inner = self::stopIn($src, $last);
+        if ($inner !== null) {
+            return $inner;
+        }
+        return $self ?? ($c === null && Tree::takesKeys($src) ? $src : null);
+    }
+
     /**
      * Tab or Shift-Tab that nothing bound, at a component with keys of its own: the focus
      * goes to the next (or previous) such component in the order they show, around; inside the
@@ -965,15 +1088,9 @@ abstract class Component extends Element
                 break;
             }
         }
-        $all = self::focusOrder($scope);
-        $n = \count($all);
-        $at = array_search($this->focusedElement() ?? $this, $all, true);
-        if ($n === 0 || ($n === 1 && $at !== false)) {
-            return false;
-        }
-        $next = $at === false ? ($backwards ? $n - 1 : 0) : ($at + ($backwards ? $n - 1 : 1)) % $n;
-        $all[$next]->focus();
-        return true;
+        $next = self::nextStop($scope, $this->focusedElement() ?? $this, $backwards);
+        $next?->focus();
+        return $next !== null;
     }
 
     private static function renderPasses(): void
@@ -994,9 +1111,11 @@ abstract class Component extends Element
                     }
                     $done[$id] = true;
                     $component->renderPending = false;
+                    $restyle = $component->restyleOnly;
+                    $component->restyleOnly = false;
                     if ($component->mounted) {
                         try {
-                            $component->guard($component->renderNow(...));
+                            $component->guard($restyle ? $component->restyleNow(...) : $component->renderNow(...));
                         } catch (\Throwable $e) {
                             $error ??= $e;      // (a root's failure: the others still render)
                         }
@@ -1025,8 +1144,9 @@ abstract class Component extends Element
             }
         }
         foreach ($later as $component) {
+            $restyle = $component->restyleOnly;
             $component->renderPending = false;
-            $component->markDirty();
+            $restyle ? $component->markRestyle() : $component->markDirty();
         }
         if ($error !== null) {
             throw $error;
@@ -1245,7 +1365,7 @@ abstract class Component extends Element
         $best = null;
         $bestRank = 0;
         $first = null;
-        foreach ($this->children as $child) {
+        foreach ($this->unshownChildren() as $child) {
             if (!$child->waitsUnshown($this)) {
                 continue;
             }
@@ -1266,12 +1386,34 @@ abstract class Component extends Element
     private function focusRank(): int
     {
         $rank = $this->surface->latestFocus();
-        foreach ($this->children as $child) {
+        foreach ($this->unshownChildren() as $child) {
             if ($child->waitsUnshown($this)) {
                 $rank = max($rank, $child->pendingRank());
             }
         }
         return $rank;
+    }
+
+    /**
+     * The children that are started and not shown (in no window): those waitsUnshown() may
+     * be true of. Found once per tree and hosting version (keys and focus changes ask on every
+     * key, and a list of two hundred rows has hundreds of children, all shown).
+     *
+     * @return list<Component>
+     */
+    private function unshownChildren(): array
+    {
+        $versions = [self::$treeVersion, Surface::hostingVersion()];
+        if ($this->unshown === null || $this->unshown[0] !== $versions) {
+            $list = [];
+            foreach ($this->children as $child) {
+                if ($child->mounted && $child->surface->viewport() === null) {
+                    $list[] = $child;
+                }
+            }
+            $this->unshown = [$versions, $list];
+        }
+        return $this->unshown[1];
     }
 
     /**
@@ -1496,36 +1638,9 @@ abstract class Component extends Element
         }
         $returned = $same ? $this->surface->layout() : $layout;
         if (!$same) {
-            if ($this->parent === null && ($this->floating !== [] || $this->overlayLayout !== null)) {
-                $layout = $this->withOverlays($layout);
-            }
-            if ($layout !== null) {
-                $this->surface->setLayout($layout);
-            }
-            // a size it gave a parent's layout is another now: the items around it measure again
-            // and the parent lays it out again (the rest of the parent's tree stands)
-            [$asked, $this->measured] = [$this->measured, []];
-            $resized = false;
-            foreach ($asked as [$cols, $rows, $size]) {
-                if ($this->measureFor($cols, $rows) !== $size) {
-                    $resized = true;
-                    break;
-                }
-            }
-            if ($resized || ($this->leastAsked !== null && $this->leastNow($this->leastAsked[0]) !== $this->leastAsked[1])) {
-                $this->measured = [];
-                $this->leastAsked = null;
-                Tree::sizeMayChange($this);
-                $this->parent?->relayout();
-            }
+            $this->show($layout);
         }
-        // children shown for the first time draw now, at the size the layout gave them (also
-        // another owner's that this tree shows, which its owner's render did not lay out)
-        foreach ([...$this->children, ...$this->placedSelf] as $child) {
-            if (!$child->rendered && $child->surface->viewport() !== null) {
-                $child->firstRender();
-            }
-        }
+        $this->firstShown();
         if ($returned !== null) {
             foreach ($this->children as $key => $child) {
                 if (!isset($used[$key]) && !isset($this->kept[$key]) && !isset($this->placedSelf[spl_object_id($child)])
@@ -1538,6 +1653,85 @@ abstract class Component extends Element
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Children shown for the first time draw now, at the size the layout gave them (also
+     * another owner's that this tree shows, which its owner's render did not lay out).
+     */
+    private function firstShown(): void
+    {
+        foreach ([...$this->children, ...$this->placedSelf] as $child) {
+            if (!$child->rendered && $child->surface->viewport() !== null) {
+                $child->firstRender();
+            }
+        }
+    }
+
+    /**
+     * @internal The focus moved (to a component or an element): the `Help` elements on screen
+     * show the keys of what has it, so they are laid out again in the next frame.
+     */
+    final public static function helpMayChange(): void
+    {
+        foreach (self::$helpShown ?? [] as $component => $_) {
+            $component->tree?->helpMayChange();
+        }
+    }
+
+    /** Set the layout of a render (or a restyle) and tell the parent when the size it needs changed. */
+    private function show(?Layout $layout): void
+    {
+        if ($this->parent === null && ($this->floating !== [] || $this->overlayLayout !== null)) {
+            $layout = $this->withOverlays($layout);
+        }
+        if ($layout !== null) {
+            $this->surface->setLayout($layout);
+        }
+        // a size it gave a parent's layout is another now: the items around it measure again
+        // and the parent lays it out again (the rest of the parent's tree stands)
+        [$asked, $this->measured] = [$this->measured, []];
+        $resized = false;
+        foreach ($asked as [$cols, $rows, $size]) {
+            if ($this->measureFor($cols, $rows) !== $size) {
+                $resized = true;
+                break;
+            }
+        }
+        if ($resized || ($this->leastAsked !== null && $this->leastNow($this->leastAsked[0]) !== $this->leastAsked[1])) {
+            $this->measured = [];
+            $this->leastAsked = null;
+            Tree::sizeMayChange($this);
+            $this->parent?->relayout();
+        }
+    }
+
+    /**
+     * The focus came to or left elements of the tree the last render returned (markRestyle()):
+     * those are laid out again from that tree, render() is not called. A render instead when
+     * anything else the layout reads changed since (the stylesheet, the component's style, a
+     * child's size or style state).
+     */
+    private function restyleNow(): void
+    {
+        $sheet = $this->stylesheet();
+        $style = $this->style();
+        $last = $this->shownWith;
+        $layout = $this->tree === null || $this->shown === null || $last === null || $this->relayout || $this->overlays !== [] || $this->floating !== []
+            || $last[0] !== $sheet || $last[1] !== $style || $last[3] !== $this->breakpoints() ? false : $this->tree->restyle($this->shown, $sheet, $style);
+        if ($layout === false) {
+            $this->renderNow();
+            return;
+        }
+        $this->shownWith = [$sheet, $style, Surface::focusVersion(), $last[3]];
+        foreach ($this->tree->takeFocusCalls() as [$callback, $element]) {
+            $this->guard(fn() => $this->call($callback, $element));
+        }
+        if ($layout !== null) {
+            $this->sizes = [];
+            $this->show($layout);
+            $this->firstShown();
         }
     }
 
@@ -1555,7 +1749,7 @@ abstract class Component extends Element
             || $this->overlays !== [] || $this->floating !== [] || $this->tree?->showsHelp !== false) {
             return false;
         }
-        return $last[0] === $this->stylesheet() && $last[1] === $style && $last[2] === Surface::focusVersion()
+        return $last[0] === $this->stylesheet() && $last[1] === $style && $last[2] === Surface::focusVersion() && $last[3] === $this->breakpoints()
             && self::sameElement($result, $this->shown);
     }
 
@@ -1638,7 +1832,7 @@ abstract class Component extends Element
             $sheet = $this->stylesheet();
             $style = $this->style();
             $layout = $this->tree->build($result, $sheet, $style);
-            $this->shownWith = [$sheet, $style, Surface::focusVersion()];
+            $this->shownWith = [$sheet, $style, Surface::focusVersion(), $this->breakpoints()];
             self::$helpShown ??= new \WeakMap();
             if ($this->tree->showsHelp) {
                 self::$helpShown[$this] = true;
@@ -1758,7 +1952,7 @@ abstract class Component extends Element
     }
 
     /**
-     * @internal An element tree places this component, started already, under $parent (null:
+     * @internal An element tree places this component (started already, or new: its first place)
      * as the root). Placed under another container than last time, it is an instance the
      * program kept from one render to the next: from then on a new instance placed where it is
      * does not take its props over, wherever this one moves (see place()).
@@ -2073,6 +2267,12 @@ abstract class Component extends Element
         }
         [$root, $x, $y] = self::$pointer;
         return $root->get() === $this->surface->root() && $this->surface->area()->contains($x, $y);
+    }
+
+    /** @return list<string> the breakpoints in force on the screen it is on (`sm` ... `xl`): states of every element of its tree */
+    private function breakpoints(): array
+    {
+        return $this->mounted ? Stylesheet::breakpoints($this->surface->root()->cols()) : [];
     }
 
     /** @return list<string> the states of this component for the stylesheet */

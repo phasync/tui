@@ -91,7 +91,7 @@ it('measures and paints the two rows the focus moves between, and nothing else',
     });
 });
 
-it('renders a closure program once for a Tab, whose onFocus writes state the render does not read', function () {
+it('does not render a closure program for a Tab whose onFocus writes state the render does not read', function () {
     fiber\run(function () {
         $renders = 0;
         $s = new State(['paused' => array_fill(0, 50, true), 'p' => array_fill(0, 50, 0.3), 'current' => null]);
@@ -106,7 +106,8 @@ it('renders a closure program once for a Tab, whose onFocus writes state the ren
         $renders = 0;
         $t->press('tab');       // (Log -> the next row: its onFocus runs)
         $t->settle();
-        expect($s->current)->toBe(1)->and($renders)->toBe(1);
+        // (0.0.3-beta6: the rows the focus left and entered are laid out again, render() is not called)
+        expect($s->current)->toBe(1)->and($renders)->toBe(0);
         $t->detach();
     });
 });

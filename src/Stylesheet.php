@@ -142,6 +142,8 @@ final class Stylesheet
     private const MEMO = 20000;
     /** @var array<string, array{ComputedStyle, ?ComputedStyle}> compute()'s answers by question, with the parent they inherit from */
     private array $memo = [];
+    /** @var array<string, ComputedStyle> every style resolve() made, by its values (see resolve()) */
+    private array $interned = [];
     /** @var array<string, array{list<string>, array<string, mixed>}|false> utility classes as [states, properties], false for none */
     private static array $utilities = [];
 
@@ -885,7 +887,7 @@ final class Stylesheet
         };
         $grow = isset($set['flex-grow']) ? max(0.0, (float) $this->value($set['flex-grow'])) : null;
         $direction = isset($set['flex-direction']) ? (string) $this->value($set['flex-direction']) : null;
-        return new ComputedStyle(
+        $args = [
             $text,
             $kind,
             $borderStyle,
@@ -908,7 +910,14 @@ final class Stylesheet
             $direction === null ? null : ($direction === 'row' ? 'row' : 'column'),
             $inner,
             $shadow,
-        );
+        ];
+        // equal styles are one object: what is laid out in a style compares it with ===, so an
+        // element whose state changed (the focus came to it) but whose look did not is kept as it is
+        $key = serialize([spl_object_id($text), $kind, spl_object_id($borderStyle), ...\array_slice($args, 3)]);
+        if (\count($this->interned) >= self::MEMO) {
+            $this->interned = [];
+        }
+        return $this->interned[$key] ??= new ComputedStyle(...$args);
     }
 
     /** A value with variables resolved. */

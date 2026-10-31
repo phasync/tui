@@ -10,8 +10,9 @@
  * the same 50 coroutines in a `fiber\sleep(0.1)` loop and no TUI at all (the runtime's part).
  * `keys`: the closure program of TODO-0.0.3-beta5 item 3 (no class: 50 `Row([Text, ProgressBar,
  * Button, Button])` with `onKey:` and `onFocus:`, the bars moved by 50 `Tui::go()` coroutines at
- * 10 Hz) and the time from a Tab to the frame that shows it, as median and worst of the keys
- * pressed in the seconds given.
+ * 10 Hz) and the time from a Tab to a settled screen (`press('tab')` and `settle()`, as a
+ * program under `Tui::headless()` measures it), as median and worst of the keys pressed in the
+ * seconds given.
  * Run with `-d zend.enable_gc=0` to see what the runtime's idle garbage collection adds.
  * Mind the CPU governor (see "Measuring" in docs/surface.md).
  */
@@ -114,12 +115,12 @@ if ($mode === 'keys') {
         while (microtime(true) < $end) {
             $t0 = hrtime(true);
             $terminal->press('tab');
-            $terminal->refresh();       // (the frame that shows the focus moved)
+            $terminal->settle();        // (as a program measures it: until the screen is up to date)
             $times[] = (hrtime(true) - $t0) / 1e6;
             fiber\sleep(0.05);          // (a person's pace: the CPU may clock down in between)
         }
         sort($times);
-        printf("keys: a Tab to the screen in %.1f ms (median), %.1f ms at worst, over %d keys\n", $times[intdiv(count($times), 2)], end($times), count($times));
+        printf("keys: a Tab to a settled screen in %.1f ms (median), %.1f ms at worst, over %d keys\n", $times[intdiv(count($times), 2)], end($times), count($times));
         $terminal->detach();            // (the coroutines end with the program)
     });
     exit;

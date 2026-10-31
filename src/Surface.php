@@ -68,6 +68,11 @@ final class Surface implements \Stringable
     private static array $unsettled = [];
     /** Counts the changes of focus requests and focus paths, for those who keep an answer about the focus. */
     private static int $focusVersion = 0;
+    private static int $hostingVersion = 0;
+    /** @var array<int, Surface> the surfaces focus() or takeFocus() was called on since the focus last settled */
+    private static array $requested = [];
+    /** Something other than a focus request changed the focus of a tree since it last settled. */
+    private static bool $changed = false;
     /** @var \WeakMap<Surface, true>|null surfaces with `area` listeners */
     private static ?\WeakMap $areaWatchers = null;
     /** A window moved, was resized, scrolled, hosted or unhosted since the areas were checked. */
@@ -725,6 +730,7 @@ final class Surface implements \Stringable
     public function focus(): void
     {
         $this->focusStamp = ++self::$focusClock;
+        self::$requested[spl_object_id($this)] = $this;
         self::focusMayMove($this);
     }
 
@@ -737,6 +743,7 @@ final class Surface implements \Stringable
     public function takeFocus(): void
     {
         $this->focusStamp = $this->keepStamp = ++self::$focusClock;
+        self::$requested[spl_object_id($this)] = $this;
         self::focusMayMove($this);
     }
 
@@ -789,6 +796,9 @@ final class Surface implements \Stringable
     public static function focusMayMove(Surface $surface): void
     {
         self::$focusVersion++;
+        if (!isset(self::$requested[spl_object_id($surface)])) {
+            self::$changed = true;      // (not a focus request: the whole tree settles, see settle())
+        }
         self::$unsettled[spl_object_id($surface)] = $surface;
         if (self::$treeChanges === 0) {
             self::settle();
@@ -804,7 +814,13 @@ final class Surface implements \Stringable
         return self::$focusVersion;
     }
 
-    /** Settle the focus of every tree something changed in (each root once). */
+    /**
+     * Settle the focus of every tree something changed in (each root once). When the only
+     * changes are focus requests, only the hosts above the surfaces asked for change their focus
+     * (the latest request is above every other, so the way to it is the focus path, and nothing
+     * else changed): a focus request costs the depth of the tree, not its size. Anything else
+     * (a window hosted, unhosted or raised, a surface's focusability) settles the whole tree.
+     */
     private static function settle(): void
     {
         while (self::$unsettled !== []) {
@@ -813,9 +829,21 @@ final class Surface implements \Stringable
                 $root = $surface->root();
                 $roots[spl_object_id($root)] = $root;
             }
-            self::$unsettled = [];
+            $requested = self::$changed ? [] : self::$requested;
+            self::$unsettled = self::$requested = [];
+            self::$changed = false;
+            usort($requested, fn(Surface $a, Surface $b) => $a->focusStamp <=> $b->focusStamp);
+            foreach ($requested as $surface) {
+                // (in the order asked: a later request takes the hosts it shares with an earlier one)
+                if ($surface->keepStamp === $surface->focusStamp) {
+                    $surface->host?->setFocus(null);
+                }
+                for ($s = $surface; ($v = $s->viewport()) !== null; $s = $v->host()) {
+                    $v->host()->host->setFocus($v);
+                }
+            }
             foreach ($roots as $root) {
-                $root->settleFocus();
+                $root->settleFocus($requested === []);
             }
         }
     }
@@ -860,11 +888,13 @@ final class Surface implements \Stringable
         }
     }
 
-    /** Settle the focus of the tree below this root, and announce how the focus path changed. */
-    private function settleFocus(): void
+    /** Settle the focus of the tree below this root (with $rank, else it is settled), and announce how the focus path changed. */
+    private function settleFocus(bool $rank = true): void
     {
         self::$focusVersion++;
-        $this->rankFocus();
+        if ($rank) {
+            $this->rankFocus();
+        }
         $path = [$this];
         for ($s = $this; ($next = $s->focused()) !== null; $s = $next) {
             $path[] = $next;
@@ -1093,9 +1123,19 @@ final class Surface implements \Stringable
         return new Cursor($at[0], $at[1], $c->visible, $c->shape, $c->blinking);
     }
 
+    /**
+     * @internal A number that changes whenever a surface is hosted somewhere or unhosted: an
+     * answer about which surfaces are shown, computed at the same number, is still right.
+     */
+    public static function hostingVersion(): int
+    {
+        return self::$hostingVersion;
+    }
+
     /** @internal Hosts tell a surface which viewports show it. */
     public function shownThrough(Viewport $view, bool $shown): void
     {
+        self::$hostingVersion++;
         $this->views = array_values(array_filter($this->views, fn(Viewport $v) => $v !== $view));
         if ($shown) {
             $this->views[] = $view;

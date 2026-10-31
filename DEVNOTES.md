@@ -3,6 +3,54 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.3-beta6; TODO-0.0.3-beta6.md)
+
+- [x] 1. Tab cost O(rows): restyle instead of render (Tree::restyle), interned ComputedStyle,
+      component items keyed by their frame, Component::nextStop(), focus-request settle,
+      unshownChildren(); tests/Release/KeyCostBeta6Test.php; the bench measures press+settle
+- [ ] 2. Markdown tab switch
+- [ ] 3. selected into view in a ScrollView; focusing elements from a program
+- [ ] 4. Help() follows the running instance (fresh Tree in a tab)
+- [ ] 5. small: Alt-n anywhere, 'quit' on elements doc, Tui::freeze()
+- [ ] CHANGELOG, docs, README
+
+## Design decisions (0.0.3-beta6)
+
+- **A focus change is a restyle, not a render.** An element surface's focus event used to
+  markDirty() its owner: a closure program re-ran render() and the Tree rebuilt every row for
+  each Tab (the per-row cost). Now the element's path is marked stale and the owner gets a
+  restyle in the frame (Component::markRestyle(), restyleOnly, restyleNow()): Tree::restyle()
+  runs build() over the last root element with `$toward` (stale paths and their ancestors) and
+  `$below` (inside stale paths); every other path returns the item the last build made there
+  (`$made`), so only the containers above a stale element walk their children (cheap returns).
+  Bookkeeping of a full build (claim, seen, cleanup, focusing, hovers, helps) is kept from the
+  last build. A component's own focus change marks its place in its parent's tree
+  (Tree::focusMoved()); Help elements are paths too (helpMayChange(), on any focus move). A
+  full render pending makes the restyle unnecessary; anything else changed (sheet, own style,
+  breakpoints, relayout, overlays, a measure that placed things since) falls back to a render.
+- **ComputedStyle is interned by value** (Stylesheet::resolve()): an element whose states changed
+  but whose look did not gets the same object, so kept() keeps its item and nothing is laid
+  out. Because the same style object now stands for different states, the component's
+  shownWith also records the breakpoints (they were implied by the style's identity before).
+- **Component items are keyed by their frame** (Tree::frameOf()): a component draws itself; a
+  style change that does not touch the window's frame (size, border, margin, ...) keeps the item.
+- **Tab walk**: Component::nextStop() finds the next stop from the focused one up, instead of
+  focusOrder() of the whole screen (which also asked canFocus() -> bindingsInForce() of every
+  component); focusOrder() stays the definition, and a test walks both ways comparing them.
+- **Focus requests settle the path only** (Surface::settle()): when every change since the last
+  settle is a focus()/takeFocus(), the hosts above the requested surfaces (in stamp order) are
+  pointed at them; the latest request outranks every other, so this is what rankFocus() would
+  find. Anything else settles the whole tree as before.
+- **unshownChildren()** caches the started children in no window per (treeVersion,
+  Surface::hostingVersion()); unshownFocus()/focusRank() ran over all children on every key.
+- **Kept instances**: a new instance notes its first container (claim() calls placedUnder() for
+  it too), so an instance kept by the program is recognised from its second render. It used to
+  be recognised only because focus events caused an extra render.
+- Measured (this machine): Tab + settle, 160x50 rows of Text+2 Buttons: 2 rows 1.2 ms, 200 rows
+  1.8 ms (11.8 before); the bench's 50-row monitor 2.5 ms median (bars moving). What is left
+  per frame when all 50 bars move is the emulator parse at each nesting level (bar, row, root,
+  device) and the closure's render: about 28 ms per tick here.
+
 ## Status (0.0.3-beta5; TODO-0.0.3-beta5.md)
 
 - [x] 1. No silent hang on the tagged runtime: Runtime::watch() warns once on stderr when it

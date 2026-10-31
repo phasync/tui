@@ -65,6 +65,21 @@ final class Tree
     private array $focusCalls = [];
     /** @var \WeakMap<Component, array{Tree, string}>|null every component an element tree places (closure content's included): that tree and the path */
     private static ?\WeakMap $placedAt = null;
+    /** @var array<string, ?LayoutItem> per path: the item the last build made there (null: hidden), see restyle() */
+    private array $made = [];
+    /** @var array<string, true> the paths whose focus changed since the last build (see restyle()) */
+    private array $stale = [];
+    /** @var array<string, true>|null during restyle(): the stale paths and the paths above them */
+    private ?array $toward = null;
+    /** @var list<string> during restyle(): the stale paths, each with a '/' (what is below them) */
+    private array $below = [];
+    /** @var array<string, true> the paths of the Help elements of the last build */
+    private array $helps = [];
+    /** A measure that placed things ran after the last build (its items are not that build's). */
+    private bool $measuredSince = false;
+    /** The layout the last build returned, and the style of its root container. */
+    private ?Layout $builtLayout = null;
+    private ?ComputedStyle $rootStyle = null;
 
     /**
      * @param \Closure(string $key, Component $fresh, bool $create): ?Component $place  the child component for a component element (without $create: the one there, or null)
@@ -103,6 +118,68 @@ final class Tree
                 break;
             }
         }
+    }
+
+    /**
+     * The focus came to $component or left it: the tree that placed it lays the component's
+     * place out again in its owner's next frame, without a render (see restyle()).
+     */
+    public static function focusMoved(Component $component): void
+    {
+        $at = self::$placedAt[$component] ?? null;
+        if ($at !== null && $component->isMounted() && $component->error() === null) {
+            $at[0]->stale[$at[1]] = true;
+            $at[0]->owner->markRestyle();
+        }
+    }
+
+    /** The focus moved: the Help elements of the last build show other keys (see restyle()). */
+    public function helpMayChange(): void
+    {
+        if ($this->helps !== []) {
+            $this->stale += $this->helps;
+            $this->owner->markRestyle();
+        }
+    }
+
+    /**
+     * The focus came to or left elements (or child components) of the last build: lay out
+     * again only those and what they are in, from the elements of that build, without a render
+     * (the owner's `render()` is not called, the rest of the tree is not visited). An element
+     * whose look does not change with the focus keeps its item, and then nothing is laid out
+     * at all: so a Tab in a screen of two hundred rows costs what it costs in one of two.
+     * Their onFocus/onBlur callbacks come due as in a build. Returns the owner's new layout,
+     * null when it stands as it is, false when this cannot be done (the last build was of
+     * another element than $root, or a measure placed other things since): render instead.
+     */
+    public function restyle(Element $root, Stylesheet $sheet, ComputedStyle $base): Layout|null|false
+    {
+        if ($this->builtFor !== $root || $this->measuredSince || $this->builtLayout === null) {
+            return false;
+        }
+        if ($this->stale === []) {
+            return null;
+        }
+        $this->toward = [];
+        $this->below = [];
+        foreach ($this->stale as $path => $_) {
+            $this->below[] = $path . '/';
+            for ($p = (string) $path; ; $p = substr($p, 0, $cut)) {
+                $this->toward[$p] = true;
+                if (($cut = strrpos($p, '/')) === false) {
+                    break;
+                }
+            }
+        }
+        $this->stale = [];
+        $was = $this->builtLayout;
+        try {
+            $layout = $this->build($root, $sheet, $base);
+        } finally {
+            $this->toward = null;
+            $this->below = [];
+        }
+        return $layout === $was ? null : $layout;
     }
 
     /** The element shown in $surface by an element tree (a component placed in one is its own element), or null. */
@@ -204,18 +281,27 @@ final class Tree
     /** The layout for the owner's surface that shows $root. */
     public function build(Element $root, Stylesheet $sheet, ComputedStyle $base): Layout
     {
-        $this->present = [];
-        $this->claim($root);
-        $this->seen = [];
-        $this->showsHelp = false;
-        $this->hovers = [];
-        $this->focusing = [];
+        $restyle = $this->toward !== null;
+        if ($restyle) {
+            // (what is not visited stands as the last build left it)
+            $this->focusing = $this->focused;
+        } else {
+            $this->present = [];
+            $this->claim($root);
+            $this->seen = [];
+            $this->showsHelp = false;
+            $this->hovers = [];
+            $this->focusing = [];
+            $this->helps = [];
+            $this->made = [];
+        }
+        $this->measuredSince = false;
         $style = null;
         // a root shown inline is as tall as its content (the region is), not the terminal
         $inline = $this->owner->surface->viewport() === null && (TerminalDevice::of($this->owner->surface)?->isInline() ?? false);
         if ($inline) {
             $item = $this->item($root, 'r', $sheet, $base);
-            $layout = new ElementLayout(ElementLayout::COLUMN, $item === null ? [] : [$item], fill: $base->text);
+            $layout = $this->single(ElementLayout::COLUMN, $item === null ? [] : [$item], $base);
             $item ??= self::nothing();
         } elseif ($root instanceof Column || $root instanceof Row || $root instanceof Layers) {
             // the root container arranges the component's own surface
@@ -229,18 +315,23 @@ final class Tree
             // (laid out above)
         } elseif ($style !== null && !$style->hidden) {
             $layout = $this->container($root, 'r', $sheet, $style);
-            $item = $this->frame(new LayoutItem($this->owner->surface), $root, $style, 'auto', 'auto');
-            $item->measure = self::containerMeasure($layout, $item->border === false ? 0 : 2);
-            $item->layout = $layout;    // (for least(): this item only measures, it is placed by no layout)
+            if ($layout === $this->builtLayout && $this->builtItem !== null && $this->rootStyle === $style) {
+                $item = $this->builtItem;   // (the same layout in the same style: its measures stand)
+            } else {
+                $item = $this->frame(new LayoutItem($this->owner->surface), $root, $style, 'auto', 'auto');
+                $item->measure = self::containerMeasure($layout, $item->border === false ? 0 : 2);
+                $item->layout = $layout;    // (for least(): this item only measures, it is placed by no layout)
+                $this->rootStyle = $style;
+            }
         } else {
             $item = $style === null ? $this->item($root, 'r', $sheet, $base) : null;
             if ($item === null) {
                 // (hidden: nothing shows)
                 $item = new LayoutItem($this->surface('r'));
                 $item->measure = static fn(): array => [0, 0];
-                $layout = new ElementLayout(ElementLayout::SINGLE, [], fill: $base->text);
+                $layout = $this->single(ElementLayout::SINGLE, [], $base);
             } else {
-                $layout = new ElementLayout(ElementLayout::SINGLE, [$item], fill: $base->text);
+                $layout = $this->single(ElementLayout::SINGLE, [$item], $base);
             }
         }
         if ($this->owner instanceof Live) {
@@ -255,6 +346,7 @@ final class Tree
         }
         $this->builtFor = $root;
         $this->builtItem = $item;
+        $this->builtLayout = $layout;
         // the focus entered or left an element with onFocus/onBlur: called after the render
         // (as the frame shows it: blurs first, then what has the focus now)
         $focus = [];
@@ -268,6 +360,9 @@ final class Tree
         }
         array_push($this->focusCalls, ...$focus);
         $this->focused = $this->focusing;
+        if ($restyle) {
+            return $layout;
+        }
         foreach ($this->surfaces as $path => $surface) {
             if (!isset($this->seen[$path])) {
                 unset($this->surfaces[$path], $this->painted[$path], $this->wrapped[$path], $this->items[$path], $this->layouts[$path], self::$shows[$surface]);
@@ -318,6 +413,7 @@ final class Tree
         if ($place) {
             $this->present = [];
             $this->claim($root);
+            $this->measuredSince = true;
         }
         $dry = $this->dry;
         $this->dry = !$place;
@@ -338,8 +434,9 @@ final class Tree
         if ($node instanceof Component) {
             if ($node->isMounted()) {
                 $this->present[spl_object_id($node)] = true;
-                $node->placedUnder($parent);
             }
+            // (also a new one: shown under another container in the next render, it was kept)
+            $node->placedUnder($parent);
         } elseif ($node instanceof Column || $node instanceof Row || $node instanceof Layers) {
             foreach ($node->children as $child) {
                 $this->claim($child, $node);
@@ -378,6 +475,17 @@ final class Tree
         return $layout;
     }
 
+    /** The owner's layout of one item (or none): the last build's when it holds the same. */
+    private function single(string $kind, array $items, ComputedStyle $base): ElementLayout
+    {
+        $kept = $this->builtLayout;
+        if ($kept instanceof ElementLayout && $kept->kind === $kind && $kept->items === $items && $kept->fill === $base->text && $kept->gap === 0
+            && $kept->padding === [0, 0, 0, 0] && $kept->alignItems === 'stretch' && $kept->justify === 'start') {
+            return $kept;
+        }
+        return new ElementLayout($kind, $items, fill: $base->text);
+    }
+
     private static function segment(Element $node, int $i): string
     {
         $key = $node->attribute('key');
@@ -402,6 +510,23 @@ final class Tree
      */
     private function item(Element $node, string $path, Stylesheet $sheet, ComputedStyle $parent): ?LayoutItem
     {
+        if ($this->toward !== null && !isset($this->toward[$path]) && \array_key_exists($path, $this->made)) {
+            foreach ($this->below as $stale) {
+                if (str_starts_with($path, $stale)) {
+                    return $this->made[$path] = $this->itemNow($node, $path, $sheet, $parent);
+                }
+            }
+            return $this->made[$path];      // (a restyle: nothing here changed)
+        }
+        $item = $this->itemNow($node, $path, $sheet, $parent);
+        if (!$this->dry) {
+            $this->made[$path] = $item;
+        }
+        return $item;
+    }
+
+    private function itemNow(Element $node, string $path, Stylesheet $sheet, ComputedStyle $parent): ?LayoutItem
+    {
         if (($node instanceof Text && $node->content instanceof \Closure) || ($node instanceof Box && $node->title instanceof \Closure)) {
             return $this->live($node, $path, $sheet, $parent);
         }
@@ -421,8 +546,10 @@ final class Tree
             $this->seen[$path] = true;
             $this->shows($path, $component->surface, $component);
             $this->placed($component, $path);
-            $sig = 'c' . spl_object_id($component) . '|' . self::sizes($component);
-            return $this->kept($path, $sig, $style) ?? $this->keep($path, $sig, $style, $this->componentItem($component, $style));
+            // (the component draws itself: what its style changes around it is its window's frame,
+            // so a component whose look changed with the focus keeps its item when that did not)
+            $sig = 'c' . spl_object_id($component) . '|' . self::sizes($component) . '|' . self::frameOf($style);
+            return $this->kept($path, $sig) ?? $this->keep($path, $sig, $style, $this->componentItem($component, $style));
         }
         if ($node instanceof Span) {
             $node = new Text([$node]);
@@ -440,6 +567,9 @@ final class Tree
         $keys = $a['onKey'] !== null && !$a['disabled'];     // (it takes the focus)
         if ($node instanceof Text || $node instanceof Help) {
             $surface->setFocusable($keys);
+            if ($node instanceof Help && !$this->dry) {
+                $this->helps[$path] = true;     // (it follows the focus: see helpMayChange())
+            }
             $text = $node instanceof Help ? $this->helpText($node, $sheet, $style) : $node;
             $content = $this->content($text, $sheet, $style);
             $wrap = $text->wrap && $style->wrap !== false;
@@ -518,14 +648,21 @@ final class Tree
         return $node->attribute('width') . ',' . $node->attribute('height');
     }
 
-    /** The item the previous build made at $path, if it was made from $sig in $style. */
-    private function kept(string $path, string $sig, ComputedStyle $style): ?LayoutItem
+    /** The item the previous build made at $path, if it was made from $sig in $style (any style: $sig says all). */
+    private function kept(string $path, string $sig, ?ComputedStyle $style = null): ?LayoutItem
     {
         if ($this->dry) {
             return null;
         }
         $kept = $this->items[$path] ?? null;
-        return $kept !== null && $kept[0] === $sig && $kept[2] === $style ? $kept[1] : null;
+        return $kept !== null && $kept[0] === $sig && ($style === null || $kept[2] === $style) ? $kept[1] : null;
+    }
+
+    /** What frame() takes from $style, as a string: the window of a component made in two styles with the same is the same. */
+    private static function frameOf(ComputedStyle $s): string
+    {
+        return serialize([$s->width, $s->height, $s->maxWidth, $s->maxHeight, $s->border, $s->borderStyle === null ? null : spl_object_id($s->borderStyle),
+            $s->shadow, $s->align, $s->titleAlign, $s->margin, $s->grow, $s->shrink]);
     }
 
     /** Keep $item as the one made at $path from $sig in $style (the entry holds what its signature names). */
@@ -803,8 +940,12 @@ final class Tree
         $this->seen[$path] = true;
         if (!isset($this->surfaces[$path])) {
             $surface = new Surface(1, 1, 0);
-            // :focused of the elements follows the focus
-            $surface->on('focus', fn() => $this->owner->markDirty());
+            // :focused of the elements follows the focus, and their onFocus/onBlur: see restyle()
+            $surface->on('focus', function () use ($path): void {
+                $this->stale[$path] = true;
+                $this->owner->markRestyle();
+                Component::helpMayChange();     // (an element with onKey: its keys show)
+            });
             $surface->on('mouse', fn(Mouse $m) => $this->mouse($surface, $m));
             $this->surfaces[$path] = $surface;
         }
