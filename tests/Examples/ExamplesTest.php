@@ -100,17 +100,23 @@ it('runs the dashboard', function () {
     });
 });
 
-it('runs form: fields, the pick list, the confirmation, the footer of keys', function () {
+it('runs form: fields, validation, the dropdown, the pick list, the switch, the confirmation, the progress', function () {
     example('form.php', [], function (FakeTerminal $t, Terminal $app) {
         expect($t->waitFor('Sign up', 10))->toBeTrue()
-            ->and($t->text())->toContain('your name')->toContain('ctrl+s save')->toContain('Languages');
+            ->and($t->text())->toContain('your name')->toContain('ctrl+s save')->toContain('Languages')->toContain('[ Save ]');
+        $t->press('ctrl+s');
+        expect($t->waitFor('A name, please.'))->toBeTrue();
         $t->type('Ada');
-        $t->press('tab', 'tab');                    // the notes, then the languages
+        $t->press('tab');                           // the notes
+        $t->type("one\ntwo");
+        $t->press('tab', 'down', 'down', 'enter');  // the role: Operations
+        $t->press('tab', 'space');                  // the newsletter
+        $t->press('tab', 'tab', 'tab');             // Save, Clear, the languages
         $t->press('space', 'down', 'space');        // PHP and Go
         $t->press('ctrl+s');
         expect($t->waitFor('Save this sign-up?'))->toBeTrue();
         $t->press('enter');
-        expect($t->waitFor('Saved: Ada (php, go)'))->toBeTrue();
+        expect($t->waitFor('Saved: Ada, ops (php, go), newsletter'))->toBeTrue()->and($t->text())->not->toContain('A name, please.');
         $t->press('ctrl+q');
         expect($app->pty()->wait(5))->toBe(0)->and($app->surface->isAltScreen())->toBeFalse();
     });

@@ -171,46 +171,47 @@ fiber\run(fn() => (new App())->start(new Tty()));     // until it quits
 **Screens from elements.** `render()` may return an element tree instead: the library lays it
 out into surfaces, keeps what is behind each element (focus, scroll, the child components)
 from render to render, and paints it with escape sequences like everything else. State
-renders by itself; keys are data; a dialog's answer is an awaitable.
+renders by itself; keys are data; a form collects its fields; a dialog's answer is an awaitable.
 
 ```php
 use phasync\Tui\{Component, Element, Stylesheet, Tty};
-use phasync\Tui\Component\{Confirm, Editor, Select};
+use phasync\Tui\Component\{Button, Checkbox, Confirm, Editor, Form, Select};
 use phasync\Tui\Element\{Box, Column, Help, Row, Text};
 
 final class Profile extends Component
 {
     protected function bindings(): array
     {
-        return ['ctrl+s' => ['save', 'save'], 'tab' => ['next', 'next field'], 'ctrl+q' => ['quit', 'quit']];
+        return ['ctrl+q' => ['quit', 'quit', 'always' => true]];     // also while a dialog is open
     }
 
     protected function render(): Element
     {
         return new Column([
             new Text('Profile', class: 'title'),
-            new Row([
-                new Box($this->child('name', fn() => new Editor(placeholder: 'your name', maxLines: 1)), 'Name'),
-                new Box($this->child('role', fn() => new Select(['dev' => 'Developer', 'ops' => 'Operations'])), 'Role', width: 20),
-            ]),
+            new Form(
+                new Column([
+                    new Box((new Editor(placeholder: 'your name', maxLines: 1))->with(id: 'name'), 'Name'),
+                    (new Select(['dev' => 'Developer', 'ops' => 'Operations'], dropdown: true))->with(id: 'role'),
+                    (new Checkbox('Send me the newsletter'))->with(id: 'news'),
+                    new Row([new Button('Save'), new Button('Quit', onPress: fn() => $this->quit())], gap: 2, height: 1),
+                ]),
+                validate: fn(array $v) => $v['name'] === '' ? ['name' => 'Your name, please.'] : [],
+                onSubmit: fn(array $v) => $this->save($v),
+            ),
             new Text($this->state->status ?? 'not saved yet', class: 'muted'),
-            new Help(),                                     // ctrl+s save  tab next field  ctrl+q quit
+            new Help(show: 'application'),                  // ctrl+q quit
         ]);
     }
 
-    public function save(): void
+    public function save(array $profile): void
     {
-        $this->go(function () {
+        $this->go(function () use ($profile) {
             if (fiber\await($this->dialog(new Confirm('Save the profile?')))) {
-                $name = $this->child('name')->value();
-                $this->state->status = "saved: $name, " . $this->child('role')->selected();   // shows by itself
+                $this->state->status = "saved: {$profile['name']}, {$profile['role']}"
+                    . ($profile['news'] ? ', newsletter' : '');           // shows by itself
             }
         });
-    }
-
-    public function next(): void
-    {
-        $this->surface->focusNext();
     }
 
     public function quit(): void
@@ -224,9 +225,11 @@ $app->setStylesheet(Stylesheet::default()->with(['Text.title' => ['bold' => true
 fiber\run(fn() => $app->start(new Tty()));
 ```
 
-The name field types every letter (the focused widget comes first); Tab goes on to the role
-list, where Up/Down choose; Ctrl-S asks, and the answer arrives in the coroutine that awaits
-it. `examples/form.php` is a larger form.
+The name field has the focus and types every letter; Tab goes from field to field (the role is
+a dropdown: Enter or Down opens its list), Space ticks the box, Enter submits the form (in a
+field, or on the Save button, which has no `onPress` of its own). Without a name the form
+stays, with its message and the field marked `:invalid`; with one, `Confirm` asks, and the
+answer arrives in the coroutine that awaits it. `examples/form.php` is a larger form.
 
 **How a program ends.** `fiber\run()` returns once nothing runs any more. Quitting (disposing
 the root component, closing the root surface, or detaching the device; each leads to the others)
@@ -240,11 +243,18 @@ the root's cells, and input is encoded as a real terminal would: `type()` for te
 for keys by name, `feed()` for raw bytes as a terminal sends them.
 
 ```php
-$app = (new App())->start($terminal = new FakeTerminal(80, 24));
-$terminal->type("hello\n");
-expect($terminal->text())->toContain('you said: hello');
-$terminal->detach();
+fiber\run(function () {
+    $app = (new App())->start($terminal = new FakeTerminal(80, 24));
+    $terminal->run(function (FakeTerminal $t) {     // detaches afterwards, also when it fails
+        $t->type("hello\n");
+        $t->settle();                               // the render that the input asked for
+        expect($t->text())->toContain('you said: hello');
+    });
+});
 ```
+
+Renders come in the next frame: read the screen after `settle()`, not right after the input
+(and never `usleep()` in a coroutine: it stops the whole program, renders included).
 
 ## Examples
 
