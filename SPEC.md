@@ -147,18 +147,33 @@ position that follows the tail or stays pinned in scrollback, optional border an
 the host). A hosted Surface can itself host Surfaces, to any depth: a pane of a multiplexer running
 another multiplexer is the same structure one level down, and so is a component tree.
 
-- **Compositing is writing.** When a child is damaged, its host repaints the child's visible,
-  damaged cells into its own cells **by writing escape sequences to itself** (cursor positioning
-  and SGR runs, through the same `write()` as every producer), clipped to the viewport. Damage then
-  propagates up: the host is damaged where it repainted, so its host repaints, up to the root.
-  Nothing paints cells directly; the ANSI-only rule holds for the compositor too.
-- **Always a diff, never a full re-render.** Every level works from damage: a Surface records which
-  cells changed since its damage was last taken; a host writes only those (coalesced into runs of
-  same style per row), and the device writes only the root's cells that differ from the previous
-  frame. A whole viewport is repainted only when all of it did change: newly shown, scrolled,
-  resized, or its z-order neighbour moved. A pane printing continuously costs its changed cells per
-  frame, whatever the byte volume; an idle pane costs nothing. Tests assert the byte count the
-  device emits for a one-cell change is a few dozen bytes, not a frame.
+- **Compositing is blitting** (decided 2026-11-01; until 0.0.3-beta7 a host repainted children by
+  writing escape sequences to itself, which cost a serialise-and-parse at every nesting level and
+  was the source of every latency finding of 0.0.3). ANSI remains the only way to render *into* a
+  Surface: producers, components and the device's own drawing all go through `write()`. Between
+  Surfaces, cells are copied: `Surface::copyArea(x, y, w, h): Area` slices a rectangle of rows
+  (one array of graphemes and one of interned style ids per row, wide characters clipped to whole
+  cells, an orphaned half becomes a space) and `Surface::drawArea(Area, x, y)` splices it in,
+  clipped to the destination. Those two primitives, plus a shade transform for dialog shadows, are
+  all a compositor may do; they are `array_slice`/`array_splice` first and are optimised later if
+  a measurement asks (packed cells are the known next step). Each frame the root builds one
+  offscreen Surface by blitting every visible window in z-order with its clipping; containers that
+  only arrange have no window of their own.
+- **One diff, at the end.** The root's offscreen frame is diffed against the frame the device last
+  wrote, row by row, and only the changed runs become ANSI for the terminal; there is no diff and
+  no damage bookkeeping between levels, because a recompose costs the visible area (a few thousand
+  cells), whatever the depth of the tree or the number of Surfaces that changed. The diff compares
+  **visible identity**: a blank cell's foreground, bold, dim and italic are invisible and do not
+  count (background, underline, strike and inverse do), a blank with the default background equals
+  an empty cell, and the ANSI for a blank run sets no foreground. Tests: the blit composite equals
+  the previous ANSI composite on random window trees (property test); a one-cell change emits a
+  few dozen bytes; two frames with the same visible glyphs and attributes emit nothing; a frame's
+  compositing at 160x50 costs about a millisecond regardless of nesting depth.
+- **Scrolling, later.** A pane scrolling one line changes all its rows; the diff then rewrites the
+  pane. ANSI can scroll a full-width band (`DECSTBM` + `SU`/`SD`, universal) and, where the
+  terminal has `DECSLRM` (xterm, recent VTE, WezTerm; not everywhere), a narrower one. A
+  row-shift detector in the final diff that emits those instead of the rows is an optimisation of
+  the output volume only (bytes over ssh, not CPU), to be added when a measurement asks for it.
 - **Input goes down the same tree.** A host has one focused child (or itself). Key, mouse and paste
   events arrive at the root and are passed down the focus path; at the focused leaf, the Surface
   encodes them to the bytes its producer expects (application cursor keys, Kitty keyboard
