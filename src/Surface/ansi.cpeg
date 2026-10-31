@@ -29,8 +29,10 @@ Stream = Item* $
 # start with ESC and the C0 controls come first because their first byte is known from their
 # patterns (written in ASCII for that reason), so the compiler guards each with a comparison of
 # one byte; then text; then what starts with a C1 control, behind one look at that character.
-# At the end of a chunk the loop costs one failed match of Text and one of that look.
-Item = Escape
+# At the end of a chunk the loop costs one failed match of Text and one of that look. The
+# well-formed CSI sequence, what programs send most, is first and on its own (see Csi).
+Item = CsiPlain
+     | Escape
      | Control
      | Text
      | C1Item
@@ -64,11 +66,12 @@ Embedded = /[\x00-\x17\x19\x1c-\x1f\x7f]/
 #
 # The characters are collected in order (with any embedded controls); the emulator checks this
 # structure and ignores a sequence that does not follow it (a parameter character after an
-# intermediate, a private marker after a parameter, a non-ASCII character). The first alternative
-# is the well-formed sequence with nothing embedded, which is what programs send: the same
-# sequence the general rule takes, matched as one terminal and handed over as it stands.
-Csi = /\x1b\[[<=>?]?[0-9:;]*[\x20-\x2f]*[\x40-\x7e]/   <? $state['vt']->csiSequence($_0); return true; ?>
-    | /\x1b/ pre:Embedded* "[" body:CsiChar* end:CsiEnd   <? $state['vt']->csi($pre, $body, $end); return true; ?>
+# intermediate, a private marker after a parameter, a non-ASCII character). CsiPlain is the
+# well-formed sequence with nothing embedded, which is what programs send: the same sequence the
+# general rule takes, matched as one terminal and handed over as it stands.
+CsiPlain = /\x1b\[[<=>?]?[0-9:;]*[\x20-\x2f]*[\x40-\x7e]/   <? $state['vt']->csiSequence($_0); return true; ?>
+
+Csi = /\x1b/ pre:Embedded* "[" body:CsiChar* end:CsiEnd   <? $state['vt']->csi($pre, $body, $end); return true; ?>
 
 CsiC1 = /\x{9b}/ body:CsiChar* end:CsiEnd               <? $state['vt']->csi([], $body, $end); return true; ?>
 

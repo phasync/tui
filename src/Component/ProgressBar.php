@@ -40,9 +40,7 @@ class ProgressBar extends Component
 {
     private int $tick = 0;
     private bool $animating = false;
-    /** What it drew last: its look in short (drawn()), so a value that draws the same costs no drawing. */
-    private string $drawn = '';
-    /** @var array{int, int, int, string, string, string, string}|null what was drawn last: cols, bar width, filled from, filled cells, label, styles (see drawing()) */
+    /** @var array{int, int, int, int, string, string, string}|null what was drawn last (see shape()) */
     private ?array $cells = null;
 
     /**
@@ -70,7 +68,7 @@ class ProgressBar extends Component
     {
         $this->value = $value;
         $this->label = $label ?? $this->label;
-        if ($value instanceof \Closure || !$this->isMounted() || $this->look($value) !== $this->drawn) {
+        if ($value instanceof \Closure || !$this->isMounted() || $this->shape($value) !== $this->cells) {
             $this->requestRender();
         }
     }
@@ -105,11 +103,10 @@ class ProgressBar extends Component
     {
         $value = $this->value();
         $this->animate($value);       // (every value it gets, by props or setValue(), comes with a render)
-        $styles = [$this->style(), $this->style('bar')];
-        $look = $this->look($value, $styles);
-        if ($look !== $this->drawn) {
-            $this->drawn = $look;
-            $this->surface->write($this->drawing($value, $styles));
+        $shape = $this->shape($value);
+        if ($shape !== $this->cells) {
+            $this->surface->write($this->drawing($this->cells, $shape));
+            $this->cells = $shape;
         }
         return null;
     }
@@ -122,31 +119,14 @@ class ProgressBar extends Component
     }
 
     /**
-     * What the bar shows for $value (in $styles, see drawing()), in short: its width, the label (with the percentage), the
-     * cells filled and the styles. Equal for two values that draw the same.
-     */
-    private function look(float|\Closure|null $value, ?array $styles = null): string
-    {
-        $styles ??= [$this->style(), $this->style('bar')];
-        if ($value instanceof \Closure) {
-            $value = $this->value();
-        }
-        $cols = $this->surface->cols();
-        $label = $this->labelText($value);
-        $room = intdiv($cols, 2) - 1;
-        $shown = $room < 1 || $label === '' ? 0 : min($room, Text::width(Markup::plain($label)));
-        $width = max(0, $cols - ($shown === 0 ? 0 : $shown + 1));
-        $cells = $value === null ? 't' . $this->tick : (int) round(max(0, min(1, $value)) * $width);
-        return $cols . "\0" . $cells . "\0" . spl_object_id($styles[0]) . "\0" . spl_object_id($styles[1]) . "\0" . $label;
-    }
-
-    /**
-     * What the bar writes for $value at its size now, in $styles (its own and its `bar` part's):
-     * everything, or only the cells and the label that changed since the last drawing.
+     * What the bar shows for $value at its size now: its width, the bar's width, the filled
+     * cells (from, how many), the label as drawn (with the percentage, cut to fit), and the
+     * escape sequences of its style and its `bar` part's. Equal for two values that draw the
+     * same, so a value that draws the same costs this and no drawing.
      *
-     * @param array{ComputedStyle, ComputedStyle} $styles
+     * @return array{int, int, int, int, string, string, string}
      */
-    private function drawing(float|\Closure|null $value, array $styles): string
+    private function shape(float|\Closure|null $value): array
     {
         if ($value instanceof \Closure) {
             $value = $this->value();
@@ -161,27 +141,32 @@ class ProgressBar extends Component
             $span = max(1, $width - $block);
             $pos = $this->tick % (2 * $span);
             $from = $pos < $span ? $pos : 2 * $span - $pos;
-            $cells = [$from, $block];
+            $n = $block;
         } else {
-            $cells = [0, (int) round(max(0, min(1, $value)) * $width)];
+            $from = 0;
+            $n = (int) round(max(0, min(1, $value)) * $width);
         }
-        [$from, $n] = $cells;
-        $n = min($n, $width - $from);
-        $base = Ansi::style($styles[0]->text);
-        $bar = Ansi::style($styles[1]->text);
-        $was = $this->cells;
-        $this->cells = [$cols, $width, $from, $n, $label, $base, $bar];
-        if ($was !== null && [$was[0], $was[1], $was[5], $was[6]] === [$cols, $width, $base, $bar]) {
+        return [$cols, $width, $from, min($n, $width - $from), $label, Ansi::style($this->style()->text), Ansi::style($this->style('bar')->text)];
+    }
+
+    /**
+     * What the bar writes to turn drawing $was (null: none) into $now (see shape()):
+     * everything, or only the cells and the label that changed.
+     *
+     * @param array{int, int, int, int, string, string, string}|null $was
+     * @param array{int, int, int, int, string, string, string}      $now
+     */
+    private function drawing(?array $was, array $now): string
+    {
+        [$cols, $width, $from, $n, $label, $base, $bar] = $now;
+        if ($was !== null && $was[0] === $cols && $was[1] === $width && $was[5] === $base && $was[6] === $bar) {
             // the same bar at the same size: only the cells whose fill changed, and the label
             // (a bar that moves by a cell writes a cell, not the whole row)
             $out = '';
             [, , $oldFrom, $oldN, $oldLabel] = $was;
             // (the cells between two consecutive edges of the old and the new fill are all
             // filled or all empty, before and now)
-            $edges = array_unique([0, $width, ...array_map(
-                fn(int $e) => max(0, min($width, $e)),
-                [$from, $from + $n, $oldFrom, $oldFrom + $oldN],
-            )]);
+            $edges = array_unique([0, $width, min($width, $from), min($width, $from + $n), min($width, $oldFrom), min($width, $oldFrom + $oldN)]);
             sort($edges);
             for ($i = 0, $last = \count($edges) - 1; $i < $last; $i++) {
                 [$x, $end] = [$edges[$i], $edges[$i + 1]];

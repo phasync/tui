@@ -123,11 +123,11 @@ class AnsiParser
 
         $_savedCommit3 = $this->commitOffset;
         $_choiceOffset3 = $this->offset;
-        if ($this->length - $this->offset < 1 || $this->source[$this->offset] !== '') {
-            $this->expect('Escape');
+        if ($this->length - $this->offset < 3 || $this->source[$this->offset] !== '') {
+            $this->expect('CsiPlain');
             $_choice3_0 = AnsiParserSignal::MISS;
         } else {
-            $_choice3_0 = $this->parseEscape();
+            $_choice3_0 = $this->parseCsiPlain();
         }
         if ($_choice3_0 !== AnsiParserSignal::MISS) {
             $_result = $_choice3_0;
@@ -139,12 +139,11 @@ class AnsiParser
             goto _choiceEnd3;
         }
         $this->offset = $_choiceOffset3;
-        if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
-', $this->source[$this->offset])) {
-            $this->expect('Control');
+        if ($this->length - $this->offset < 1 || $this->source[$this->offset] !== '') {
+            $this->expect('Escape');
             $_choice3_1 = AnsiParserSignal::MISS;
         } else {
-            $_choice3_1 = $this->parseControl();
+            $_choice3_1 = $this->parseEscape();
         }
         if ($_choice3_1 !== AnsiParserSignal::MISS) {
             $_result = $_choice3_1;
@@ -156,7 +155,13 @@ class AnsiParser
             goto _choiceEnd3;
         }
         $this->offset = $_choiceOffset3;
-        $_choice3_2 = $this->parseText();
+        if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
+', $this->source[$this->offset])) {
+            $this->expect('Control');
+            $_choice3_2 = AnsiParserSignal::MISS;
+        } else {
+            $_choice3_2 = $this->parseControl();
+        }
         if ($_choice3_2 !== AnsiParserSignal::MISS) {
             $_result = $_choice3_2;
             $this->commitOffset = $_savedCommit3;
@@ -167,9 +172,20 @@ class AnsiParser
             goto _choiceEnd3;
         }
         $this->offset = $_choiceOffset3;
-        $_choice3_3 = $this->parseC1Item();
+        $_choice3_3 = $this->parseText();
         if ($_choice3_3 !== AnsiParserSignal::MISS) {
             $_result = $_choice3_3;
+            $this->commitOffset = $_savedCommit3;
+            goto _choiceEnd3;
+        }
+        if ($this->commitOffset !== $_savedCommit3) {
+            $_result = AnsiParserSignal::MISS;
+            goto _choiceEnd3;
+        }
+        $this->offset = $_choiceOffset3;
+        $_choice3_4 = $this->parseC1Item();
+        if ($_choice3_4 !== AnsiParserSignal::MISS) {
+            $_result = $_choice3_4;
             $this->commitOffset = $_savedCommit3;
             goto _choiceEnd3;
         }
@@ -466,16 +482,41 @@ class AnsiParser
         return $_result;
     }
 
+    private function parseCsiPlain(): mixed
+    {
+        $_offset = $this->offset;
+
+        $_seqOffset10 = $this->offset;
+        $_seqCommit10 = $this->commitOffset;
+        $_result = [];
+        if (\preg_match('/\\x1b\\[[<=>?]?[0-9:;]*[\\x20-\\x2f]*[\\x40-\\x7e]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_seq10_0 = $_m[0];
+            $this->offset += \strlen($_m[0]);
+        } else {
+            $_seq10_0 = AnsiParserSignal::MISS;
+        }
+        if ($_seq10_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit10 || $_seqOffset10 >= $this->commitOffset) {
+                $this->offset = $_seqOffset10;
+            }
+            return AnsiParserSignal::MISS;
+        }
+        if ($_seq10_0 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq10_0;
+        }
+        $_result = $this->snippet_CsiPlain_1($_seq10_0);
+
+        return $_result;
+    }
+
     private function parseCsi(): mixed
     {
         $_offset = $this->offset;
 
-        $_savedCommit10 = $this->commitOffset;
-        $_choiceOffset10 = $this->offset;
         $_seqOffset11 = $this->offset;
         $_seqCommit11 = $this->commitOffset;
-        $_choice10_0 = [];
-        if (\preg_match('/\\x1b\\[[<=>?]?[0-9:;]*[\\x20-\\x2f]*[\\x40-\\x7e]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+        $_result = [];
+        if (\preg_match('/\\x1b/uA', $this->source, $_m, 0, $this->offset) === 1) {
             $_seq11_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
@@ -485,123 +526,74 @@ class AnsiParser
             if ($this->commitOffset === $_seqCommit11 || $_seqOffset11 >= $this->commitOffset) {
                 $this->offset = $_seqOffset11;
             }
-            $_choice10_0 = AnsiParserSignal::MISS;
-            goto _seqEnd11;
+            return AnsiParserSignal::MISS;
         }
         if ($_seq11_0 !== AnsiParserSignal::HIT) {
-            $_choice10_0[] = $_seq11_0;
+            $_result[] = $_seq11_0;
         }
-        $_choice10_0 = $this->snippet_Csi_1($_seq11_0);
-        _seqEnd11:
-        if ($_choice10_0 !== AnsiParserSignal::MISS) {
-            $_result = $_choice10_0;
-            $this->commitOffset = $_savedCommit10;
-            goto _choiceEnd10;
-        }
-        if ($this->commitOffset !== $_savedCommit10) {
-            $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd10;
-        }
-        $this->offset = $_choiceOffset10;
-        $_seqOffset12 = $this->offset;
-        $_seqCommit12 = $this->commitOffset;
-        $_choice10_1 = [];
-        if (\preg_match('/\\x1b/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq12_0 = $_m[0];
-            $this->offset += \strlen($_m[0]);
-        } else {
-            $_seq12_0 = AnsiParserSignal::MISS;
-        }
-        if ($_seq12_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit12 || $_seqOffset12 >= $this->commitOffset) {
-                $this->offset = $_seqOffset12;
-            }
-            $_choice10_1 = AnsiParserSignal::MISS;
-            goto _seqEnd12;
-        }
-        if ($_seq12_0 !== AnsiParserSignal::HIT) {
-            $_choice10_1[] = $_seq12_0;
-        }
-        $_seq12_1 = [];
+        $_seq11_1 = [];
         do {
             if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
 ', $this->source[$this->offset])) {
                 $this->expect('Embedded');
-                $_rep13 = AnsiParserSignal::MISS;
+                $_rep12 = AnsiParserSignal::MISS;
             } else {
-                $_rep13 = $this->parseEmbedded();
+                $_rep12 = $this->parseEmbedded();
             }
-            if ($_rep13 !== AnsiParserSignal::MISS) {
-                $_seq12_1[] = $_rep13;
+            if ($_rep12 !== AnsiParserSignal::MISS) {
+                $_seq11_1[] = $_rep12;
             }
-        } while ($_rep13 !== AnsiParserSignal::MISS);
-        if ($_seq12_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit12 || $_seqOffset12 >= $this->commitOffset) {
-                $this->offset = $_seqOffset12;
+        } while ($_rep12 !== AnsiParserSignal::MISS);
+        if ($_seq11_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit11 || $_seqOffset11 >= $this->commitOffset) {
+                $this->offset = $_seqOffset11;
             }
-            $_choice10_1 = AnsiParserSignal::MISS;
-            goto _seqEnd12;
+            return AnsiParserSignal::MISS;
         }
-        if ($_seq12_1 !== AnsiParserSignal::HIT) {
-            $_choice10_1['pre'] = $_seq12_1;
+        if ($_seq11_1 !== AnsiParserSignal::HIT) {
+            $_result['pre'] = $_seq11_1;
         }
         if ($this->offset < $this->length && $this->source[$this->offset] === '[') {
-            $_seq12_2 = $this->source[$this->offset++];
+            $_seq11_2 = $this->source[$this->offset++];
         } else {
-            $_seq12_2 = AnsiParserSignal::MISS;
+            $_seq11_2 = AnsiParserSignal::MISS;
         }
-        if ($_seq12_2 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit12 || $_seqOffset12 >= $this->commitOffset) {
-                $this->offset = $_seqOffset12;
+        if ($_seq11_2 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit11 || $_seqOffset11 >= $this->commitOffset) {
+                $this->offset = $_seqOffset11;
             }
-            $_choice10_1 = AnsiParserSignal::MISS;
-            goto _seqEnd12;
+            return AnsiParserSignal::MISS;
         }
-        if ($_seq12_2 !== AnsiParserSignal::HIT) {
-            $_choice10_1[] = $_seq12_2;
+        if ($_seq11_2 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq11_2;
         }
-        $_seq12_3 = [];
+        $_seq11_3 = [];
         do {
-            $_rep14 = $this->parseCsiChar();
-            if ($_rep14 !== AnsiParserSignal::MISS) {
-                $_seq12_3[] = $_rep14;
+            $_rep13 = $this->parseCsiChar();
+            if ($_rep13 !== AnsiParserSignal::MISS) {
+                $_seq11_3[] = $_rep13;
             }
-        } while ($_rep14 !== AnsiParserSignal::MISS);
-        if ($_seq12_3 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit12 || $_seqOffset12 >= $this->commitOffset) {
-                $this->offset = $_seqOffset12;
+        } while ($_rep13 !== AnsiParserSignal::MISS);
+        if ($_seq11_3 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit11 || $_seqOffset11 >= $this->commitOffset) {
+                $this->offset = $_seqOffset11;
             }
-            $_choice10_1 = AnsiParserSignal::MISS;
-            goto _seqEnd12;
+            return AnsiParserSignal::MISS;
         }
-        if ($_seq12_3 !== AnsiParserSignal::HIT) {
-            $_choice10_1['body'] = $_seq12_3;
+        if ($_seq11_3 !== AnsiParserSignal::HIT) {
+            $_result['body'] = $_seq11_3;
         }
-        $_seq12_4 = $this->parseCsiEnd();
-        if ($_seq12_4 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit12 || $_seqOffset12 >= $this->commitOffset) {
-                $this->offset = $_seqOffset12;
+        $_seq11_4 = $this->parseCsiEnd();
+        if ($_seq11_4 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit11 || $_seqOffset11 >= $this->commitOffset) {
+                $this->offset = $_seqOffset11;
             }
-            $_choice10_1 = AnsiParserSignal::MISS;
-            goto _seqEnd12;
+            return AnsiParserSignal::MISS;
         }
-        if ($_seq12_4 !== AnsiParserSignal::HIT) {
-            $_choice10_1['end'] = $_seq12_4;
+        if ($_seq11_4 !== AnsiParserSignal::HIT) {
+            $_result['end'] = $_seq11_4;
         }
-        $_choice10_1 = $this->snippet_Csi_2($_seq12_0, $_seq12_1, $_seq12_2, $_seq12_3, $_seq12_4);
-        _seqEnd12:
-        if ($_choice10_1 !== AnsiParserSignal::MISS) {
-            $_result = $_choice10_1;
-            $this->commitOffset = $_savedCommit10;
-            goto _choiceEnd10;
-        }
-        if ($this->commitOffset !== $_savedCommit10) {
-            $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd10;
-        }
-        $this->offset = $_choiceOffset10;
-        $_result = AnsiParserSignal::MISS;
-        _choiceEnd10:
+        $_result = $this->snippet_Csi_1($_seq11_0, $_seq11_1, $_seq11_2, $_seq11_3, $_seq11_4);
 
         return $_result;
     }
@@ -610,51 +602,51 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
-        $_seqOffset15 = $this->offset;
-        $_seqCommit15 = $this->commitOffset;
+        $_seqOffset14 = $this->offset;
+        $_seqCommit14 = $this->commitOffset;
         $_result = [];
         if (\preg_match('/\\x{9b}/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq15_0 = $_m[0];
+            $_seq14_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_seq15_0 = AnsiParserSignal::MISS;
+            $_seq14_0 = AnsiParserSignal::MISS;
         }
-        if ($_seq15_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit15 || $_seqOffset15 >= $this->commitOffset) {
-                $this->offset = $_seqOffset15;
+        if ($_seq14_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit14 || $_seqOffset14 >= $this->commitOffset) {
+                $this->offset = $_seqOffset14;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq15_0 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq15_0;
+        if ($_seq14_0 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq14_0;
         }
-        $_seq15_1 = [];
+        $_seq14_1 = [];
         do {
-            $_rep16 = $this->parseCsiChar();
-            if ($_rep16 !== AnsiParserSignal::MISS) {
-                $_seq15_1[] = $_rep16;
+            $_rep15 = $this->parseCsiChar();
+            if ($_rep15 !== AnsiParserSignal::MISS) {
+                $_seq14_1[] = $_rep15;
             }
-        } while ($_rep16 !== AnsiParserSignal::MISS);
-        if ($_seq15_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit15 || $_seqOffset15 >= $this->commitOffset) {
-                $this->offset = $_seqOffset15;
-            }
-            return AnsiParserSignal::MISS;
-        }
-        if ($_seq15_1 !== AnsiParserSignal::HIT) {
-            $_result['body'] = $_seq15_1;
-        }
-        $_seq15_2 = $this->parseCsiEnd();
-        if ($_seq15_2 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit15 || $_seqOffset15 >= $this->commitOffset) {
-                $this->offset = $_seqOffset15;
+        } while ($_rep15 !== AnsiParserSignal::MISS);
+        if ($_seq14_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit14 || $_seqOffset14 >= $this->commitOffset) {
+                $this->offset = $_seqOffset14;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq15_2 !== AnsiParserSignal::HIT) {
-            $_result['end'] = $_seq15_2;
+        if ($_seq14_1 !== AnsiParserSignal::HIT) {
+            $_result['body'] = $_seq14_1;
         }
-        $_result = $this->snippet_CsiC1_1($_seq15_0, $_seq15_1, $_seq15_2);
+        $_seq14_2 = $this->parseCsiEnd();
+        if ($_seq14_2 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit14 || $_seqOffset14 >= $this->commitOffset) {
+                $this->offset = $_seqOffset14;
+            }
+            return AnsiParserSignal::MISS;
+        }
+        if ($_seq14_2 !== AnsiParserSignal::HIT) {
+            $_result['end'] = $_seq14_2;
+        }
+        $_result = $this->snippet_CsiC1_1($_seq14_0, $_seq14_1, $_seq14_2);
 
         return $_result;
     }
@@ -664,31 +656,31 @@ class AnsiParser
         $_offset = $this->offset;
 
         // Optimized: single-variance-point pattern
-        $_svCommit17 = $this->commitOffset;
-        $_svOffset17 = $this->offset;
-        if (\preg_match('/(?:(?P<g0>[\\x20-\\x3f]+)|(?P<g1>[\\x{a0}-\\x{10ffff}]))/uA', $this->source, $_svMatch17, 0, $this->offset)) {
-            $this->offset += \strlen($_svMatch17[0]);
-            $_svTerm17 = $_svMatch17[0];
+        $_svCommit16 = $this->commitOffset;
+        $_svOffset16 = $this->offset;
+        if (\preg_match('/(?:(?P<g0>[\\x20-\\x3f]+)|(?P<g1>[\\x{a0}-\\x{10ffff}]))/uA', $this->source, $_svMatch16, 0, $this->offset)) {
+            $this->offset += \strlen($_svMatch16[0]);
+            $_svTerm16 = $_svMatch16[0];
             // Dispatch based on matched terminal
-            if (isset($_svMatch17['g0']) && $_svMatch17['g0'] !== '') {
-                $_result = $_svTerm17;
-            } elseif (isset($_svMatch17['g1']) && $_svMatch17['g1'] !== '') {
-                $_result = $_svTerm17;
+            if (isset($_svMatch16['g0']) && $_svMatch16['g0'] !== '') {
+                $_result = $_svTerm16;
+            } elseif (isset($_svMatch16['g1']) && $_svMatch16['g1'] !== '') {
+                $_result = $_svTerm16;
             }
         } else {
-            $this->offset = $_svOffset17;
+            $this->offset = $_svOffset16;
             $_result = AnsiParserSignal::MISS;
         }
         if ($_result === AnsiParserSignal::MISS) {
-            $this->offset = $_svOffset17;
+            $this->offset = $_svOffset16;
             if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
 ', $this->source[$this->offset])) {
                 $this->expect('Embedded');
-                $_svFallback17 = AnsiParserSignal::MISS;
+                $_svFallback16 = AnsiParserSignal::MISS;
             } else {
-                $_svFallback17 = $this->parseEmbedded();
+                $_svFallback16 = $this->parseEmbedded();
             }
-            $_result = $_svFallback17;
+            $_result = $_svFallback16;
         }
 
         return $_result;
@@ -698,91 +690,91 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
-        $_savedCommit18 = $this->commitOffset;
-        $_choiceOffset18 = $this->offset;
+        $_savedCommit17 = $this->commitOffset;
+        $_choiceOffset17 = $this->offset;
         if (\preg_match('/[\\x40-\\x7e]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_choice18_0 = $_m[0];
+            $_choice17_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_choice18_0 = AnsiParserSignal::MISS;
+            $_choice17_0 = AnsiParserSignal::MISS;
         }
-        if ($_choice18_0 !== AnsiParserSignal::MISS) {
-            $_result = $_choice18_0;
-            $this->commitOffset = $_savedCommit18;
-            goto _choiceEnd18;
+        if ($_choice17_0 !== AnsiParserSignal::MISS) {
+            $_result = $_choice17_0;
+            $this->commitOffset = $_savedCommit17;
+            goto _choiceEnd17;
         }
-        if ($this->commitOffset !== $_savedCommit18) {
+        if ($this->commitOffset !== $_savedCommit17) {
             $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd18;
+            goto _choiceEnd17;
         }
-        $this->offset = $_choiceOffset18;
+        $this->offset = $_choiceOffset17;
+        $_seqOffset18 = $this->offset;
+        $_seqCommit18 = $this->commitOffset;
+        $_choice17_1 = [];
+        if (\preg_match('/[\\x18\\x1a]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_seq18_0 = $_m[0];
+            $this->offset += \strlen($_m[0]);
+        } else {
+            $_seq18_0 = AnsiParserSignal::MISS;
+        }
+        if ($_seq18_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit18 || $_seqOffset18 >= $this->commitOffset) {
+                $this->offset = $_seqOffset18;
+            }
+            $_choice17_1 = AnsiParserSignal::MISS;
+            goto _seqEnd18;
+        }
+        if ($_seq18_0 !== AnsiParserSignal::HIT) {
+            $_choice17_1[] = $_seq18_0;
+        }
+        $_choice17_1 = $this->snippet_CsiEnd_1($_seq18_0);
+        _seqEnd18:
+        if ($_choice17_1 !== AnsiParserSignal::MISS) {
+            $_result = $_choice17_1;
+            $this->commitOffset = $_savedCommit17;
+            goto _choiceEnd17;
+        }
+        if ($this->commitOffset !== $_savedCommit17) {
+            $_result = AnsiParserSignal::MISS;
+            goto _choiceEnd17;
+        }
+        $this->offset = $_choiceOffset17;
         $_seqOffset19 = $this->offset;
         $_seqCommit19 = $this->commitOffset;
-        $_choice18_1 = [];
-        if (\preg_match('/[\\x18\\x1a]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq19_0 = $_m[0];
+        $_choice17_2 = [];
+        $_predOffset20 = $this->offset;
+        if (\preg_match('/[\\x1b\\x{80}-\\x{9f}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_pred20 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_seq19_0 = AnsiParserSignal::MISS;
+            $_pred20 = AnsiParserSignal::MISS;
         }
+        $this->offset = $_predOffset20;
+        $_seq19_0 = ($_pred20 !== AnsiParserSignal::MISS) ? AnsiParserSignal::HIT : AnsiParserSignal::MISS;
         if ($_seq19_0 === AnsiParserSignal::MISS) {
             if ($this->commitOffset === $_seqCommit19 || $_seqOffset19 >= $this->commitOffset) {
                 $this->offset = $_seqOffset19;
             }
-            $_choice18_1 = AnsiParserSignal::MISS;
+            $_choice17_2 = AnsiParserSignal::MISS;
             goto _seqEnd19;
         }
         if ($_seq19_0 !== AnsiParserSignal::HIT) {
-            $_choice18_1[] = $_seq19_0;
+            $_choice17_2[] = $_seq19_0;
         }
-        $_choice18_1 = $this->snippet_CsiEnd_1($_seq19_0);
+        $_choice17_2 = $this->snippet_CsiEnd_2($_seq19_0);
         _seqEnd19:
-        if ($_choice18_1 !== AnsiParserSignal::MISS) {
-            $_result = $_choice18_1;
-            $this->commitOffset = $_savedCommit18;
-            goto _choiceEnd18;
+        if ($_choice17_2 !== AnsiParserSignal::MISS) {
+            $_result = $_choice17_2;
+            $this->commitOffset = $_savedCommit17;
+            goto _choiceEnd17;
         }
-        if ($this->commitOffset !== $_savedCommit18) {
+        if ($this->commitOffset !== $_savedCommit17) {
             $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd18;
+            goto _choiceEnd17;
         }
-        $this->offset = $_choiceOffset18;
-        $_seqOffset20 = $this->offset;
-        $_seqCommit20 = $this->commitOffset;
-        $_choice18_2 = [];
-        $_predOffset21 = $this->offset;
-        if (\preg_match('/[\\x1b\\x{80}-\\x{9f}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_pred21 = $_m[0];
-            $this->offset += \strlen($_m[0]);
-        } else {
-            $_pred21 = AnsiParserSignal::MISS;
-        }
-        $this->offset = $_predOffset21;
-        $_seq20_0 = ($_pred21 !== AnsiParserSignal::MISS) ? AnsiParserSignal::HIT : AnsiParserSignal::MISS;
-        if ($_seq20_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit20 || $_seqOffset20 >= $this->commitOffset) {
-                $this->offset = $_seqOffset20;
-            }
-            $_choice18_2 = AnsiParserSignal::MISS;
-            goto _seqEnd20;
-        }
-        if ($_seq20_0 !== AnsiParserSignal::HIT) {
-            $_choice18_2[] = $_seq20_0;
-        }
-        $_choice18_2 = $this->snippet_CsiEnd_2($_seq20_0);
-        _seqEnd20:
-        if ($_choice18_2 !== AnsiParserSignal::MISS) {
-            $_result = $_choice18_2;
-            $this->commitOffset = $_savedCommit18;
-            goto _choiceEnd18;
-        }
-        if ($this->commitOffset !== $_savedCommit18) {
-            $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd18;
-        }
-        $this->offset = $_choiceOffset18;
+        $this->offset = $_choiceOffset17;
         $_result = AnsiParserSignal::MISS;
-        _choiceEnd18:
+        _choiceEnd17:
 
         return $_result;
     }
@@ -791,81 +783,81 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
-        $_seqOffset22 = $this->offset;
-        $_seqCommit22 = $this->commitOffset;
+        $_seqOffset21 = $this->offset;
+        $_seqCommit21 = $this->commitOffset;
         $_result = [];
         if (\preg_match('/\\x1b/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq22_0 = $_m[0];
+            $_seq21_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_seq22_0 = AnsiParserSignal::MISS;
+            $_seq21_0 = AnsiParserSignal::MISS;
         }
-        if ($_seq22_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit22 || $_seqOffset22 >= $this->commitOffset) {
-                $this->offset = $_seqOffset22;
+        if ($_seq21_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit21 || $_seqOffset21 >= $this->commitOffset) {
+                $this->offset = $_seqOffset21;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq22_0 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq22_0;
+        if ($_seq21_0 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq21_0;
         }
-        $_seq22_1 = [];
+        $_seq21_1 = [];
         do {
             if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
 ', $this->source[$this->offset])) {
                 $this->expect('Embedded');
-                $_rep23 = AnsiParserSignal::MISS;
+                $_rep22 = AnsiParserSignal::MISS;
             } else {
-                $_rep23 = $this->parseEmbedded();
+                $_rep22 = $this->parseEmbedded();
             }
-            if ($_rep23 !== AnsiParserSignal::MISS) {
-                $_seq22_1[] = $_rep23;
+            if ($_rep22 !== AnsiParserSignal::MISS) {
+                $_seq21_1[] = $_rep22;
             }
-        } while ($_rep23 !== AnsiParserSignal::MISS);
-        if ($_seq22_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit22 || $_seqOffset22 >= $this->commitOffset) {
-                $this->offset = $_seqOffset22;
+        } while ($_rep22 !== AnsiParserSignal::MISS);
+        if ($_seq21_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit21 || $_seqOffset21 >= $this->commitOffset) {
+                $this->offset = $_seqOffset21;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq22_1 !== AnsiParserSignal::HIT) {
-            $_result['pre'] = $_seq22_1;
+        if ($_seq21_1 !== AnsiParserSignal::HIT) {
+            $_result['pre'] = $_seq21_1;
         }
         if ($this->offset < $this->length && $this->source[$this->offset] === ']') {
-            $_seq22_2 = $this->source[$this->offset++];
+            $_seq21_2 = $this->source[$this->offset++];
         } else {
-            $_seq22_2 = AnsiParserSignal::MISS;
+            $_seq21_2 = AnsiParserSignal::MISS;
         }
-        if ($_seq22_2 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit22 || $_seqOffset22 >= $this->commitOffset) {
-                $this->offset = $_seqOffset22;
+        if ($_seq21_2 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit21 || $_seqOffset21 >= $this->commitOffset) {
+                $this->offset = $_seqOffset21;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq22_2 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq22_2;
+        if ($_seq21_2 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq21_2;
         }
-        $_seq22_3 = $this->parseOscText();
-        if ($_seq22_3 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit22 || $_seqOffset22 >= $this->commitOffset) {
-                $this->offset = $_seqOffset22;
+        $_seq21_3 = $this->parseOscText();
+        if ($_seq21_3 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit21 || $_seqOffset21 >= $this->commitOffset) {
+                $this->offset = $_seqOffset21;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq22_3 !== AnsiParserSignal::HIT) {
-            $_result['text'] = $_seq22_3;
+        if ($_seq21_3 !== AnsiParserSignal::HIT) {
+            $_result['text'] = $_seq21_3;
         }
-        $_seq22_4 = $this->parseOscEnd();
-        if ($_seq22_4 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit22 || $_seqOffset22 >= $this->commitOffset) {
-                $this->offset = $_seqOffset22;
+        $_seq21_4 = $this->parseOscEnd();
+        if ($_seq21_4 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit21 || $_seqOffset21 >= $this->commitOffset) {
+                $this->offset = $_seqOffset21;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq22_4 !== AnsiParserSignal::HIT) {
-            $_result['end'] = $_seq22_4;
+        if ($_seq21_4 !== AnsiParserSignal::HIT) {
+            $_result['end'] = $_seq21_4;
         }
-        $_result = $this->snippet_Osc_1($_seq22_0, $_seq22_1, $_seq22_2, $_seq22_3, $_seq22_4);
+        $_result = $this->snippet_Osc_1($_seq21_0, $_seq21_1, $_seq21_2, $_seq21_3, $_seq21_4);
 
         return $_result;
     }
@@ -874,45 +866,45 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
-        $_seqOffset24 = $this->offset;
-        $_seqCommit24 = $this->commitOffset;
+        $_seqOffset23 = $this->offset;
+        $_seqCommit23 = $this->commitOffset;
         $_result = [];
         if (\preg_match('/\\x{9d}/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq24_0 = $_m[0];
+            $_seq23_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_seq24_0 = AnsiParserSignal::MISS;
+            $_seq23_0 = AnsiParserSignal::MISS;
         }
-        if ($_seq24_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit24 || $_seqOffset24 >= $this->commitOffset) {
-                $this->offset = $_seqOffset24;
+        if ($_seq23_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit23 || $_seqOffset23 >= $this->commitOffset) {
+                $this->offset = $_seqOffset23;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq24_0 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq24_0;
+        if ($_seq23_0 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq23_0;
         }
-        $_seq24_1 = $this->parseOscText();
-        if ($_seq24_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit24 || $_seqOffset24 >= $this->commitOffset) {
-                $this->offset = $_seqOffset24;
+        $_seq23_1 = $this->parseOscText();
+        if ($_seq23_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit23 || $_seqOffset23 >= $this->commitOffset) {
+                $this->offset = $_seqOffset23;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq24_1 !== AnsiParserSignal::HIT) {
-            $_result['text'] = $_seq24_1;
+        if ($_seq23_1 !== AnsiParserSignal::HIT) {
+            $_result['text'] = $_seq23_1;
         }
-        $_seq24_2 = $this->parseOscEnd();
-        if ($_seq24_2 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit24 || $_seqOffset24 >= $this->commitOffset) {
-                $this->offset = $_seqOffset24;
+        $_seq23_2 = $this->parseOscEnd();
+        if ($_seq23_2 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit23 || $_seqOffset23 >= $this->commitOffset) {
+                $this->offset = $_seqOffset23;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq24_2 !== AnsiParserSignal::HIT) {
-            $_result['end'] = $_seq24_2;
+        if ($_seq23_2 !== AnsiParserSignal::HIT) {
+            $_result['end'] = $_seq23_2;
         }
-        $_result = $this->snippet_OscC1_1($_seq24_0, $_seq24_1, $_seq24_2);
+        $_result = $this->snippet_OscC1_1($_seq23_0, $_seq23_1, $_seq23_2);
 
         return $_result;
     }
@@ -935,91 +927,91 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
-        $_savedCommit25 = $this->commitOffset;
-        $_choiceOffset25 = $this->offset;
+        $_savedCommit24 = $this->commitOffset;
+        $_choiceOffset24 = $this->offset;
         if (\preg_match('/\\x07|\\x1b\\\\|\\x{9c}/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_choice25_0 = $_m[0];
+            $_choice24_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_choice25_0 = AnsiParserSignal::MISS;
+            $_choice24_0 = AnsiParserSignal::MISS;
         }
-        if ($_choice25_0 !== AnsiParserSignal::MISS) {
-            $_result = $_choice25_0;
-            $this->commitOffset = $_savedCommit25;
-            goto _choiceEnd25;
+        if ($_choice24_0 !== AnsiParserSignal::MISS) {
+            $_result = $_choice24_0;
+            $this->commitOffset = $_savedCommit24;
+            goto _choiceEnd24;
         }
-        if ($this->commitOffset !== $_savedCommit25) {
+        if ($this->commitOffset !== $_savedCommit24) {
             $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd25;
+            goto _choiceEnd24;
         }
-        $this->offset = $_choiceOffset25;
+        $this->offset = $_choiceOffset24;
+        $_seqOffset25 = $this->offset;
+        $_seqCommit25 = $this->commitOffset;
+        $_choice24_1 = [];
+        if (\preg_match('/[\\x18\\x1a]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_seq25_0 = $_m[0];
+            $this->offset += \strlen($_m[0]);
+        } else {
+            $_seq25_0 = AnsiParserSignal::MISS;
+        }
+        if ($_seq25_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit25 || $_seqOffset25 >= $this->commitOffset) {
+                $this->offset = $_seqOffset25;
+            }
+            $_choice24_1 = AnsiParserSignal::MISS;
+            goto _seqEnd25;
+        }
+        if ($_seq25_0 !== AnsiParserSignal::HIT) {
+            $_choice24_1[] = $_seq25_0;
+        }
+        $_choice24_1 = $this->snippet_OscEnd_1($_seq25_0);
+        _seqEnd25:
+        if ($_choice24_1 !== AnsiParserSignal::MISS) {
+            $_result = $_choice24_1;
+            $this->commitOffset = $_savedCommit24;
+            goto _choiceEnd24;
+        }
+        if ($this->commitOffset !== $_savedCommit24) {
+            $_result = AnsiParserSignal::MISS;
+            goto _choiceEnd24;
+        }
+        $this->offset = $_choiceOffset24;
         $_seqOffset26 = $this->offset;
         $_seqCommit26 = $this->commitOffset;
-        $_choice25_1 = [];
-        if (\preg_match('/[\\x18\\x1a]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq26_0 = $_m[0];
+        $_choice24_2 = [];
+        $_predOffset27 = $this->offset;
+        if (\preg_match('/\\x1b[^\\\\]|[\\x{80}-\\x{9b}\\x{9d}-\\x{9f}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_pred27 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_seq26_0 = AnsiParserSignal::MISS;
+            $_pred27 = AnsiParserSignal::MISS;
         }
+        $this->offset = $_predOffset27;
+        $_seq26_0 = ($_pred27 !== AnsiParserSignal::MISS) ? AnsiParserSignal::HIT : AnsiParserSignal::MISS;
         if ($_seq26_0 === AnsiParserSignal::MISS) {
             if ($this->commitOffset === $_seqCommit26 || $_seqOffset26 >= $this->commitOffset) {
                 $this->offset = $_seqOffset26;
             }
-            $_choice25_1 = AnsiParserSignal::MISS;
+            $_choice24_2 = AnsiParserSignal::MISS;
             goto _seqEnd26;
         }
         if ($_seq26_0 !== AnsiParserSignal::HIT) {
-            $_choice25_1[] = $_seq26_0;
+            $_choice24_2[] = $_seq26_0;
         }
-        $_choice25_1 = $this->snippet_OscEnd_1($_seq26_0);
+        $_choice24_2 = $this->snippet_OscEnd_2($_seq26_0);
         _seqEnd26:
-        if ($_choice25_1 !== AnsiParserSignal::MISS) {
-            $_result = $_choice25_1;
-            $this->commitOffset = $_savedCommit25;
-            goto _choiceEnd25;
+        if ($_choice24_2 !== AnsiParserSignal::MISS) {
+            $_result = $_choice24_2;
+            $this->commitOffset = $_savedCommit24;
+            goto _choiceEnd24;
         }
-        if ($this->commitOffset !== $_savedCommit25) {
+        if ($this->commitOffset !== $_savedCommit24) {
             $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd25;
+            goto _choiceEnd24;
         }
-        $this->offset = $_choiceOffset25;
-        $_seqOffset27 = $this->offset;
-        $_seqCommit27 = $this->commitOffset;
-        $_choice25_2 = [];
-        $_predOffset28 = $this->offset;
-        if (\preg_match('/\\x1b[^\\\\]|[\\x{80}-\\x{9b}\\x{9d}-\\x{9f}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_pred28 = $_m[0];
-            $this->offset += \strlen($_m[0]);
-        } else {
-            $_pred28 = AnsiParserSignal::MISS;
-        }
-        $this->offset = $_predOffset28;
-        $_seq27_0 = ($_pred28 !== AnsiParserSignal::MISS) ? AnsiParserSignal::HIT : AnsiParserSignal::MISS;
-        if ($_seq27_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit27 || $_seqOffset27 >= $this->commitOffset) {
-                $this->offset = $_seqOffset27;
-            }
-            $_choice25_2 = AnsiParserSignal::MISS;
-            goto _seqEnd27;
-        }
-        if ($_seq27_0 !== AnsiParserSignal::HIT) {
-            $_choice25_2[] = $_seq27_0;
-        }
-        $_choice25_2 = $this->snippet_OscEnd_2($_seq27_0);
-        _seqEnd27:
-        if ($_choice25_2 !== AnsiParserSignal::MISS) {
-            $_result = $_choice25_2;
-            $this->commitOffset = $_savedCommit25;
-            goto _choiceEnd25;
-        }
-        if ($this->commitOffset !== $_savedCommit25) {
-            $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd25;
-        }
-        $this->offset = $_choiceOffset25;
+        $this->offset = $_choiceOffset24;
         $_result = AnsiParserSignal::MISS;
-        _choiceEnd25:
+        _choiceEnd24:
 
         return $_result;
     }
@@ -1028,81 +1020,81 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
-        $_seqOffset29 = $this->offset;
-        $_seqCommit29 = $this->commitOffset;
+        $_seqOffset28 = $this->offset;
+        $_seqCommit28 = $this->commitOffset;
         $_result = [];
         if (\preg_match('/\\x1b/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq29_0 = $_m[0];
+            $_seq28_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_seq29_0 = AnsiParserSignal::MISS;
+            $_seq28_0 = AnsiParserSignal::MISS;
         }
-        if ($_seq29_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit29 || $_seqOffset29 >= $this->commitOffset) {
-                $this->offset = $_seqOffset29;
+        if ($_seq28_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit28 || $_seqOffset28 >= $this->commitOffset) {
+                $this->offset = $_seqOffset28;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq29_0 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq29_0;
+        if ($_seq28_0 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq28_0;
         }
-        $_seq29_1 = [];
+        $_seq28_1 = [];
         do {
             if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
 ', $this->source[$this->offset])) {
                 $this->expect('Embedded');
-                $_rep30 = AnsiParserSignal::MISS;
+                $_rep29 = AnsiParserSignal::MISS;
             } else {
-                $_rep30 = $this->parseEmbedded();
+                $_rep29 = $this->parseEmbedded();
             }
-            if ($_rep30 !== AnsiParserSignal::MISS) {
-                $_seq29_1[] = $_rep30;
+            if ($_rep29 !== AnsiParserSignal::MISS) {
+                $_seq28_1[] = $_rep29;
             }
-        } while ($_rep30 !== AnsiParserSignal::MISS);
-        if ($_seq29_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit29 || $_seqOffset29 >= $this->commitOffset) {
-                $this->offset = $_seqOffset29;
+        } while ($_rep29 !== AnsiParserSignal::MISS);
+        if ($_seq28_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit28 || $_seqOffset28 >= $this->commitOffset) {
+                $this->offset = $_seqOffset28;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq29_1 !== AnsiParserSignal::HIT) {
-            $_result['pre'] = $_seq29_1;
+        if ($_seq28_1 !== AnsiParserSignal::HIT) {
+            $_result['pre'] = $_seq28_1;
         }
         if ($this->offset < $this->length && $this->source[$this->offset] === 'P') {
-            $_seq29_2 = $this->source[$this->offset++];
+            $_seq28_2 = $this->source[$this->offset++];
         } else {
-            $_seq29_2 = AnsiParserSignal::MISS;
+            $_seq28_2 = AnsiParserSignal::MISS;
         }
-        if ($_seq29_2 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit29 || $_seqOffset29 >= $this->commitOffset) {
-                $this->offset = $_seqOffset29;
+        if ($_seq28_2 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit28 || $_seqOffset28 >= $this->commitOffset) {
+                $this->offset = $_seqOffset28;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq29_2 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq29_2;
+        if ($_seq28_2 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq28_2;
         }
-        $_seq29_3 = $this->parseStrText();
-        if ($_seq29_3 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit29 || $_seqOffset29 >= $this->commitOffset) {
-                $this->offset = $_seqOffset29;
+        $_seq28_3 = $this->parseStrText();
+        if ($_seq28_3 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit28 || $_seqOffset28 >= $this->commitOffset) {
+                $this->offset = $_seqOffset28;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq29_3 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq29_3;
+        if ($_seq28_3 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq28_3;
         }
-        $_seq29_4 = $this->parseStrEnd();
-        if ($_seq29_4 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit29 || $_seqOffset29 >= $this->commitOffset) {
-                $this->offset = $_seqOffset29;
+        $_seq28_4 = $this->parseStrEnd();
+        if ($_seq28_4 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit28 || $_seqOffset28 >= $this->commitOffset) {
+                $this->offset = $_seqOffset28;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq29_4 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq29_4;
+        if ($_seq28_4 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq28_4;
         }
-        $_result = $this->snippet_Dcs_1($_seq29_0, $_seq29_1, $_seq29_2, $_seq29_3, $_seq29_4);
+        $_result = $this->snippet_Dcs_1($_seq28_0, $_seq28_1, $_seq28_2, $_seq28_3, $_seq28_4);
 
         return $_result;
     }
@@ -1111,10 +1103,57 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
+        $_seqOffset30 = $this->offset;
+        $_seqCommit30 = $this->commitOffset;
+        $_result = [];
+        if (\preg_match('/\\x{90}/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_seq30_0 = $_m[0];
+            $this->offset += \strlen($_m[0]);
+        } else {
+            $_seq30_0 = AnsiParserSignal::MISS;
+        }
+        if ($_seq30_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit30 || $_seqOffset30 >= $this->commitOffset) {
+                $this->offset = $_seqOffset30;
+            }
+            return AnsiParserSignal::MISS;
+        }
+        if ($_seq30_0 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq30_0;
+        }
+        $_seq30_1 = $this->parseStrText();
+        if ($_seq30_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit30 || $_seqOffset30 >= $this->commitOffset) {
+                $this->offset = $_seqOffset30;
+            }
+            return AnsiParserSignal::MISS;
+        }
+        if ($_seq30_1 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq30_1;
+        }
+        $_seq30_2 = $this->parseStrEnd();
+        if ($_seq30_2 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit30 || $_seqOffset30 >= $this->commitOffset) {
+                $this->offset = $_seqOffset30;
+            }
+            return AnsiParserSignal::MISS;
+        }
+        if ($_seq30_2 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq30_2;
+        }
+        $_result = $this->snippet_DcsC1_1($_seq30_0, $_seq30_1, $_seq30_2);
+
+        return $_result;
+    }
+
+    private function parseStr(): mixed
+    {
+        $_offset = $this->offset;
+
         $_seqOffset31 = $this->offset;
         $_seqCommit31 = $this->commitOffset;
         $_result = [];
-        if (\preg_match('/\\x{90}/uA', $this->source, $_m, 0, $this->offset) === 1) {
+        if (\preg_match('/\\x1b/uA', $this->source, $_m, 0, $this->offset) === 1) {
             $_seq31_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
@@ -1129,7 +1168,19 @@ class AnsiParser
         if ($_seq31_0 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq31_0;
         }
-        $_seq31_1 = $this->parseStrText();
+        $_seq31_1 = [];
+        do {
+            if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
+', $this->source[$this->offset])) {
+                $this->expect('Embedded');
+                $_rep32 = AnsiParserSignal::MISS;
+            } else {
+                $_rep32 = $this->parseEmbedded();
+            }
+            if ($_rep32 !== AnsiParserSignal::MISS) {
+                $_seq31_1[] = $_rep32;
+            }
+        } while ($_rep32 !== AnsiParserSignal::MISS);
         if ($_seq31_1 === AnsiParserSignal::MISS) {
             if ($this->commitOffset === $_seqCommit31 || $_seqOffset31 >= $this->commitOffset) {
                 $this->offset = $_seqOffset31;
@@ -1137,9 +1188,14 @@ class AnsiParser
             return AnsiParserSignal::MISS;
         }
         if ($_seq31_1 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq31_1;
+            $_result['pre'] = $_seq31_1;
         }
-        $_seq31_2 = $this->parseStrEnd();
+        if (\preg_match('/[X^_]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_seq31_2 = $_m[0];
+            $this->offset += \strlen($_m[0]);
+        } else {
+            $_seq31_2 = AnsiParserSignal::MISS;
+        }
         if ($_seq31_2 === AnsiParserSignal::MISS) {
             if ($this->commitOffset === $_seqCommit31 || $_seqOffset31 >= $this->commitOffset) {
                 $this->offset = $_seqOffset31;
@@ -1149,91 +1205,27 @@ class AnsiParser
         if ($_seq31_2 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq31_2;
         }
-        $_result = $this->snippet_DcsC1_1($_seq31_0, $_seq31_1, $_seq31_2);
-
-        return $_result;
-    }
-
-    private function parseStr(): mixed
-    {
-        $_offset = $this->offset;
-
-        $_seqOffset32 = $this->offset;
-        $_seqCommit32 = $this->commitOffset;
-        $_result = [];
-        if (\preg_match('/\\x1b/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq32_0 = $_m[0];
-            $this->offset += \strlen($_m[0]);
-        } else {
-            $_seq32_0 = AnsiParserSignal::MISS;
-        }
-        if ($_seq32_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit32 || $_seqOffset32 >= $this->commitOffset) {
-                $this->offset = $_seqOffset32;
+        $_seq31_3 = $this->parseStrText();
+        if ($_seq31_3 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit31 || $_seqOffset31 >= $this->commitOffset) {
+                $this->offset = $_seqOffset31;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq32_0 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq32_0;
+        if ($_seq31_3 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq31_3;
         }
-        $_seq32_1 = [];
-        do {
-            if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
-', $this->source[$this->offset])) {
-                $this->expect('Embedded');
-                $_rep33 = AnsiParserSignal::MISS;
-            } else {
-                $_rep33 = $this->parseEmbedded();
-            }
-            if ($_rep33 !== AnsiParserSignal::MISS) {
-                $_seq32_1[] = $_rep33;
-            }
-        } while ($_rep33 !== AnsiParserSignal::MISS);
-        if ($_seq32_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit32 || $_seqOffset32 >= $this->commitOffset) {
-                $this->offset = $_seqOffset32;
+        $_seq31_4 = $this->parseStrEnd();
+        if ($_seq31_4 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit31 || $_seqOffset31 >= $this->commitOffset) {
+                $this->offset = $_seqOffset31;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq32_1 !== AnsiParserSignal::HIT) {
-            $_result['pre'] = $_seq32_1;
+        if ($_seq31_4 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq31_4;
         }
-        if (\preg_match('/[X^_]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq32_2 = $_m[0];
-            $this->offset += \strlen($_m[0]);
-        } else {
-            $_seq32_2 = AnsiParserSignal::MISS;
-        }
-        if ($_seq32_2 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit32 || $_seqOffset32 >= $this->commitOffset) {
-                $this->offset = $_seqOffset32;
-            }
-            return AnsiParserSignal::MISS;
-        }
-        if ($_seq32_2 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq32_2;
-        }
-        $_seq32_3 = $this->parseStrText();
-        if ($_seq32_3 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit32 || $_seqOffset32 >= $this->commitOffset) {
-                $this->offset = $_seqOffset32;
-            }
-            return AnsiParserSignal::MISS;
-        }
-        if ($_seq32_3 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq32_3;
-        }
-        $_seq32_4 = $this->parseStrEnd();
-        if ($_seq32_4 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit32 || $_seqOffset32 >= $this->commitOffset) {
-                $this->offset = $_seqOffset32;
-            }
-            return AnsiParserSignal::MISS;
-        }
-        if ($_seq32_4 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq32_4;
-        }
-        $_result = $this->snippet_Str_1($_seq32_0, $_seq32_1, $_seq32_2, $_seq32_3, $_seq32_4);
+        $_result = $this->snippet_Str_1($_seq31_0, $_seq31_1, $_seq31_2, $_seq31_3, $_seq31_4);
 
         return $_result;
     }
@@ -1242,45 +1234,45 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
-        $_seqOffset34 = $this->offset;
-        $_seqCommit34 = $this->commitOffset;
+        $_seqOffset33 = $this->offset;
+        $_seqCommit33 = $this->commitOffset;
         $_result = [];
         if (\preg_match('/[\\x{98}\\x{9e}\\x{9f}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq34_0 = $_m[0];
+            $_seq33_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_seq34_0 = AnsiParserSignal::MISS;
+            $_seq33_0 = AnsiParserSignal::MISS;
         }
-        if ($_seq34_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit34 || $_seqOffset34 >= $this->commitOffset) {
-                $this->offset = $_seqOffset34;
+        if ($_seq33_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit33 || $_seqOffset33 >= $this->commitOffset) {
+                $this->offset = $_seqOffset33;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq34_0 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq34_0;
+        if ($_seq33_0 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq33_0;
         }
-        $_seq34_1 = $this->parseStrText();
-        if ($_seq34_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit34 || $_seqOffset34 >= $this->commitOffset) {
-                $this->offset = $_seqOffset34;
+        $_seq33_1 = $this->parseStrText();
+        if ($_seq33_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit33 || $_seqOffset33 >= $this->commitOffset) {
+                $this->offset = $_seqOffset33;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq34_1 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq34_1;
+        if ($_seq33_1 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq33_1;
         }
-        $_seq34_2 = $this->parseStrEnd();
-        if ($_seq34_2 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit34 || $_seqOffset34 >= $this->commitOffset) {
-                $this->offset = $_seqOffset34;
+        $_seq33_2 = $this->parseStrEnd();
+        if ($_seq33_2 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit33 || $_seqOffset33 >= $this->commitOffset) {
+                $this->offset = $_seqOffset33;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq34_2 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq34_2;
+        if ($_seq33_2 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq33_2;
         }
-        $_result = $this->snippet_StrC1_1($_seq34_0, $_seq34_1, $_seq34_2);
+        $_result = $this->snippet_StrC1_1($_seq33_0, $_seq33_1, $_seq33_2);
 
         return $_result;
     }
@@ -1303,61 +1295,61 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
-        $_savedCommit35 = $this->commitOffset;
-        $_choiceOffset35 = $this->offset;
+        $_savedCommit34 = $this->commitOffset;
+        $_choiceOffset34 = $this->offset;
         if (\preg_match('/\\x1b\\\\|\\x{9c}/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_choice35_0 = $_m[0];
+            $_choice34_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_choice35_0 = AnsiParserSignal::MISS;
+            $_choice34_0 = AnsiParserSignal::MISS;
         }
-        if ($_choice35_0 !== AnsiParserSignal::MISS) {
-            $_result = $_choice35_0;
-            $this->commitOffset = $_savedCommit35;
-            goto _choiceEnd35;
+        if ($_choice34_0 !== AnsiParserSignal::MISS) {
+            $_result = $_choice34_0;
+            $this->commitOffset = $_savedCommit34;
+            goto _choiceEnd34;
         }
-        if ($this->commitOffset !== $_savedCommit35) {
+        if ($this->commitOffset !== $_savedCommit34) {
             $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd35;
+            goto _choiceEnd34;
         }
-        $this->offset = $_choiceOffset35;
+        $this->offset = $_choiceOffset34;
         if (\preg_match('/[\\x18\\x1a]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_choice35_1 = $_m[0];
+            $_choice34_1 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_choice35_1 = AnsiParserSignal::MISS;
+            $_choice34_1 = AnsiParserSignal::MISS;
         }
-        if ($_choice35_1 !== AnsiParserSignal::MISS) {
-            $_result = $_choice35_1;
-            $this->commitOffset = $_savedCommit35;
-            goto _choiceEnd35;
+        if ($_choice34_1 !== AnsiParserSignal::MISS) {
+            $_result = $_choice34_1;
+            $this->commitOffset = $_savedCommit34;
+            goto _choiceEnd34;
         }
-        if ($this->commitOffset !== $_savedCommit35) {
+        if ($this->commitOffset !== $_savedCommit34) {
             $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd35;
+            goto _choiceEnd34;
         }
-        $this->offset = $_choiceOffset35;
-        $_predOffset36 = $this->offset;
+        $this->offset = $_choiceOffset34;
+        $_predOffset35 = $this->offset;
         if (\preg_match('/\\x1b[^\\\\]|[\\x{80}-\\x{9b}\\x{9d}-\\x{9f}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_pred36 = $_m[0];
+            $_pred35 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_pred36 = AnsiParserSignal::MISS;
+            $_pred35 = AnsiParserSignal::MISS;
         }
-        $this->offset = $_predOffset36;
-        $_choice35_2 = ($_pred36 !== AnsiParserSignal::MISS) ? AnsiParserSignal::HIT : AnsiParserSignal::MISS;
-        if ($_choice35_2 !== AnsiParserSignal::MISS) {
-            $_result = $_choice35_2;
-            $this->commitOffset = $_savedCommit35;
-            goto _choiceEnd35;
+        $this->offset = $_predOffset35;
+        $_choice34_2 = ($_pred35 !== AnsiParserSignal::MISS) ? AnsiParserSignal::HIT : AnsiParserSignal::MISS;
+        if ($_choice34_2 !== AnsiParserSignal::MISS) {
+            $_result = $_choice34_2;
+            $this->commitOffset = $_savedCommit34;
+            goto _choiceEnd34;
         }
-        if ($this->commitOffset !== $_savedCommit35) {
+        if ($this->commitOffset !== $_savedCommit34) {
             $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd35;
+            goto _choiceEnd34;
         }
-        $this->offset = $_choiceOffset35;
+        $this->offset = $_choiceOffset34;
         $_result = AnsiParserSignal::MISS;
-        _choiceEnd35:
+        _choiceEnd34:
 
         return $_result;
     }
@@ -1366,12 +1358,43 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
-        $_savedCommit37 = $this->commitOffset;
-        $_choiceOffset37 = $this->offset;
+        $_savedCommit36 = $this->commitOffset;
+        $_choiceOffset36 = $this->offset;
+        $_seqOffset37 = $this->offset;
+        $_seqCommit37 = $this->commitOffset;
+        $_choice36_0 = [];
+        if (\preg_match('/\\x1b(?:[\\x20-\\x2f]+[\\x30-\\x7e]|[\\x30-\\x4f\\x51-\\x57\\x59\\x5a\\x5c\\x60-\\x7e])/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_seq37_0 = $_m[0];
+            $this->offset += \strlen($_m[0]);
+        } else {
+            $_seq37_0 = AnsiParserSignal::MISS;
+        }
+        if ($_seq37_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit37 || $_seqOffset37 >= $this->commitOffset) {
+                $this->offset = $_seqOffset37;
+            }
+            $_choice36_0 = AnsiParserSignal::MISS;
+            goto _seqEnd37;
+        }
+        if ($_seq37_0 !== AnsiParserSignal::HIT) {
+            $_choice36_0[] = $_seq37_0;
+        }
+        $_choice36_0 = $this->snippet_Esc_1($_seq37_0);
+        _seqEnd37:
+        if ($_choice36_0 !== AnsiParserSignal::MISS) {
+            $_result = $_choice36_0;
+            $this->commitOffset = $_savedCommit36;
+            goto _choiceEnd36;
+        }
+        if ($this->commitOffset !== $_savedCommit36) {
+            $_result = AnsiParserSignal::MISS;
+            goto _choiceEnd36;
+        }
+        $this->offset = $_choiceOffset36;
         $_seqOffset38 = $this->offset;
         $_seqCommit38 = $this->commitOffset;
-        $_choice37_0 = [];
-        if (\preg_match('/\\x1b(?:[\\x20-\\x2f]+[\\x30-\\x7e]|[\\x30-\\x4f\\x51-\\x57\\x59\\x5a\\x5c\\x60-\\x7e])/uA', $this->source, $_m, 0, $this->offset) === 1) {
+        $_choice36_1 = [];
+        if (\preg_match('/\\x1b/uA', $this->source, $_m, 0, $this->offset) === 1) {
             $_seq38_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
@@ -1381,172 +1404,141 @@ class AnsiParser
             if ($this->commitOffset === $_seqCommit38 || $_seqOffset38 >= $this->commitOffset) {
                 $this->offset = $_seqOffset38;
             }
-            $_choice37_0 = AnsiParserSignal::MISS;
+            $_choice36_1 = AnsiParserSignal::MISS;
             goto _seqEnd38;
         }
         if ($_seq38_0 !== AnsiParserSignal::HIT) {
-            $_choice37_0[] = $_seq38_0;
+            $_choice36_1[] = $_seq38_0;
         }
-        $_choice37_0 = $this->snippet_Esc_1($_seq38_0);
-        _seqEnd38:
-        if ($_choice37_0 !== AnsiParserSignal::MISS) {
-            $_result = $_choice37_0;
-            $this->commitOffset = $_savedCommit37;
-            goto _choiceEnd37;
-        }
-        if ($this->commitOffset !== $_savedCommit37) {
-            $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd37;
-        }
-        $this->offset = $_choiceOffset37;
-        $_seqOffset39 = $this->offset;
-        $_seqCommit39 = $this->commitOffset;
-        $_choice37_1 = [];
-        if (\preg_match('/\\x1b/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq39_0 = $_m[0];
-            $this->offset += \strlen($_m[0]);
-        } else {
-            $_seq39_0 = AnsiParserSignal::MISS;
-        }
-        if ($_seq39_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit39 || $_seqOffset39 >= $this->commitOffset) {
-                $this->offset = $_seqOffset39;
-            }
-            $_choice37_1 = AnsiParserSignal::MISS;
-            goto _seqEnd39;
-        }
-        if ($_seq39_0 !== AnsiParserSignal::HIT) {
-            $_choice37_1[] = $_seq39_0;
-        }
-        $_seq39_1 = [];
+        $_seq38_1 = [];
         do {
             if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
 ', $this->source[$this->offset])) {
                 $this->expect('Embedded');
-                $_rep40 = AnsiParserSignal::MISS;
+                $_rep39 = AnsiParserSignal::MISS;
             } else {
-                $_rep40 = $this->parseEmbedded();
+                $_rep39 = $this->parseEmbedded();
             }
-            if ($_rep40 !== AnsiParserSignal::MISS) {
-                $_seq39_1[] = $_rep40;
+            if ($_rep39 !== AnsiParserSignal::MISS) {
+                $_seq38_1[] = $_rep39;
             }
-        } while ($_rep40 !== AnsiParserSignal::MISS);
-        if ($_seq39_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit39 || $_seqOffset39 >= $this->commitOffset) {
-                $this->offset = $_seqOffset39;
+        } while ($_rep39 !== AnsiParserSignal::MISS);
+        if ($_seq38_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit38 || $_seqOffset38 >= $this->commitOffset) {
+                $this->offset = $_seqOffset38;
             }
-            $_choice37_1 = AnsiParserSignal::MISS;
-            goto _seqEnd39;
+            $_choice36_1 = AnsiParserSignal::MISS;
+            goto _seqEnd38;
         }
-        if ($_seq39_1 !== AnsiParserSignal::HIT) {
-            $_choice37_1['pre'] = $_seq39_1;
+        if ($_seq38_1 !== AnsiParserSignal::HIT) {
+            $_choice36_1['pre'] = $_seq38_1;
         }
         if ($this->length - $this->offset < 1 || !\str_contains(' !"#$%&\'()*+,-./', $this->source[$this->offset])) {
             $this->expect('Intermediates');
-            $_seq39_2 = AnsiParserSignal::MISS;
+            $_seq38_2 = AnsiParserSignal::MISS;
         } else {
-            $_seq39_2 = $this->parseIntermediates();
+            $_seq38_2 = $this->parseIntermediates();
         }
-        if ($_seq39_2 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit39 || $_seqOffset39 >= $this->commitOffset) {
-                $this->offset = $_seqOffset39;
+        if ($_seq38_2 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit38 || $_seqOffset38 >= $this->commitOffset) {
+                $this->offset = $_seqOffset38;
             }
-            $_choice37_1 = AnsiParserSignal::MISS;
-            goto _seqEnd39;
+            $_choice36_1 = AnsiParserSignal::MISS;
+            goto _seqEnd38;
         }
-        if ($_seq39_2 !== AnsiParserSignal::HIT) {
-            $_choice37_1['inter'] = $_seq39_2;
+        if ($_seq38_2 !== AnsiParserSignal::HIT) {
+            $_choice36_1['inter'] = $_seq38_2;
         }
-        $_seq39_3 = $this->parseEscEnd();
-        if ($_seq39_3 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit39 || $_seqOffset39 >= $this->commitOffset) {
-                $this->offset = $_seqOffset39;
+        $_seq38_3 = $this->parseEscEnd();
+        if ($_seq38_3 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit38 || $_seqOffset38 >= $this->commitOffset) {
+                $this->offset = $_seqOffset38;
             }
-            $_choice37_1 = AnsiParserSignal::MISS;
-            goto _seqEnd39;
+            $_choice36_1 = AnsiParserSignal::MISS;
+            goto _seqEnd38;
         }
-        if ($_seq39_3 !== AnsiParserSignal::HIT) {
-            $_choice37_1['end'] = $_seq39_3;
+        if ($_seq38_3 !== AnsiParserSignal::HIT) {
+            $_choice36_1['end'] = $_seq38_3;
         }
-        $_choice37_1 = $this->snippet_Esc_2($_seq39_0, $_seq39_1, $_seq39_2, $_seq39_3);
-        _seqEnd39:
-        if ($_choice37_1 !== AnsiParserSignal::MISS) {
-            $_result = $_choice37_1;
-            $this->commitOffset = $_savedCommit37;
-            goto _choiceEnd37;
+        $_choice36_1 = $this->snippet_Esc_2($_seq38_0, $_seq38_1, $_seq38_2, $_seq38_3);
+        _seqEnd38:
+        if ($_choice36_1 !== AnsiParserSignal::MISS) {
+            $_result = $_choice36_1;
+            $this->commitOffset = $_savedCommit36;
+            goto _choiceEnd36;
         }
-        if ($this->commitOffset !== $_savedCommit37) {
+        if ($this->commitOffset !== $_savedCommit36) {
             $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd37;
+            goto _choiceEnd36;
         }
-        $this->offset = $_choiceOffset37;
-        $_seqOffset41 = $this->offset;
-        $_seqCommit41 = $this->commitOffset;
-        $_choice37_2 = [];
+        $this->offset = $_choiceOffset36;
+        $_seqOffset40 = $this->offset;
+        $_seqCommit40 = $this->commitOffset;
+        $_choice36_2 = [];
         if (\preg_match('/\\x1b/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq41_0 = $_m[0];
+            $_seq40_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_seq41_0 = AnsiParserSignal::MISS;
+            $_seq40_0 = AnsiParserSignal::MISS;
         }
-        if ($_seq41_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit41 || $_seqOffset41 >= $this->commitOffset) {
-                $this->offset = $_seqOffset41;
+        if ($_seq40_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit40 || $_seqOffset40 >= $this->commitOffset) {
+                $this->offset = $_seqOffset40;
             }
-            $_choice37_2 = AnsiParserSignal::MISS;
-            goto _seqEnd41;
+            $_choice36_2 = AnsiParserSignal::MISS;
+            goto _seqEnd40;
         }
-        if ($_seq41_0 !== AnsiParserSignal::HIT) {
-            $_choice37_2[] = $_seq41_0;
+        if ($_seq40_0 !== AnsiParserSignal::HIT) {
+            $_choice36_2[] = $_seq40_0;
         }
-        $_seq41_1 = [];
+        $_seq40_1 = [];
         do {
             if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
 ', $this->source[$this->offset])) {
                 $this->expect('Embedded');
-                $_rep42 = AnsiParserSignal::MISS;
+                $_rep41 = AnsiParserSignal::MISS;
             } else {
-                $_rep42 = $this->parseEmbedded();
+                $_rep41 = $this->parseEmbedded();
             }
-            if ($_rep42 !== AnsiParserSignal::MISS) {
-                $_seq41_1[] = $_rep42;
+            if ($_rep41 !== AnsiParserSignal::MISS) {
+                $_seq40_1[] = $_rep41;
             }
-        } while ($_rep42 !== AnsiParserSignal::MISS);
-        if ($_seq41_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit41 || $_seqOffset41 >= $this->commitOffset) {
-                $this->offset = $_seqOffset41;
+        } while ($_rep41 !== AnsiParserSignal::MISS);
+        if ($_seq40_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit40 || $_seqOffset40 >= $this->commitOffset) {
+                $this->offset = $_seqOffset40;
             }
-            $_choice37_2 = AnsiParserSignal::MISS;
-            goto _seqEnd41;
+            $_choice36_2 = AnsiParserSignal::MISS;
+            goto _seqEnd40;
         }
-        if ($_seq41_1 !== AnsiParserSignal::HIT) {
-            $_choice37_2['pre'] = $_seq41_1;
+        if ($_seq40_1 !== AnsiParserSignal::HIT) {
+            $_choice36_2['pre'] = $_seq40_1;
         }
-        $_seq41_2 = $this->parseEscFinal();
-        if ($_seq41_2 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit41 || $_seqOffset41 >= $this->commitOffset) {
-                $this->offset = $_seqOffset41;
+        $_seq40_2 = $this->parseEscFinal();
+        if ($_seq40_2 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit40 || $_seqOffset40 >= $this->commitOffset) {
+                $this->offset = $_seqOffset40;
             }
-            $_choice37_2 = AnsiParserSignal::MISS;
-            goto _seqEnd41;
+            $_choice36_2 = AnsiParserSignal::MISS;
+            goto _seqEnd40;
         }
-        if ($_seq41_2 !== AnsiParserSignal::HIT) {
-            $_choice37_2['end'] = $_seq41_2;
+        if ($_seq40_2 !== AnsiParserSignal::HIT) {
+            $_choice36_2['end'] = $_seq40_2;
         }
-        $_choice37_2 = $this->snippet_Esc_3($_seq41_0, $_seq41_1, $_seq41_2);
-        _seqEnd41:
-        if ($_choice37_2 !== AnsiParserSignal::MISS) {
-            $_result = $_choice37_2;
-            $this->commitOffset = $_savedCommit37;
-            goto _choiceEnd37;
+        $_choice36_2 = $this->snippet_Esc_3($_seq40_0, $_seq40_1, $_seq40_2);
+        _seqEnd40:
+        if ($_choice36_2 !== AnsiParserSignal::MISS) {
+            $_result = $_choice36_2;
+            $this->commitOffset = $_savedCommit36;
+            goto _choiceEnd36;
         }
-        if ($this->commitOffset !== $_savedCommit37) {
+        if ($this->commitOffset !== $_savedCommit36) {
             $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd37;
+            goto _choiceEnd36;
         }
-        $this->offset = $_choiceOffset37;
+        $this->offset = $_choiceOffset36;
         $_result = AnsiParserSignal::MISS;
-        _choiceEnd37:
+        _choiceEnd36:
 
         return $_result;
     }
@@ -1555,28 +1547,28 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
-        $_seqOffset43 = $this->offset;
-        $_seqCommit43 = $this->commitOffset;
+        $_seqOffset42 = $this->offset;
+        $_seqCommit42 = $this->commitOffset;
         $_result = [];
         if (\preg_match('/[\\x20-\\x2f]+/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq43_0 = $_m[0];
+            $_seq42_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_seq43_0 = AnsiParserSignal::MISS;
+            $_seq42_0 = AnsiParserSignal::MISS;
         }
-        if ($_seq43_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit43 || $_seqOffset43 >= $this->commitOffset) {
-                $this->offset = $_seqOffset43;
+        if ($_seq42_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit42 || $_seqOffset42 >= $this->commitOffset) {
+                $this->offset = $_seqOffset42;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq43_0 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq43_0;
+        if ($_seq42_0 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq42_0;
         }
-        $_seq43_1 = [];
+        $_seq42_1 = [];
         do {
             if ($this->offset >= $this->length) {
-                $_rep44 = AnsiParserSignal::MISS;
+                $_rep43 = AnsiParserSignal::MISS;
             } else {
                 switch ($this->source[$this->offset]) {
                     case '' . "\0" . '':
@@ -1613,11 +1605,11 @@ class AnsiParser
                         if ($this->length - $this->offset < 1 || !\str_contains('' . "\0" . '	
 ', $this->source[$this->offset])) {
                             $this->expect('Embedded');
-                            $_sw45_0 = AnsiParserSignal::MISS;
+                            $_sw44_0 = AnsiParserSignal::MISS;
                         } else {
-                            $_sw45_0 = $this->parseEmbedded();
+                            $_sw44_0 = $this->parseEmbedded();
                         }
-                        $_rep44 = $_sw45_0;
+                        $_rep43 = $_sw44_0;
                         break;
                     case ' ':
                     case '!':
@@ -1636,29 +1628,29 @@ class AnsiParser
                     case '.':
                     case '/':
                         if (\preg_match('/[\\x20-\\x2f]+/uA', $this->source, $_m, 0, $this->offset) === 1) {
-                            $_sw45_1 = $_m[0];
+                            $_sw44_1 = $_m[0];
                             $this->offset += \strlen($_m[0]);
                         } else {
-                            $_sw45_1 = AnsiParserSignal::MISS;
+                            $_sw44_1 = AnsiParserSignal::MISS;
                         }
-                        $_rep44 = $_sw45_1;
+                        $_rep43 = $_sw44_1;
                         break;
                     default:
-                        $_rep44 = AnsiParserSignal::MISS;
+                        $_rep43 = AnsiParserSignal::MISS;
                 }
             }
-            if ($_rep44 !== AnsiParserSignal::MISS) {
-                $_seq43_1[] = $_rep44;
+            if ($_rep43 !== AnsiParserSignal::MISS) {
+                $_seq42_1[] = $_rep43;
             }
-        } while ($_rep44 !== AnsiParserSignal::MISS);
-        if ($_seq43_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit43 || $_seqOffset43 >= $this->commitOffset) {
-                $this->offset = $_seqOffset43;
+        } while ($_rep43 !== AnsiParserSignal::MISS);
+        if ($_seq42_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit42 || $_seqOffset42 >= $this->commitOffset) {
+                $this->offset = $_seqOffset42;
             }
             return AnsiParserSignal::MISS;
         }
-        if ($_seq43_1 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq43_1;
+        if ($_seq42_1 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq42_1;
         }
         if ($_result === []) { $_result = null; }
 
@@ -1669,9 +1661,48 @@ class AnsiParser
     {
         $_offset = $this->offset;
 
+        $_savedCommit45 = $this->commitOffset;
+        $_choiceOffset45 = $this->offset;
+        if (\preg_match('/[\\x30-\\x4f\\x51-\\x57\\x59\\x5a\\x5c\\x60-\\x7e]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_choice45_0 = $_m[0];
+            $this->offset += \strlen($_m[0]);
+        } else {
+            $_choice45_0 = AnsiParserSignal::MISS;
+        }
+        if ($_choice45_0 !== AnsiParserSignal::MISS) {
+            $_result = $_choice45_0;
+            $this->commitOffset = $_savedCommit45;
+            goto _choiceEnd45;
+        }
+        if ($this->commitOffset !== $_savedCommit45) {
+            $_result = AnsiParserSignal::MISS;
+            goto _choiceEnd45;
+        }
+        $this->offset = $_choiceOffset45;
+        $_choice45_1 = $this->parseEscOther();
+        if ($_choice45_1 !== AnsiParserSignal::MISS) {
+            $_result = $_choice45_1;
+            $this->commitOffset = $_savedCommit45;
+            goto _choiceEnd45;
+        }
+        if ($this->commitOffset !== $_savedCommit45) {
+            $_result = AnsiParserSignal::MISS;
+            goto _choiceEnd45;
+        }
+        $this->offset = $_choiceOffset45;
+        $_result = AnsiParserSignal::MISS;
+        _choiceEnd45:
+
+        return $_result;
+    }
+
+    private function parseEscEnd(): mixed
+    {
+        $_offset = $this->offset;
+
         $_savedCommit46 = $this->commitOffset;
         $_choiceOffset46 = $this->offset;
-        if (\preg_match('/[\\x30-\\x4f\\x51-\\x57\\x59\\x5a\\x5c\\x60-\\x7e]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+        if (\preg_match('/[\\x30-\\x7e]/uA', $this->source, $_m, 0, $this->offset) === 1) {
             $_choice46_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
@@ -1704,18 +1735,33 @@ class AnsiParser
         return $_result;
     }
 
-    private function parseEscEnd(): mixed
+    private function parseEscOther(): mixed
     {
         $_offset = $this->offset;
 
         $_savedCommit47 = $this->commitOffset;
         $_choiceOffset47 = $this->offset;
-        if (\preg_match('/[\\x30-\\x7e]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_choice47_0 = $_m[0];
+        $_seqOffset48 = $this->offset;
+        $_seqCommit48 = $this->commitOffset;
+        $_choice47_0 = [];
+        if (\preg_match('/[\\x{a0}-\\x{10ffff}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_seq48_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_choice47_0 = AnsiParserSignal::MISS;
+            $_seq48_0 = AnsiParserSignal::MISS;
         }
+        if ($_seq48_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit48 || $_seqOffset48 >= $this->commitOffset) {
+                $this->offset = $_seqOffset48;
+            }
+            $_choice47_0 = AnsiParserSignal::MISS;
+            goto _seqEnd48;
+        }
+        if ($_seq48_0 !== AnsiParserSignal::HIT) {
+            $_choice47_0[] = $_seq48_0;
+        }
+        $_choice47_0 = $this->snippet_EscOther_1($_seq48_0);
+        _seqEnd48:
         if ($_choice47_0 !== AnsiParserSignal::MISS) {
             $_result = $_choice47_0;
             $this->commitOffset = $_savedCommit47;
@@ -1726,9 +1772,63 @@ class AnsiParser
             goto _choiceEnd47;
         }
         $this->offset = $_choiceOffset47;
-        $_choice47_1 = $this->parseEscOther();
+        $_seqOffset49 = $this->offset;
+        $_seqCommit49 = $this->commitOffset;
+        $_choice47_1 = [];
+        if (\preg_match('/[\\x18\\x1a]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_seq49_0 = $_m[0];
+            $this->offset += \strlen($_m[0]);
+        } else {
+            $_seq49_0 = AnsiParserSignal::MISS;
+        }
+        if ($_seq49_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit49 || $_seqOffset49 >= $this->commitOffset) {
+                $this->offset = $_seqOffset49;
+            }
+            $_choice47_1 = AnsiParserSignal::MISS;
+            goto _seqEnd49;
+        }
+        if ($_seq49_0 !== AnsiParserSignal::HIT) {
+            $_choice47_1[] = $_seq49_0;
+        }
+        $_choice47_1 = $this->snippet_EscOther_2($_seq49_0);
+        _seqEnd49:
         if ($_choice47_1 !== AnsiParserSignal::MISS) {
             $_result = $_choice47_1;
+            $this->commitOffset = $_savedCommit47;
+            goto _choiceEnd47;
+        }
+        if ($this->commitOffset !== $_savedCommit47) {
+            $_result = AnsiParserSignal::MISS;
+            goto _choiceEnd47;
+        }
+        $this->offset = $_choiceOffset47;
+        $_seqOffset50 = $this->offset;
+        $_seqCommit50 = $this->commitOffset;
+        $_choice47_2 = [];
+        $_predOffset51 = $this->offset;
+        if (\preg_match('/[\\x1b\\x{80}-\\x{9f}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_pred51 = $_m[0];
+            $this->offset += \strlen($_m[0]);
+        } else {
+            $_pred51 = AnsiParserSignal::MISS;
+        }
+        $this->offset = $_predOffset51;
+        $_seq50_0 = ($_pred51 !== AnsiParserSignal::MISS) ? AnsiParserSignal::HIT : AnsiParserSignal::MISS;
+        if ($_seq50_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit50 || $_seqOffset50 >= $this->commitOffset) {
+                $this->offset = $_seqOffset50;
+            }
+            $_choice47_2 = AnsiParserSignal::MISS;
+            goto _seqEnd50;
+        }
+        if ($_seq50_0 !== AnsiParserSignal::HIT) {
+            $_choice47_2[] = $_seq50_0;
+        }
+        $_choice47_2 = $this->snippet_EscOther_3($_seq50_0);
+        _seqEnd50:
+        if ($_choice47_2 !== AnsiParserSignal::MISS) {
+            $_result = $_choice47_2;
             $this->commitOffset = $_savedCommit47;
             goto _choiceEnd47;
         }
@@ -1743,122 +1843,41 @@ class AnsiParser
         return $_result;
     }
 
-    private function parseEscOther(): mixed
+    private function parseC1(): mixed
     {
         $_offset = $this->offset;
 
-        $_savedCommit48 = $this->commitOffset;
-        $_choiceOffset48 = $this->offset;
-        $_seqOffset49 = $this->offset;
-        $_seqCommit49 = $this->commitOffset;
-        $_choice48_0 = [];
-        if (\preg_match('/[\\x{a0}-\\x{10ffff}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq49_0 = $_m[0];
+        $_seqOffset52 = $this->offset;
+        $_seqCommit52 = $this->commitOffset;
+        $_result = [];
+        if (\preg_match('/[\\x{80}-\\x{8f}\\x{91}-\\x{97}\\x{99}\\x{9a}\\x{9c}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+            $_seq52_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
-            $_seq49_0 = AnsiParserSignal::MISS;
+            $_seq52_0 = AnsiParserSignal::MISS;
         }
-        if ($_seq49_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit49 || $_seqOffset49 >= $this->commitOffset) {
-                $this->offset = $_seqOffset49;
+        if ($_seq52_0 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit52 || $_seqOffset52 >= $this->commitOffset) {
+                $this->offset = $_seqOffset52;
             }
-            $_choice48_0 = AnsiParserSignal::MISS;
-            goto _seqEnd49;
+            return AnsiParserSignal::MISS;
         }
-        if ($_seq49_0 !== AnsiParserSignal::HIT) {
-            $_choice48_0[] = $_seq49_0;
+        if ($_seq52_0 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq52_0;
         }
-        $_choice48_0 = $this->snippet_EscOther_1($_seq49_0);
-        _seqEnd49:
-        if ($_choice48_0 !== AnsiParserSignal::MISS) {
-            $_result = $_choice48_0;
-            $this->commitOffset = $_savedCommit48;
-            goto _choiceEnd48;
-        }
-        if ($this->commitOffset !== $_savedCommit48) {
-            $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd48;
-        }
-        $this->offset = $_choiceOffset48;
-        $_seqOffset50 = $this->offset;
-        $_seqCommit50 = $this->commitOffset;
-        $_choice48_1 = [];
-        if (\preg_match('/[\\x18\\x1a]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq50_0 = $_m[0];
-            $this->offset += \strlen($_m[0]);
-        } else {
-            $_seq50_0 = AnsiParserSignal::MISS;
-        }
-        if ($_seq50_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit50 || $_seqOffset50 >= $this->commitOffset) {
-                $this->offset = $_seqOffset50;
-            }
-            $_choice48_1 = AnsiParserSignal::MISS;
-            goto _seqEnd50;
-        }
-        if ($_seq50_0 !== AnsiParserSignal::HIT) {
-            $_choice48_1[] = $_seq50_0;
-        }
-        $_choice48_1 = $this->snippet_EscOther_2($_seq50_0);
-        _seqEnd50:
-        if ($_choice48_1 !== AnsiParserSignal::MISS) {
-            $_result = $_choice48_1;
-            $this->commitOffset = $_savedCommit48;
-            goto _choiceEnd48;
-        }
-        if ($this->commitOffset !== $_savedCommit48) {
-            $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd48;
-        }
-        $this->offset = $_choiceOffset48;
-        $_seqOffset51 = $this->offset;
-        $_seqCommit51 = $this->commitOffset;
-        $_choice48_2 = [];
-        $_predOffset52 = $this->offset;
-        if (\preg_match('/[\\x1b\\x{80}-\\x{9f}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_pred52 = $_m[0];
-            $this->offset += \strlen($_m[0]);
-        } else {
-            $_pred52 = AnsiParserSignal::MISS;
-        }
-        $this->offset = $_predOffset52;
-        $_seq51_0 = ($_pred52 !== AnsiParserSignal::MISS) ? AnsiParserSignal::HIT : AnsiParserSignal::MISS;
-        if ($_seq51_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit51 || $_seqOffset51 >= $this->commitOffset) {
-                $this->offset = $_seqOffset51;
-            }
-            $_choice48_2 = AnsiParserSignal::MISS;
-            goto _seqEnd51;
-        }
-        if ($_seq51_0 !== AnsiParserSignal::HIT) {
-            $_choice48_2[] = $_seq51_0;
-        }
-        $_choice48_2 = $this->snippet_EscOther_3($_seq51_0);
-        _seqEnd51:
-        if ($_choice48_2 !== AnsiParserSignal::MISS) {
-            $_result = $_choice48_2;
-            $this->commitOffset = $_savedCommit48;
-            goto _choiceEnd48;
-        }
-        if ($this->commitOffset !== $_savedCommit48) {
-            $_result = AnsiParserSignal::MISS;
-            goto _choiceEnd48;
-        }
-        $this->offset = $_choiceOffset48;
-        $_result = AnsiParserSignal::MISS;
-        _choiceEnd48:
+        $_result = $this->snippet_C1_1($_seq52_0);
 
         return $_result;
     }
 
-    private function parseC1(): mixed
+    private function parseIncomplete(): mixed
     {
         $_offset = $this->offset;
 
         $_seqOffset53 = $this->offset;
         $_seqCommit53 = $this->commitOffset;
         $_result = [];
-        if (\preg_match('/[\\x{80}-\\x{8f}\\x{91}-\\x{97}\\x{99}\\x{9a}\\x{9c}]/uA', $this->source, $_m, 0, $this->offset) === 1) {
+        if (\preg_match('/\\x1b[\\s\\S]*/uA', $this->source, $_m, 0, $this->offset) === 1) {
             $_seq53_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
@@ -1873,19 +1892,34 @@ class AnsiParser
         if ($_seq53_0 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq53_0;
         }
-        $_result = $this->snippet_C1_1($_seq53_0);
+        if ($this->offset === $this->length) {
+            $_seq53_1 = AnsiParserSignal::HIT;
+        } else {
+            $this->expect('$');
+            $_seq53_1 = AnsiParserSignal::MISS;
+        }
+        if ($_seq53_1 === AnsiParserSignal::MISS) {
+            if ($this->commitOffset === $_seqCommit53 || $_seqOffset53 >= $this->commitOffset) {
+                $this->offset = $_seqOffset53;
+            }
+            return AnsiParserSignal::MISS;
+        }
+        if ($_seq53_1 !== AnsiParserSignal::HIT) {
+            $_result[] = $_seq53_1;
+        }
+        $_result = $this->snippet_Incomplete_1($_seq53_0);
 
         return $_result;
     }
 
-    private function parseIncomplete(): mixed
+    private function parseIncompleteC1(): mixed
     {
         $_offset = $this->offset;
 
         $_seqOffset54 = $this->offset;
         $_seqCommit54 = $this->commitOffset;
         $_result = [];
-        if (\preg_match('/\\x1b[\\s\\S]*/uA', $this->source, $_m, 0, $this->offset) === 1) {
+        if (\preg_match('/[\\x{90}\\x{98}\\x{9b}\\x{9d}-\\x{9f}][\\s\\S]*/uA', $this->source, $_m, 0, $this->offset) === 1) {
             $_seq54_0 = $_m[0];
             $this->offset += \strlen($_m[0]);
         } else {
@@ -1915,49 +1949,7 @@ class AnsiParser
         if ($_seq54_1 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq54_1;
         }
-        $_result = $this->snippet_Incomplete_1($_seq54_0);
-
-        return $_result;
-    }
-
-    private function parseIncompleteC1(): mixed
-    {
-        $_offset = $this->offset;
-
-        $_seqOffset55 = $this->offset;
-        $_seqCommit55 = $this->commitOffset;
-        $_result = [];
-        if (\preg_match('/[\\x{90}\\x{98}\\x{9b}\\x{9d}-\\x{9f}][\\s\\S]*/uA', $this->source, $_m, 0, $this->offset) === 1) {
-            $_seq55_0 = $_m[0];
-            $this->offset += \strlen($_m[0]);
-        } else {
-            $_seq55_0 = AnsiParserSignal::MISS;
-        }
-        if ($_seq55_0 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit55 || $_seqOffset55 >= $this->commitOffset) {
-                $this->offset = $_seqOffset55;
-            }
-            return AnsiParserSignal::MISS;
-        }
-        if ($_seq55_0 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq55_0;
-        }
-        if ($this->offset === $this->length) {
-            $_seq55_1 = AnsiParserSignal::HIT;
-        } else {
-            $this->expect('$');
-            $_seq55_1 = AnsiParserSignal::MISS;
-        }
-        if ($_seq55_1 === AnsiParserSignal::MISS) {
-            if ($this->commitOffset === $_seqCommit55 || $_seqOffset55 >= $this->commitOffset) {
-                $this->offset = $_seqOffset55;
-            }
-            return AnsiParserSignal::MISS;
-        }
-        if ($_seq55_1 !== AnsiParserSignal::HIT) {
-            $_result[] = $_seq55_1;
-        }
-        $_result = $this->snippet_IncompleteC1_1($_seq55_0);
+        $_result = $this->snippet_IncompleteC1_1($_seq54_0);
 
         return $_result;
     }
@@ -1980,13 +1972,13 @@ class AnsiParser
          return true; 
     }
 
-    private function snippet_Csi_1($_p0): mixed
+    private function snippet_CsiPlain_1($_p0): mixed
     {
         $state = &$this->globals;
          $state['vt']->csiSequence($_p0); return true; 
     }
 
-    private function snippet_Csi_2($_p0, $_p1, $_p2, $_p3, $_p4): mixed
+    private function snippet_Csi_1($_p0, $_p1, $_p2, $_p3, $_p4): mixed
     {
         $state = &$this->globals;
          $state['vt']->csi($_p1, $_p3, $_p4); return true; 

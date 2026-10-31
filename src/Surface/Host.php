@@ -39,6 +39,8 @@ final class Host
     public ?Layout $layout = null;
     /** A press on a window focuses it; null: as the host's host says. */
     public ?bool $clickFocus = null;
+    /** @var array<int, ?array> during compose(): where each window is in the frame, by its object id (see place()) */
+    private array $places = [];
     /** @var list<Surface> the surfaces made for layouts nested in this host's layout, in order */
     private array $nested = [];
 
@@ -373,6 +375,7 @@ final class Host
             return;
         }
         $this->dirty = false;
+        $this->places = [];
         $vt = $this->vt;
         $cols = $vt->cols;
         $rows = $vt->rows;
@@ -391,6 +394,7 @@ final class Host
             $damaged = array_fill(0, $rows, true);
         }
         if ($damaged === []) {
+            $this->places = [];
             return;
         }
         ksort($damaged);
@@ -407,7 +411,7 @@ final class Host
                 $styles[$y] = $vt->lines[$y]->styles;
             }
             foreach ($views as $i => $v) {
-                $at = self::place($v, 0, 0, 0, 0, $cols, $rows, $above[$i], $a, $b);
+                $at = $this->place($v, 0, 0, 0, 0, $cols, $rows, $above[$i], $a, $b);
                 if ($at !== null) {
                     $this->blit($chars, $styles, $v, $at, $above[$i], $a, $b);
                 }
@@ -424,6 +428,7 @@ final class Host
         foreach ($this->frame as $y => $line) {
             $line->wrapped = $vt->lines[$y]->wrapped;
         }
+        $this->places = [];
     }
 
     /**
@@ -463,7 +468,7 @@ final class Host
         $seen = [$own, $views];
         $above = $views === [] ? [] : self::shadesAbove($views, $sx, $sy);
         foreach ($views as $i => $v) {
-            $at = self::place($v, $sx, $sy, $cl, $ct, $cr, $cb, $above[$i]);
+            $at = $this->place($v, $sx, $sy, $cl, $ct, $cr, $cb, $above[$i]);
             $last = $this->seen[$v] ?? null;
             if ($at === null) {
                 if ($last !== null) {
@@ -519,7 +524,7 @@ final class Host
     {
         $above = self::shadesAbove($views, $ox, $oy);
         foreach ($views as $i => $v) {
-            $at = self::place($v, $ox, $oy, $cx1, $cy1, $cx2, $cy2, $above[$i], $by1, $by2);
+            $at = $this->place($v, $ox, $oy, $cx1, $cy1, $cx2, $cy2, $above[$i], $by1, $by2);
             if ($at !== null) {
                 $this->blit($chars, $styles, $v, $at, $above[$i], $by1, $by2);
             }
@@ -556,7 +561,21 @@ final class Host
      * @param list<array{int,int,int,int,int}> $shades
      * @return array{int,int,int,int,int,int,int,int,string,string}|null x, y, width, height, left, top, right, bottom, key, look
      */
-    private static function place(Viewport $v, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2, array $shades, int $by1 = PHP_INT_MIN, int $by2 = PHP_INT_MAX): ?array
+    private function place(Viewport $v, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2, array $shades, int $by1 = PHP_INT_MIN, int $by2 = PHP_INT_MAX): ?array
+    {
+        // (a window is placed the same way by damage() and by the blit after it: once per frame)
+        $id = spl_object_id($v);
+        if (\array_key_exists($id, $this->places)) {
+            $at = $this->places[$id];
+            return $at === null || $at[5] >= $by2 || $at[7] <= $by1 ? null : $at;
+        }
+        $at = $this->placeNow($v, $ox, $oy, $cx1, $cy1, $cx2, $cy2, $shades);
+        $this->places[$id] = $at;
+        return $at === null || $at[5] >= $by2 || $at[7] <= $by1 ? null : $at;
+    }
+
+    /** place() without the rows: where $v is in the frame, or null when none of it shows. */
+    private static function placeNow(Viewport $v, int $ox, int $oy, int $cx1, int $cy1, int $cx2, int $cy2, array $shades): ?array
     {
         [$x0, $y0, $w, $h] = $v->rect();
         $x0 += $ox;
@@ -565,7 +584,7 @@ final class Host
         $right = min($x0 + $w, $cx2);
         $top = max($y0, $cy1);
         $bottom = min($y0 + $h, $cy2);
-        if ($left >= $right || $top >= $bottom || $top >= $by2 || $bottom <= $by1) {
+        if ($left >= $right || $top >= $bottom) {
             return null;
         }
         $look = "$x0,$y0,$w,$h,$left,$top,$right,$bottom," . $v->lookKey() . ($shades === [] ? '' : json_encode($shades));
