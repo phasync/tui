@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+**Added**
+
+- `Tree`: hierarchical items with expand/collapse (Right/Left/Enter/Space and a click on the
+  ▸/▾ marker), lazy children through a callable that may return an awaitable (a spinning sign
+  on the node while it loads), movement keys, wheel and click, type-to-find, multi-select,
+  switchable guide lines, the parts `Tree::node` (`current`, `selected`, `loading`, `failed`),
+  `Tree::marker` and `Tree::guide`, the events `select`, `expand`, `collapse`, `activate` and
+  `change`, `setItems()` keeping expansion, marks and the current node by key, and only the
+  visible rows drawn (100,000 nodes). docs/widgets.md, `examples/tree.php`.
+
 ## 0.0.2-beta3 (2026-10-31)
 
 Inline mode, the Markdown widget, hyperlinks, one way to scroll, and four defects from use.

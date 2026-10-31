@@ -1,7 +1,7 @@
 # Widgets
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
-`Table`, `Select`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
+`Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
 `ProgressBar` and `Spinner`, and `Markdown`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
@@ -177,6 +177,85 @@ and closes it (`onActivate`), Escape or a click outside closes it unchanged; the
 back to the field. Typing on the closed field opens it, filtering. **Style**: as `Table`, the row state
 `selected` for a marked item (the current one without `multiple`; the default theme: accent
 and bold).
+
+## Tree
+
+Items that open and close: a file browser, an outline, a process tree. See `examples/tree.php`.
+
+```php
+$tree = $this->child('files', fn() => new Tree(
+    items: [
+        ['label' => 'src', 'expanded' => true, 'children' => [
+            ['label' => 'Tree.php', 'value' => '/src/Tree.php'],
+        ]],
+        ['label' => 'vendor'],                       // no children given: loaded when opened
+    ],
+    load: fn(array $node) => $this->listing($node['value'] ?? $node['key']),   // a list of items, or an awaitable of it
+    onActivate: fn($key, Tree $tree) => $this->open($tree->value($key)),
+));
+```
+
+| Constructor argument | |
+|---|---|
+| `array $items` | A prop: a list of items (below). |
+| `?Closure $load` | `fn(array $node): iterable\|awaitable` the children of a lazy node. `$node` has `key`, `label`, `icon`, `value` and `depth`. |
+| `bool $multiple = false` | Space marks nodes (`selection()` lists them). |
+| `bool $guides = true` | Draw `├─ └─ │` lines; off: two spaces of indent a level. |
+| `onSelect`, `onExpand`, `onCollapse`, `onActivate` | `fn($key, Tree $tree)`: the current node changed; a node opened; a node closed; Enter on a node. |
+| `onChange` | `fn(array $keys, Tree $tree)`: the marked nodes changed. |
+
+**An item** is an array: `label`, `key` (your id; default the parent's key and the label joined
+by `/`; keys are unique in the tree, and a duplicate throws), `icon` (shown before the label),
+`value` (anything; `value($key)` gives it back), `children` (a list of items), `expanded` (open
+when first shown), `leaf` (never has children). With `load`, an item without `children` is a
+branch whose children are fetched when it is first opened.
+
+**Lazy children.** `load` returns the items, or an awaitable of them (`fiber\await()` is used),
+and while it is awaited the node shows a spinning sign in place of ▸/▾ and the tree stays usable.
+The children are kept: closing and opening again does not load again (`reload($key)` does). When
+the load fails the node closes (state `failed`) and opening it tries again.
+
+| Keys | Action | |
+|---|---|---|
+| Up/Down, Ctrl-P/Ctrl-N | `previous`, `next` | False on the first/last node (the key goes on). |
+| Page Up/Page Down, Home/End | `pageUp`, `pageDown`, `first`, `last` | |
+| Right | `open` | Open a closed node; on an open one go to its first child. |
+| Left | `close` | Close an open node; else go to the parent. |
+| Enter | `activate` | Open or close a branch, and call `onActivate`. |
+| Space | `toggleOrMark` | Open or close a branch; with `multiple` mark or unmark the node. |
+| letters | | Jump to the next node whose label starts with them. Letters typed within a second make one word; the same letter again goes on to the next node starting with it. |
+
+**Mouse**: a click on a row makes it current, a click on its ▸/▾ opens or closes it, Ctrl-click
+marks (with `multiple`), the wheel scrolls three rows.
+
+| Method | What it does |
+|---|---|
+| `current(): int\|string\|null` / `setCurrent($key): bool` | The current node's key; make a node current, opening what is above it and scrolling it into view. |
+| `selection(): array` / `setSelection(array)` / `isMarked($key)` | The marked keys in tree order (without `multiple`: the current node's). |
+| `expand($key = null)`, `collapse($key = null)`, `toggle($key = null): bool` | Open or close a node (the current one by default); false when nothing changed. Closing a node that holds the current one makes it current. |
+| `isExpanded`, `isBranch`, `isLoading`, `hasFailed`, `has` | Questions about a node. |
+| `value($key)`, `label($key)`, `parentOf($key)` | What an item holds. |
+| `setItems(array)` | New items; which nodes are open, marked and current is kept by key, and so are loaded children. |
+| `reload($key)` | Forget the loaded children of a lazy node and load them again if it is open. |
+| `visibleCount()`, `visibleKeys()`, `topIndex()` | The nodes shown (the open ones) and the row at the top of the view. |
+
+**Events** (for `on()`): `select`, `expand`, `collapse`, `activate` (each with the key and the
+tree) and `change` (the marked keys and the tree).
+
+**Size and speed.** It takes the room it is given. Only the rows in view are laid out and drawn,
+so 100,000 nodes cost what a screenful does; opening or closing a node walks the open nodes once.
+A wide label is cut with "…", and wide characters and emoji count two columns.
+
+**Style**: parts `Tree::node` (states `current`, `selected` for a marked node, `loading`,
+`failed`), `Tree::marker` and `Tree::guide`. The default theme shows the current node inverted,
+the markers in the accent colour and the guides muted.
+
+```php
+$app->setStylesheet(Stylesheet::default()->with([
+    'Tree::node:current' => ['background' => '$accent', 'color' => 'black'],
+    'Tree::guide' => ['color' => 'green'],
+]));
+```
 
 ## Dialog and Confirm
 
