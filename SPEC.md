@@ -190,6 +190,43 @@ host supports it) and restores it on exit, exceptions and signals.
 - Self-hosting is the structure's own test: a root attached to a `FakeTerminal` whose byte stream
   is written into a Surface must yield the same cells as the root.
 
+### 4.1 Inline mode: a live region at the bottom of the terminal's own scrollback
+
+A program that runs several processes and shows a progress line for each, or a few progress bars
+and a total, should not take the terminal over. `Tty::inline()` shows the root Surface **in the
+terminal's normal screen**: no alternate screen, mouse reporting off unless the program asks (the
+terminal's own selection and scrolling keep working), raw mode only while the region is live, the
+terminal restored on exit with the last frame left standing (or erased, `keep: false`).
+
+The model is the Surface's own: the root Surface's visible rows are the live region, and **the
+root's scrollback is the terminal's scrollback**. The region sits at the bottom, under everything
+the terminal already shows, and is as tall as the root's content, at most the terminal's height.
+When the content grows past that, the root scrolls: the rows that leave the top of the Surface are
+written once more into the terminal above the region, as they last looked, and are never touched
+again. So a progress line that runs from 1% to 100% stays live while it is in the region and
+freezes at whatever it showed when newer lines pushed it out, exactly as if the program had printed
+it. Plain output from the program (`$tty->println(...)`, or `echo` captured the same way as a
+coroutine's into a Surface) goes to the same place: into the scrollback above the region, which is
+redrawn under it.
+
+The device paints with relative cursor motion only (the region moves whenever the terminal
+scrolls), repaints the damaged cells against the previous frame as in fullscreen mode, and parks
+the cursor on the line under the region. A width change repaints the whole region; a height change
+of the content scrolls the terminal by the difference and repaints. Resizing the terminal below the
+region's height scrolls the top rows out like content growth does.
+
+Nothing above the device changes: the same component tree runs fullscreen with `Tty::attach()`,
+inline with `Tty::inline()`, and headless under `FakeTerminal` (which gains the same mode, exposing
+the frozen lines and the live region separately). Limits to state in the docs: while the region is
+live the program reads its keys through the library, not `fgets(STDIN)`; a hosted alternate-screen
+program (vim) inside an inline region is possible but pointless.
+
+Tests: five progress bars and a total under `FakeTerminal::inline()`; twenty process lines on a
+10-row terminal, finishing in random order, where the frozen text of each line is what it showed
+when it left the region; `println()` between frames puts its lines above the region and the region
+is intact after; a byte-stream replay into a Surface of the same size shows the same frozen lines
+and the same region.
+
 ## 5. Layout
 
 - A layout arranges a host's viewports: `Split` (horizontal/vertical) with children sized fixed,
