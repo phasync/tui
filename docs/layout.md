@@ -81,3 +81,24 @@ Implement `Layout::arrange(Surface $host): void`: host each surface you place wi
 `setFit(true)`). To nest layouts in yours, get the surface for the n-th nested layout with
 `$host->nestedSurface($n, $layout)` (the same one on every arrange) and host that. Draw decorations (lines between windows) by writing escape sequences to the
 host after placing the windows.
+
+## Placement
+
+Where a floating window goes, next to an anchor: the decision `Component::overlay()` makes
+for a dropdown, a completion list or a dialog, as a pure function a widget can use itself.
+
+```php
+$rect = Placement::for(Rect $anchor, Rect $root, array $desired, string|Rect $place = 'below'): Rect;
+$rect = Placement::for($field->surface->area(), new Rect(0, 0, $cols, $rows), [30, 8], 'below');
+```
+
+All rectangles are in the same coordinates (those of `Surface::area()`); `$desired` is
+`[cols, rows]`. The result is always inside `$root`, in this order:
+
+| `$place` | Where |
+|---|---|
+| `'below'`, `'above'` | On that side of the anchor if it fits there; else on the other side if it fits there; else on the side with more room (the preferred one on a tie), **shrunk to that room**; when neither side has any room (the anchor fills the root), over the anchor. Horizontally from the anchor's left edge, shifted left to stay inside, narrowed only when wider than the root. |
+| `'center'` | In the middle of the root, shrunk to it when larger. |
+| a `Rect` | That rectangle, shrunk to the root's size and shifted inside it. |
+
+Throws `InvalidArgumentException` for another `$place`.

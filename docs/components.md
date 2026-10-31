@@ -177,9 +177,17 @@ protected function render(): Element
 `'25%'`, `'1fr'` (a share of what is left after the others), or `'auto'` (what its content
 needs: `measure()`). Without one, `Text`, `Box` and `Help` are `'auto'` (a text is as high as
 its wrapped lines), containers `'1fr'`, and a component `'auto'` when its `measure()` knows a
-size (a one-line `Editor`: 1 row; a `Table`: its rows) and `'1fr'` otherwise. Sizes may also
-come from the stylesheet (`width`, `height`). When a component's `measure()` changes (an
-editor grew a line), its parent lays the tree out again by itself.
+size (a one-line `Editor`: 1 row; a `Table`: its rows and its columns' widths) and `'1fr'`
+otherwise. Sizes may also come from the stylesheet (`width`, `height`). When a component's
+`measure()` changes (an editor grew a line), its parent lays the tree out again by itself.
+
+The room is given out in this order: fixed sizes (cells, percentages) first; then the `'auto'`
+and `'1fr'` items share the rest, **each `'auto'` item getting what it needs, but no more than
+a `'1fr'` share** while others still need room. So an item that needs little gets exactly that,
+and one whose content is larger than the room (a `Table` of 10,000 rows, a one-line `Editor`
+that measures as wide as it is given) acts as `'1fr'` and leaves its siblings theirs: a `Help`
+line under such a table keeps its row, a `Text(width: 20)` beside such a field is drawn. Give
+an element a size to decide yourself.
 
 **What stays.** Elements are matched with the previous render's by their place in the tree
 (positions and element types), or by `key` (for items of a list that come and go or move):
@@ -216,6 +224,14 @@ return new Column([new Counter(label: "clicks of {$this->state->user}"), ...]);
 A component of another class at the same place replaces the old one. `child($key, $create)`
 is the other way: its factory runs once, and the parent changes the child afterwards through
 its methods.
+
+**A child renders when its own things change, not when its parent renders.** A parent's
+render that places `new Counter(label: 'A')` again with the same props does not render the
+counter again: nothing of the counter changed. So a child that shows something of its
+parent's (a value the parent keeps in a property, the parent's state) does not follow it by
+itself. Two remedies: pass the changing value as a prop (`new Counter(label: $this->state->user)`:
+a new value is new props, and the child renders), or give both the same `State` object (a
+write renders every component that has it as its `$state`).
 
 ## State: rendering by itself
 
@@ -291,7 +307,21 @@ specificity (ids, then classes/states/parts, then types; later rules win ties), 
 A component that draws itself asks for its look with `$this->style()` (a `ComputedStyle`:
 `text` is the `Style` for `Ansi::style()`, plus `border`, `padding`, `align`, `width`,
 `height`) and `$this->style('part', 'state')` for its parts; it renders again when its
-states change.
+states change. `properties()` gives a computed style as inline properties, for a `Text` or
+`Span` in a part's style.
+
+**The pen is the component's style.** Before `render()` runs, the library sets the surface's
+pen (its current SGR) to the component's style. So a render that clears the surface
+(`"\e[2J"`, `Ansi::clearScreen()`) fills it with the themed background, and text written
+without SGR of its own is in the component's colours. `"\e[0m"` (`Ansi::reset()`) resets the
+pen to the terminal's default; write `Ansi::style($this->style()->text)` after it to come back.
+
+**States of your own.** `setStyleState('selected', true)` puts a component in a state the
+stylesheet can select (`'.card:selected' => ['border' => 'double $accent']`), and renders it
+and the tree around it (a `Box` showing it); `hasStyleState()` reads it. A parent may set it on
+a child (`$card->setStyleState('selected', $key === $this->state->current)`). The library's own
+states are `focused`, `disabled` and `hover`; the widgets add theirs (`Button:pressed`,
+`Checkbox:checked`, a `Form` field's `:invalid`).
 
 ## Key bindings
 
@@ -312,15 +342,76 @@ focused surface's program (a `Terminal`'s shell). So a focused text field types 
 an application binds, the application's Ctrl-Q works wherever the focus is, and a method that
 returns `false` did not take the key (an editor's Up on its first row), which goes on.
 
+**While a modal overlay is open** (a dialog), the component that opened it is suspended: its
+`onKey()` and its bindings do not run, except bindings marked `always`; the bindings of its
+parents run as usual. So a dialog opened by a pane leaves the application's keys working, and
+a key the application must have everywhere, also under a dialog the root itself opened, is
+marked:
+
+```php
+return ['ctrl+q' => ['quit', 'quit', 'always' => true], 'ctrl+s' => ['save', 'save']];
+```
+
 **Changing them.** `$component->bind(['ctrl+s' => null, 'ctrl+w' => 'save'])` changes one
 instance; `$app->bind(['ctrl+enter' => 'submit'], Editor::class)` every `Editor` below `$app`.
 The nearest setting wins. `bindingsInForce()` lists the result. A `Help` element shows the
 described ones for the focused component and its parents, and follows the focus.
 
-## Dialogs
+## Overlays and dialogs
 
-`$this->dialog(Dialog $dialog): object` shows a modal dialog centered over the component and
-returns an awaitable of its answer. Await it in a coroutine:
+Anything can float over everything, outside the component's rectangle and its parents'
+clipping: a dropdown's list, a completion popup, a context menu, a tooltip, a dialog. One
+primitive, on the component:
+
+```php
+$overlay = $this->overlay(Element $element, ?Rect $anchor = null, string|Rect $place = 'below', bool $modal = false);
+```
+
+- **Where.** Next to `$anchor`, a rectangle in the component's own coordinates (default: the
+  whole component), by `$place`: `'below'` or `'above'` it, `'center'` of the screen, or a
+  `Rect` (in the component's coordinates). The root's rectangle is a hard boundary: on the
+  preferred side if the overlay fits there, else on the other side if it fits there, else on
+  the side with more room, **shrunk to that room** (its content scrolls: a list of 30 items in
+  6 free rows shows 6 and scrolls); shifted left or right to stay inside, narrowed only when it
+  is wider than the screen. The decision is `Placement::for()`, a pure function a widget can
+  also call for itself (see [layout](layout.md#placement)).
+- **When the screen changes.** After the layout of every frame, before it is painted, each
+  overlay is placed again where its anchor is now: the terminal resized, the anchor's
+  component moved or scrolled, the tree rebuilt. It keeps its state (a list keeps its current
+  item, scrolled into view in its new height). When the anchor's component is no longer shown,
+  the overlay is cancelled.
+- **Size.** The element's `width`/`height` when given (cells, or `'50%'` of the screen), else
+  what it measures, else the whole screen; plus the border its style gives it.
+- **Order.** Later overlays above earlier ones, kept across renders.
+- **Focus.** The overlay gets it, by the surface tree's rule (a widget that keeps the keys, as
+  an `Editor` with its completion list, calls `$this->focus()` after opening it). Closing
+  gives it back to where it was.
+- **Modal** overlays take all input until they close: clicks outside reach nothing, and the
+  opener's keys are suspended (see "Key bindings"). **Non-modal** ones are cancelled by Escape
+  (when their content does not take it), a press outside them and their opener, or the focus
+  moving to something else.
+- **The element** is shown by a child component of the opener: the element itself when it is
+  a component (not started yet), else a component of the library around it that scrolls it.
+  Disposing the opener cancels its overlays.
+
+The returned `Overlay`: `close(mixed $result = null)` closes it with a result, `closed()` is an
+awaitable of the result, `isOpen()`, `result()`, and `content` (the component shown). A
+cancelled overlay closes with null (a `Dialog`: its `$cancel`). A component shown in one finds
+it with `inOverlay()`.
+
+```php
+public function openMenu(): void       // bound to a key
+{
+    $menu = $this->overlay(new Select(['copy' => 'Copy', 'paste' => 'Paste'],
+        onActivate: fn($key) => $menu->close($key)));
+    $this->go(function () use ($menu) {
+        $action = fiber\await($menu->closed());      // null when cancelled
+    });
+}
+```
+
+**Dialogs.** `$this->dialog(Dialog $dialog): object` is an overlay in the middle of the screen,
+modal, and returns an awaitable of the answer. Await it in a coroutine:
 
 ```php
 public function delete(): void          // bound to a key
@@ -333,10 +424,12 @@ public function delete(): void          // bound to a key
 }
 ```
 
-While it is open, the component's own keys and bindings and the mouse outside the dialog are
-the dialog's (its parents' bindings still work: Ctrl-Q quits). Escape cancels; when it closes
-the focus goes back where it was. It works over element trees, layouts and components that
-draw themselves. See [widgets](widgets.md) for `Dialog` and `Confirm`.
+While it is open, the component that opened it is suspended (its bindings marked `always`, and
+its parents' bindings, still work: an application's Ctrl-Q quits). Escape cancels; when it
+closes, the focus goes back where it was. **Quitting with dialogs open ends the program**:
+disposing a component (the root, or any child) while dialogs it opened are open answers each
+with its cancel value and disposes it, so the coroutines awaiting them go on and end, and
+`fiber\run()` returns. See [widgets](widgets.md) for `Dialog` and `Confirm`.
 
 ## Focus
 
@@ -346,9 +439,13 @@ library makes by itself (after a key, a state write, a coroutine step), so a ren
 take back the focus the user moved.
 
 One component has the keyboard: the one focused last (`focus()`), or the descendant it passes
-the keys on to. A focus request names a component, and through it the descendant that
-component focused: a dialog that focuses its text field in `mount()` and is then focused itself
-gives its keys to the text field.
+the keys on to. **A component with keys of its own takes them itself** when it is focused:
+one with `bindings()` (or keys given with `bind()`) or an `onKey()`/`onPaste()` of its own. A
+board that focused its filter field takes the focus back with `$board->focus()`. **A container**
+(a component without keys of its own: a `Box`, a `Dialog`, a `Form`, a screen of fields)
+passes the focus on to the descendant it focused, or to its first focusable one: a dialog that
+focuses its text field in `mount()` and is then focused itself gives its keys to the text
+field. Override `canFocus(): bool` to decide otherwise.
 
 ```php
 final class NameDialog extends Component
@@ -390,6 +487,16 @@ component's surface added directly with a border and title
 component. `hasFocus()` reads the same path the keys take, so it is true exactly when the next
 key reaches the component (or goes through it).
 
+## The mouse
+
+Mouse events go to the window under the pointer, in its coordinates, each component on the way
+seeing them first (`onMouse()`). **The component that took the press gets the whole drag and
+the release**, wherever the pointer goes, with coordinates relative to its own rectangle that
+may be outside it (negative, or beyond its width and height): drag and drop between siblings
+needs nothing of the root's. (A program in a `Terminal` that asked for mouse reports gets them
+at the edge of its window, as a terminal reports them.) Return true from the press to take
+the drag; a press nobody takes starts the host's text selection.
+
 ## Methods
 
 | Method | What it does |
@@ -414,7 +521,14 @@ key reaches the component (or goes through it).
 | `child(string $key, ?Closure $create = null): ?Component` (protected) | The child under `$key`, created with `$create` and started the first time it is asked for. Without `$create`: the child of that key, or null when there is none or it was disposed (`$this->child('dialog')?->dispose()` in a handler). After a render that returned a layout, children it neither asked for (either way) nor shows are disposed: one whose surface the layout shows is kept, however it got there. `$create` may return a component started already (another's child, given to a container): it is shown here and stays its owner's. |
 | `emit(string $event, mixed ...$data)` (protected) | Call the listeners of `$event` (see `on()`); document the events your component emits. `hasListeners(string $event): bool` tells whether anyone listens, to skip work only a listener needs. A listener made by a component renders that component afterwards. |
 | `call(?Closure $callback, mixed ...$args): mixed` (protected) | Call a callback the component was given (`onSubmit`); the component that made it renders afterwards. Use it for the callbacks of your own widgets. |
-| `dialog(Dialog $dialog): object` (protected) | Show a modal dialog over the component; an awaitable of its answer (see "Dialogs"). |
+| `overlay(Element $element, ?Rect $anchor = null, string\|Rect $place = 'below', bool $modal = false): Overlay` (protected) | Show an element floating over everything (see "Overlays and dialogs"). |
+| `dialog(Dialog $dialog): object` (protected) | Show a modal dialog in the middle of the screen; an awaitable of its answer (see "Overlays and dialogs"). |
+| `inOverlay(): ?Overlay` | The overlay this component is shown in, or null. |
+| `children(): array` | The child components by key: `child()` keys, `key:` attributes, and keys of the library's (beginning with "\0") for the rest. How a parent or a test reaches a child: `$app->children()['log']`. |
+| `setStyleState(string $state, bool $on = true)`, `hasStyleState(string $state): bool` | A state of its own for the stylesheet (see "Styles"). |
+| `canFocus(): bool` (protected) | Whether `focus()` gives it the keys itself or passes them on (see "Focus"). |
+| `measureElement(Element $element, int $cols, int $rows): ?array` (protected) | The size an element tree needs, as the library lays it out: for `measure()` of a component as large as the tree it renders. |
+| `layoutElement(Element $element): Layout` (protected) | An element tree laid out as a layout, not set: for a component that shows a tree on a surface of its own (as `ScrollView` does). |
 | `state` (protected `State`) | The component's state (see "State: rendering by itself"). |
 | `go(Closure $task)` (protected) | Another coroutine of the component: contained like `run()`; the component's end waits for it; when it ends after it waited, the component renders. |
 | `sleep(float $seconds): bool` (protected) | Sleep, less if disposed meanwhile; returns `isMounted()`. What the coroutine did before shows in the next frame. |

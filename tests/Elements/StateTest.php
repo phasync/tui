@@ -125,10 +125,11 @@ it('renders a coroutine loop that changes the state once per frame, not once per
     $app = new class extends Component {
         public int $renders = 0;
         public int $writes = 0;
+        public bool $halt = false;
 
         protected function run(): void
         {
-            while ($this->sleep(0.005)) {
+            while ($this->sleep(0.005) && !$this->halt) {
                 for ($i = 0; $i < 50; $i++) {
                     $this->state->ticks = ($this->state->ticks ?? 0) + 1;
                     $this->writes++;
@@ -144,9 +145,12 @@ it('renders a coroutine loop that changes the state once per frame, not once per
     };
     mountOn($app, 20, 1, function (FakeTerminal $t, Component $app) {
         \fiber\sleep(0.06);
+        $app->halt = true;  // (no step between the screen and the count read below)
+        \fiber\sleep(0.01);
         $t->settle();       // (the render of the last step)
         expect($app->writes)->toBeGreaterThan(200)
-            ->and($app->renders)->toBeLessThanOrEqual(intdiv($app->writes, 50) + 2)    // the first, and one per step, not per write
+            // the first, one per step (not per write), and the two of the halt: its last sleep and the end of run()
+            ->and($app->renders)->toBeLessThanOrEqual(intdiv($app->writes, 50) + 4)
             ->and($t->text())->toBe('ticks ' . $app->writes);
     });
 });

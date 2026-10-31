@@ -249,3 +249,21 @@ it('shrinks a dialog larger than the terminal and scrolls its content; the butto
         expect($app->answers)->toBe([true]);
     });
 });
+
+it('runs the Rename dialog of docs/widgets.md: refused while empty, with its message', function () {
+    $doc = (string) file_get_contents(__DIR__ . '/../../docs/widgets.md');
+    preg_match('/```php\n(final class Rename extends Dialog.*?)\n\/\/ in a coroutine/s', $doc, $m);
+    eval('use phasync\Tui\Component\Dialog; use phasync\Tui\Component\Editor; use phasync\Tui\Element\Column; use phasync\Tui\Element\Text; ' . $m[1]);
+    mountOn(new Asker(), 40, 12, function (FakeTerminal $t, Asker $app) {
+        $rename = new Rename('');
+        $app->ask($rename);
+        $t->settle();
+        $t->press('enter');
+        $t->settle();
+        expect($t->text())->toContain('A name, please.')->and($rename->isMounted())->toBeTrue();
+        $t->type('notes.txt');
+        $t->press('enter');
+        $t->settle();
+        expect($app->answers)->toBe(['ok'])->and($rename->name())->toBe('notes.txt');
+    });
+});

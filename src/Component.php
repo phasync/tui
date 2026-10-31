@@ -94,12 +94,16 @@ use function fiber\current;
  * component it ends at (the focused one) its own bindings come first, then its `onKey()`, then
  * the bindings of its parents, nearest first. A key nobody takes goes to the focused surface's
  * program (a `Terminal`'s shell). So a text field types the letters an application binds, and
- * an application's Ctrl-Q works wherever the focus is.
+ * an application's Ctrl-Q works wherever the focus is. While a modal overlay (a dialog) a
+ * component opened is open, that component's own keys wait, except bindings marked `always`
+ * (`'ctrl+q' => ['quit', 'quit', 'always' => true]`); its parents' bindings work.
  *
  * **Events.** `onKey()`, `onMouse()`, `onPaste()` and `onFocus()` receive the events that reach
  * the component's surface (see `Surface::dispatch()`): a component sees them before its focused
  * child does, and returning true keeps them from going further. `onResize()` is told the new size.
- * `dialog()` opens a modal `Dialog` over the component and gives its answer as an awaitable.
+ * A drag goes to the component that took the press, in its coordinates, also outside it.
+ * `overlay()` floats any element over everything, next to an anchor (a dropdown's list, a
+ * menu); `dialog()` opens a modal `Dialog` and gives its answer as an awaitable.
  *
  * **Showing another component's state.** A component whose `render()` reads the state of
  * another (a pane title showing which lines of a `Log` are in view) listens to that component's

@@ -3,6 +3,98 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.2-beta2; TODO-0.0.2-beta2.md, SPEC 8.5)
+
+All items of TODO-0.0.2-beta2.md done, in CHANGELOG.md; tests green with and without
+ext-phasync (503 tests).
+
+- [x] 1. Quitting with dialogs open (tests/Component/QuitWithDialogsTest.php: the exact shapes,
+      a forked child so a hang fails, a randomized round of opens/typing/quit moments); the
+      key rule under a modal (opener suspended except `always` bindings; parents' work)
+- [x] 2. Overlays: src/Overlay.php, src/Placement.php (tests/Layout/PlacementTest.php),
+      Component::overlay()/dialog()/inOverlay(), Internal/OverlayLayout, Internal/Floating;
+      tests/Elements/OverlayTest.php; Dialog/Confirm as overlays; Select dropdown; Editor
+      completion
+- [x] 3. Size::distribute(): 'auto' = what it needs, capped at a 1fr share (tests/Elements/SizingTest.php)
+- [x] 4. canFocus(); drags unclamped to the pressed window (tests/Component/FocusSelfTest.php)
+- [x] 5. Editor: maxLines = rows shown, no joining; grows; history; complete; not final; insert()
+- [x] 6. Dialog::accept(), Tab content-then-buttons (Buttons), content-sized, ScrollView;
+      Select filter mode
+- [x] 7. Button, Checkbox (toggle), ProgressBar, Spinner, Form + Field; README + examples/form.php
+- [x] 8. setStyleState()/hasStyleState(); pen = component style before render(); Help one row, `show:`
+- [x] 9. docs on `new` children not re-rendering; FakeTerminal::settle()/run(); children()
+- [x] 10. docs, CHANGELOG
+
+## Left for later versions (0.0.2)
+
+- Widgets of SPEC 8.6 not in this TODO: `Radio`, `Tabs`, `Tree`, draggable `Split`
+  separators, `Terminal` `onOutput`, `Markdown`.
+- Overlays are hosted on the root component, not on "the nearest `Layers` above" (SPEC 8.5):
+  the root always has one and is the boundary; a nested instance's root is its pane. A
+  `Layers` element in the middle of a tree does not host overlays of its own.
+- `ScrollView` scrolls by whole rows of its content surface; a focused element taller than
+  the view shows its top.
+- `:hover` only for components; Stylesheet has no combinators (`Dialog Button`).
+- Text elements do not scroll by themselves (put them in a `ScrollView`).
+- Editor: no double-click word selection; a drag above or below it does not scroll it.
+
+## Design decisions (0.0.2-beta2)
+
+- **Overlays live on the root component.** `overlay()` makes the element a child of the opener
+  (key "\0o:N"; a plain element is wrapped in Internal\Floating, which renders it in a
+  ScrollView) and registers it with the root (`$floating`, in open order). The root's layout
+  is wrapped in an OverlayLayout (inner layout, or none for a self-drawing root, then each
+  overlay at its rect, raised in order). Placement runs at the end of every renderFrame for
+  every root with overlays (`$floatingRoots`), i.e. after the layout pass and before the
+  device paints; it computes the anchor from the opener's `area()` relative to the root's,
+  the desired size from `width`/`height` attributes or `measureFor()` (so a content whose
+  measure changes makes the opener render, and the next pass re-decides), and arranges only
+  when a rect changed. OverlayLayout clamps the stored rect to the host, so a resize that
+  arranges before the pass never puts anything outside. The same pass cancels overlays whose
+  opener is gone, not shown (`isShownIn()` or empty area), or (non-modal) lost the focus after
+  having had it (`wasFocused`).
+- **Ownership = lifetime.** The overlay's content is the opener's child, so disposing the
+  opener stops it; Component::stop() of a content cancels its overlay first (closes with the
+  cancel value, unhosts at once, restores the focus if it was in the overlay or it was
+  modal). That is what makes quitting with dialogs open end everything: the Dialog's unmount
+  resolves its result with `$cancel`, the awaiting coroutine goes on, the opener's end follows.
+- **Keys under a modal.** `suspended()` = an open modal overlay of this component. key(): the
+  key end's own bindings/onKey unless suspended; then up the parent chain: each parent's
+  bindings (only `always` ones when that parent is suspended), and Escape cancels a non-modal
+  overlay when the walk passes its content. Overlay contents' parent is the opener, so a
+  dialog's keys reach the opener's parents (the application) without the opener being on the
+  surface focus path. The root's capture onKey is skipped while the root is suspended.
+- **Mouse.** The root's mouse listener (`overlayMouse()`, after the hover pointer) takes
+  everything outside the topmost modal overlay, and cancels non-modal ones on a press outside
+  them and their opener. Captured drags: Host passes unclamped coordinates to the captured
+  window; Surface::dispatch() clamps only when encoding for a program.
+- **Focus.** `focus()` = `takeFocus()` for components that `canFocus()` (default: bindings in
+  force, or an onKey/onPaste override, by reflection, cached per class), else `focus()` on
+  the surface (keys go on to the latest request below). Dialog and Form override it (false).
+  `hasFocus()` is also true while one of the component's overlays has the focus (a dropdown
+  field looks focused while its list has the keys).
+- **Sizes.** Size::distribute() treats ['auto', n] as weight 1 capped at n (water-filling:
+  settle every auto that fits its current share, repeat, then split the rest by weight).
+  Before, autos were fixed cells and swallowed the room. Table::measure() gives its natural
+  width (fixed columns, the widest cell/title of the others).
+- **Dialog** renders Box(Column[title, ScrollView(content), Row(Buttons)]); measure() is the
+  tree's natural size via `measureElement()` (a message laid out at 60 columns). mount()
+  measures once so the content's components exist and the first field can be focused before
+  the first render. Buttons are children "button$i".
+- **ScrollView** is a component: its render returns a ScrollLayout that hosts an inner surface
+  (the view's width x the content's natural height, `setFit(false)`) and sets on it the layout
+  `layoutElement()` built; `follow()` keeps the top and scrolls to the focused leaf when that
+  changed. onKey (capture) marks it dirty so a focus move inside is followed.
+- **Form** finds its fields with `children()` recursively (Field + `id`); validation sets the
+  `invalid` style state; a Button without onPress walks up to the nearest Form.
+- **Pen before render.** renderNow() writes `ESC[0m` + the component's style to its surface
+  before render(); SGR-only writes change no cells.
+- **Child keys** made by the Tree: "\0k:<key>" for `key:` elements, "\0p:<path>" for the rest;
+  `children()` shows the former as `<key>`.
+- **FakeTerminal::run()** instead of a watcher in attach(): see the fiber\ finding below.
+  `settle()` loops `sleep(0)` + refresh until the output length and the root version were
+  unchanged three times (1 s at most).
+
 ## Status (0.0.2-beta1; TODO-0.0.2-beta1.md, SPEC section 8)
 
 All items of TODO-0.0.2-beta1.md done, in CHANGELOG.md; tests green with and without
@@ -468,6 +560,20 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
   so the closure is wrapped in a nested `fiber\run()` (children finish inside the capture).
 
 ## fiber\ notes
+
+- **Finding (beta2): awaiting a handle from `fiber\current()` misbehaves under
+  fiber-interop/phasync 0.4.1.** Item 9 of TODO-beta2 (a failing headless test must not hang)
+  was first done in `TerminalDevice::attach()`: remember `current()` (the attaching task) and
+  start a watcher `go(fn() => await($attacher))` that detaches the device when the attacher
+  throws, then rethrows. Probed in a scratch script: (a) when the attacher is the closure of
+  `fiber\run()`, `await()` of its `current()` handle runs that closure again (the closure
+  printed its first line four times), and (b) when the attacher is a `go()` task and the
+  watcher is started from inside that task, `await()` returns normally although the task
+  throws. Awaiting the same task from a sibling started outside it works (rethrows). So the
+  watcher was dropped and `FakeTerminal::run()` does the plain thing (detach in `finally`).
+  The api README allows awaiting go() handles and says `current()` is such a handle; either
+  the adapter should honour that for the run() task and for awaits from a child task, or the
+  api should say `current()` is for `===` only. Nothing of the library depends on it now.
 
 - **Finding (beta3, resolved in api 0.3.1 by `fiber\current()`, used since beta5):** fiber-interop/api had no way to ask "which task am I" (a
   current-task handle comparable with what go() returned). A component disposing itself from

@@ -219,5 +219,17 @@ it('opens a dropdown at the bottom upward', function () {
         $t->settle();
         $rows = explode("\n", $t->text());
         expect($rows[4])->toStartWith('Apple')->and($rows[7])->toStartWith('Date')->and($rows[8])->toStartWith('Apple      ▴');
+        $t->press('down', 'down');                  // Cherry
+        $t->resize(30, 9);                          // the field on the last row, 8 rows above
+        $t->settle();
+        $rows = explode("\n", $t->text());
+        expect(count($rows))->toBe(9)->and($rows[8])->toStartWith('Apple      ▴')->and($rows[6])->toStartWith('Cherry')
+            ->and($app->dropdown()->list()->current())->toBe('c');
+        $t->resize(30, 20);                         // room below now: it moves there, still on Cherry
+        $t->settle();
+        $rows = explode("\n", $t->text());
+        expect($rows[9])->toStartWith('Apple')->and($rows[11])->toStartWith('Cherry')->and($app->dropdown()->list()->current())->toBe('c');
+        $t->press('enter');
+        expect($app->dropdown()->selected())->toBe('c')->and($app->activated)->toBe(['c']);
     });
 });

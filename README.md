@@ -82,9 +82,12 @@ One primitive, one structure:
 6. **Components** ([docs](docs/components.md)): `Component` adds a lifecycle, a coroutine, keyed
    children and error boundaries; `render()` returns an element tree (`Column`, `Row`, `Layers`,
    `Box`, `Text`, `Help`) that the library lays out into surfaces and paints through `write()`;
-   state that renders by itself, a stylesheet, key bindings as data. Built-ins `Terminal`,
-   `Log`, `TextInput`, `ListView`, `StatusBar`, `Box`.
-7. **Widgets** ([docs](docs/widgets.md)): `Editor`, `Select`, `Table`, `Dialog` and `Confirm`.
+   state that renders by itself, a stylesheet, key bindings as data, and overlays: anything can
+   float over everything (`overlay()`), placed next to its anchor inside the screen. Built-ins
+   `Terminal`, `Log`, `TextInput`, `ListView`, `StatusBar`, `Box`.
+7. **Widgets** ([docs](docs/widgets.md)): `Editor` (with history and completion), `Select`
+   (a list, or a dropdown), `Table`, `Dialog` and `Confirm`, `Form` with `Button` and
+   `Checkbox`, `ScrollView`, `ProgressBar`, `Spinner`.
 
 The surfaces form one tree, whatever is in it: every surface knows its `parent()` and its
 `area()` on the root, and focus (`focus()`, `focusNext()`, `focusToward('left')`) follows that

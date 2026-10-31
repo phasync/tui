@@ -1,7 +1,8 @@
 # Widgets
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
-`Table`, `Select`, `Dialog` and `Confirm`. Each is an element (place it in a tree where it
+`Table`, `Select`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
+`ProgressBar` and `Spinner`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -25,16 +26,24 @@ $body = $this->child('body', fn() => new Editor(wrap: true));      // fills its 
 |---|---|
 | `string $value = ''` | The initial text. |
 | `string $placeholder = ''` | Shown while it is empty (part `placeholder`). |
-| `int $maxLines = 0` | `1`: a single-line field (Enter submits, pasted line breaks become spaces, it scrolls sideways, Up/Down go on to the parent). `0`: any number of lines (Enter starts a line, Alt-Enter or Ctrl-Enter submits). More: a limit on the lines. |
+| `int $maxLines = 0` | `1`: a single-line field (Enter submits, or goes on to the dialog or form it is in when there is no `onSubmit`; pasted line breaks become spaces; it scrolls sideways; Up/Down go on to the parent). Otherwise any number of lines (Enter starts a line, Alt-Enter or Ctrl-Enter submits): nothing typed or pasted is joined or dropped. Above 1, how many rows it **shows** at most (it grows with its text up to there, and scrolls beyond); `0` fills its room. |
 | `bool $wrap = true` | Wrap long lines between words; else they are cut at the edge and the view scrolls sideways with the cursor. |
 | `?Closure $onSubmit` | `fn(string $value, Editor $editor)`: Enter in a one-line field, Alt-Enter in a multi-line one. |
 | `?Closure $onChange` | `fn(string $value, Editor $editor)`: after every change of the text. It also emits the event `change`. |
+| `bool $history = false` | Remember submitted texts; Up on the first row and Down on the last walk them, as in a shell (the text being written comes back after the newest). |
+| `?Closure $complete` | `fn(string $word, Editor $editor): iterable` candidates for the word before the cursor: Tab shows them in a list under the cursor (an overlay); Up/Down choose, Tab or Enter accept (the word is replaced), Escape closes, typing filters. |
 
 `placeholder`, `maxLines` and `wrap` are props: an `Editor` placed with `new` on every render
 takes new ones and keeps its text.
 
 **Size.** Without a `height`: one row with `maxLines: 1`; as high as its text up to `maxLines`
-with a limit; the room it is given with `maxLines: 0`.
+above 1 (so a `Box` around it grows as the user types: a chat input); the room it is given
+with `maxLines: 0`.
+
+**Extending it.** `Editor` is a class to extend for an input of your own (a chat input, a
+command line, a form field): add or change keys in `bindings()`
+(`[...parent::bindings(), 'enter' => 'send']`), call the public actions and `insert()` from
+yours, override `onKey()`, `onPaste()` or `measure()` and call the parent's.
 
 | Method | What it does |
 |---|---|
@@ -42,6 +51,9 @@ with a limit; the room it is given with `maxLines: 0`.
 | `cursor(): array` / `setCursor(int $line, int $column)` | The cursor as `[line, column]`, from 0, the column in grapheme clusters. |
 | `selectedText(): string` | The selected text ('' for none). |
 | `select(int $fromLine, int $fromColumn, int $toLine, int $toColumn)` | Select a range; the cursor goes to its end. |
+| `insert(string $text)` | Type `$text` at the cursor, over the selection (one undo step). |
+| `history(): array` / `setHistory(array $texts)` | The remembered submitted texts, oldest first. |
+| `completion(): ?Select` | The open completion list. |
 | the actions below | Each a public method, bound to its keys. |
 
 | Keys | Action | |
@@ -63,6 +75,8 @@ with a limit; the room it is given with `maxLines: 0`.
 | Ctrl-C, Ctrl-X | `copy`, `cut` | The selection to the kill ring and the terminal's clipboard (OSC 52); false without one. |
 | Enter | `enter` | Submit (one line) or a new line. |
 | Alt-Enter, Ctrl-Enter | `submit` | `onSubmit`. |
+| Up/Down on the edge rows, with `history` | `historyBack`, `historyForward` | |
+| Tab, with `complete` | `completeWord` | Open the completion list, or accept from it. |
 
 Typed text and pastes replace the selection. **Mouse**: a press puts the cursor there (and
 focuses the editor), a drag selects, the wheel scrolls (the next cursor move brings the cursor
@@ -108,7 +122,7 @@ rows and header. **Style**: parts `Table::header` (state `sorted`) and `Table::r
 
 ## Select
 
-A `Table` to pick from: one item or several, filtering as you type.
+A `Table` to pick from: one item or several, filtering as you type; or a dropdown field.
 
 ```php
 $pick = $this->child('fruit', fn() => new Select(
@@ -133,26 +147,42 @@ new Select(
 | `?Closure $onSelect` | `fn($key, Select $s)`: the current item changed. |
 | `?Closure $onActivate` | `fn($key, Select $s)`: Enter, or a click on the current item. |
 | `?Closure $onChange` | `fn(array $keys, Select $s)`: the marked items changed. |
+| `bool $dropdown = false` | A one-line field showing the current item, that opens its list in an overlay. A prop. |
 
 | Method | What it does |
 |---|---|
+| `value(): mixed` | Its value in a `Form`: the current key, or the marked keys with `multiple`. |
+| `isFiltering(): bool` | True while typing goes into the filter. |
+| `open(): bool`, `close()`, `isOpen(): bool`, `list(): ?Select` | A dropdown's list: open it, close it unchanged, whether it is open, the list. |
 | `setItems(array $items)` | New items; the current and marked items stay (by key) where they still are; when the current one is gone, the one at its place becomes current. |
 | `selected(): int\|string\|null` | The current item's key. |
 | `selection(): array` / `setSelection(array $keys)` | The marked items in item order (without `multiple`: the current one). |
 | `filter(): string` / `setFilter(string $text)` | The filter typed so far. |
-| `activate`, `toggle`, `markAll`, `filterBack`, `clearFilter` | The actions of Enter, Space, Alt-A, Backspace, Escape (each false when it does not apply, so the key goes on: Space types into the filter without `multiple`, Escape with no filter goes to the parent). |
+| `activate`, `toggle`, `markAll`, `filterBack`, `clearFilter` | The actions of Enter, Space, Alt-A, Backspace, Escape (each false when it does not apply, so the key goes on; Escape with no filter goes to the parent). |
 | and those of `Table` | `current()`, `setCurrent()`, `sortBy()`, ... |
 
-**Filtering**: typed text shows only the items whose text contains it (ignoring case), with a
-filter line under them (part `Select::filter`). **Style**: as `Table`, the row state
+**Filtering is a mode.** Typing a character (or `/`) starts it: while it is on, what is typed
+goes into the filter, **Space included**, and only the items whose text contains it (ignoring
+case) are shown, with the filter line under them (part `Select::filter`); Up/Down still move.
+Backspace takes a character back; Escape clears the filter and ends the mode. Enter ends the
+mode with `multiple`, keeping the filter, so Space marks again (typing resumes the filter);
+without `multiple`, Enter activates the current item as always. So "red a" filters for "red a"
+in a multi-select too.
+
+**Dropdown.** With `dropdown: true` it is one line: the current item and `▾`. Enter, Space,
+Down or a click opens the list under it (above it near the bottom of the screen; shrunk and
+scrolling when neither side has the room; as wide as the field or its items), an overlay
+(see [components](components.md#overlays-and-dialogs)). Up/Down move, Enter or a click picks
+and closes it (`onActivate`), Escape or a click outside closes it unchanged; the focus comes
+back to the field. Typing on the closed field opens it, filtering. **Style**: as `Table`, the row state
 `selected` for a marked item (the current one without `multiple`; the default theme: accent
 and bold).
 
 ## Dialog and Confirm
 
-A modal dialog with a message (or any element tree) and buttons, opened with
+A modal dialog with a message (or any element tree: a form) and buttons, opened with
 `Component::dialog()`, which returns an awaitable of the answer
-(see [components](components.md#dialogs)).
+(see [components](components.md#overlays-and-dialogs)).
 
 ```php
 $this->go(function () {
@@ -171,19 +201,128 @@ $this->go(function () {
 | `Dialog` constructor argument (props) | |
 |---|---|
 | `string $title = ''` | At the top, part `title`. |
-| `string\|Element $content = ''` | The message (wrapped at 60 columns or the screen), or an element tree (give the dialog a size with `with(width: 50, height: 12)`). |
-| `array $buttons = ['OK' => true]` | The answer of each button by label, in order; the first has the focus. |
-| `mixed $cancel = null` | The answer for Escape, and when the dialog ends unanswered (its component disposed, the program quit). |
+| `string\|Element $content = ''` | The message (wrapped at 60 columns or the screen), or an element tree with fields. |
+| `array $buttons = ['OK' => true]` | The answer of each button by label, in order; they are `Button`s. |
+| `mixed $cancel = null` | The answer for Escape, and when the dialog ends unanswered (its opener disposed, the program quit). |
 
 `Confirm(string $question, string $yes = 'Yes', string $no = 'No', string $title = '')`
 answers true or false (Escape: false).
 
+**Keys.** The focus starts on the content's first field, or on the first button when there is
+none. Tab and Shift-Tab go through the content's fields first and the buttons after, around;
+Left/Right move between the buttons. Enter presses the focused button (from a field: the first
+button), Escape cancels; Page Up/Page Down scroll the content. A click on a button presses it.
+
+**Size.** As large as its content needs (a message wraps at 60 columns), never larger than the
+screen: a dialog that does not fit is shrunk, its content scrolls (it is in a `ScrollView`) and
+its buttons stay in view. `with(width: 50, height: 12)` fixes the size.
+
+**A form in a dialog.** Subclass it and override `accept(mixed $answer): bool`: it is asked
+before a button's answer closes the dialog, and returning false keeps it open (show the errors
+in its content). It is not asked for the cancel answer.
+
+```php
+final class Rename extends Dialog
+{
+    private Editor $name;
+
+    public function __construct(string $current)
+    {
+        $this->name = new Editor($current, maxLines: 1);
+        parent::__construct('Rename', new Column([$this->name]), ['Rename' => 'ok', 'Cancel' => null]);
+    }
+
+    public function name(): string
+    {
+        return trim($this->name->value());
+    }
+
+    protected function accept(mixed $answer): bool
+    {
+        if ($this->name() !== '') {
+            return true;
+        }
+        $this->content = new Column([$this->name, new Text('A name, please.', class: 'error')]);
+        return false;       // stays open, with the message
+    }
+}
+
+// in a coroutine: if (fiber\await($this->dialog($rename = new Rename($file))) === 'ok') { ... $rename->name() ... }
+```
+
 | Method | What it does |
 |---|---|
 | `result(): object` | The awaitable of the answer (what `dialog()` returns). |
-| `close(mixed $answer = null)` | Close with an answer, from code. |
-| `previousButton`, `nextButton`, `press`, `cancel` | The actions of Left/Shift-Tab, Right/Tab, Enter, Escape. |
+| `close(mixed $answer = null)` | Close with an answer, from code (without asking `accept()`). |
+| `accept(mixed $answer): bool` (protected) | Whether a button's answer closes the dialog. |
+| `nextField`, `previousField`, `previousButton`, `nextButton`, `press`, `cancel`, `scrollUp`, `scrollDown` | The actions of Tab, Shift-Tab, Left, Right, Enter, Escape, Page Up, Page Down. |
 
-A click on a button presses it. **Style**: `Dialog` (the default theme: a round border in the
-accent colour, padding `0 1`, centered), parts `Dialog::title` and `Dialog::button` with state
-`focused`; `Confirm` for rules of its own.
+**Style**: `Dialog` (the default theme: a round border in the accent colour, padding `0 1`),
+the part `Dialog::title`; the buttons are `Button`s; `Confirm` for rules of its own.
+
+## Form, Button and Checkbox
+
+`Form` collects fields from an element tree and submits them; the fields are components that
+implement `Field` (`value()`): `Editor` (its text), `Checkbox` (checked or not), `Select` (the
+current key, or the marked keys with `multiple`), named by their `id`.
+
+```php
+new Form(
+    new Column([
+        new Box((new Editor(maxLines: 1))->with(id: 'name'), 'Name'),
+        (new Select(['dev' => 'Developer', 'ops' => 'Operations'], dropdown: true))->with(id: 'role'),
+        (new Checkbox('Send me the newsletter'))->with(id: 'news'),
+        new Row([new Button('Save'), new Button('Cancel', onPress: fn() => $this->cancel())], gap: 2, height: 1),
+    ]),
+    validate: fn(array $v) => $v['name'] === '' ? ['name' => 'Your name, please.'] : [],
+    onSubmit: fn(array $v) => $this->save($v),          // ['name' => 'Ada', 'role' => 'ops', 'news' => true]
+)
+```
+
+| `Form` | |
+|---|---|
+| `new Form(Element $content, ?Closure $onSubmit = null, ?Closure $validate = null)` | `$content` (a prop) holds the fields; `$validate(array $values, Form $form): array` returns the errors by field id; `$onSubmit(array $values, Form $form)` is called for a submit without errors. |
+| `submit(): bool` | Validate and submit (true when valid). With errors: each field in error is in the state `:invalid` (the default theme: the error colour), the messages show under the content (part `Form::error`), the first field in error gets the focus. |
+| `values(): array`, `fields(): array`, `errors(): array` | The values and the fields by id, the errors of the last submit. |
+| `nextField`, `previousField` | Tab and Shift-Tab: from field to field in the order of the tree (buttons included), around. |
+
+**Keys**: Tab/Shift-Tab move; Enter in a one-line field, or on a `Button` without `onPress`,
+submits (as in HTML); Alt-Enter submits from anywhere (a multi-line `Editor` takes Enter).
+
+| `Button` | |
+|---|---|
+| `new Button(string $label, ?Closure $onPress = null, ...attributes)` | Drawn `[ label ]`, one row as wide as that. `$onPress($button)` when pressed: Enter, Space, or a click released on it; also the event `press`. In a `Form`, a button without `$onPress` submits it. `press(): bool` from code (false when disabled). |
+
+**Style**: `Button`, states `:focused` (inverted in the default theme), `:pressed` (while the
+mouse button is held on it), `:disabled`.
+
+| `Checkbox` | |
+|---|---|
+| `new Checkbox(string $label = '', bool $checked = false, bool $toggle = false, ?Closure $onChange = null, ...attributes)` | `[x] label`, or with `$toggle` a switch `━● label`. Space or a click flips it (Enter goes on: in a form it submits); `$onChange($checked, $checkbox)` and the event `change`. |
+| `checked(): bool`, `setChecked(bool $checked)`, `flip(): bool`, `value(): bool` | |
+
+**Style**: `Checkbox`, states `:focused`, `:checked`, `:disabled`; the part `Checkbox::box`
+(state `checked`; the accent colour in the default theme).
+
+## ScrollView
+
+Content taller than its box, scrolling: `new ScrollView(Element $content)` (a prop). The content
+is laid out at the view's width and as high as it needs, behind the view. The focused element
+in it is kept in view (Tab through a long form scrolls along); the wheel scrolls it, and Up/Down,
+Page Up/Page Down and Home/End do when nothing in it takes them (at the end they go on, to move
+to the next field). Without a size it is as high as its content, so it only scrolls when its box
+is smaller. `top()`, `scrollTo(int $row)`, `scrollBy(int $rows): bool`. A `Dialog` puts its
+content in one, and so does an overlay of a plain element.
+
+## ProgressBar and Spinner
+
+```php
+new ProgressBar($done / $total, label: "$done/$total files")    // ███████░░░░ 7/12 files
+new ProgressBar(null, label: 'connecting')                       // indeterminate: moves by itself
+new Spinner('saving')                                            // ⠹ saving, spins by itself
+```
+
+| | |
+|---|---|
+| `new ProgressBar(?float $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label after it, or the percentage without one. Null: indeterminate, a block moving to and fro (animated by the bar itself). `$value` and `$label` are props; `setValue(?float $value, ?string $label = null)`. Style: `ProgressBar`, part `ProgressBar::bar`. |
+| `new Spinner(string $label = '', array $frames = Spinner::DOTS, float $interval = 0.08, ...attributes)` | A sign cycling through `$frames` (`Spinner::DOTS`, `Spinner::LINE`, or yours) every `$interval` seconds while it is shown, then the label. No coroutine of yours: show it while something runs, take it out of the tree after. `frame(): int`. Style: `Spinner`, part `Spinner::sign`. |

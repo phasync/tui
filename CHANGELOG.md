@@ -1,5 +1,125 @@
 # Changelog
 
+## 0.0.2-beta2 (2026-10-31)
+
+Overlays, and what the first applications on the components layer ran into. Everything from
+0.0.2-beta1 works as before, except where an entry says what changed.
+
+**Quitting with a dialog open ends the program**
+
+- A program whose dialog (`Dialog`, `Confirm`, or one of yours with editors in it) was open when
+  it quit now ends: disposing a component, the root or a child, answers every dialog it opened
+  with its cancel value, disposes it and leaves nothing running, so `fiber\run()` returns. The
+  coroutine awaiting the answer gets the cancel value and goes on.
+- One rule for keys while a dialog is open, and the docs say the same: the component that
+  opened it is suspended (its `onKey()` and bindings wait), its parents' bindings work as
+  always, and a binding marked `always` works even in its own component's dialogs:
+  `'ctrl+q' => ['quit', 'quit', 'always' => true]`. A root's Ctrl-Q no longer stops working
+  while the root's own Confirm is open (mark it `always`); a Ctrl-Q of the application under a
+  pane's dialog works without it.
+
+**Overlays: anything can float (`Component::overlay()`)**
+
+- `$this->overlay($element, anchor:, place: 'below'|'above'|'center'|Rect, modal:)` shows any
+  element over everything, outside the component's rectangle and its parents' clipping, and
+  returns an `Overlay` (`close($result)`, the awaitable `closed()`, `isOpen()`, `result()`).
+- It never leaves the screen: it goes on the preferred side of its anchor if it fits, else the
+  other side, else the side with more room, shrunk to it with its content scrolling (a list of
+  30 items in 6 free rows shows 6 and scrolls); shifted sideways to stay inside. The decision
+  is `Placement::for(anchor, root, desired, place)`, which widgets can use themselves.
+- When the terminal is resized or its anchor moves, it is placed again after that frame's
+  layout and keeps its state (a dropdown keeps its current item); when the anchor is no longer
+  shown it is cancelled. Later overlays stay above earlier ones.
+- A modal overlay takes all input (clicks outside reach nothing); a non-modal one closes on
+  Escape, a click outside it, or the focus moving elsewhere; closing gives the focus back. An
+  overlay over a `Terminal` pane leaves the program's output alone: the pane shows correctly
+  when it closes.
+- `Dialog` and `Confirm` are overlays now: centred, modal, as large as their content needs (no
+  more fixed 60x12 for element content), and shrunk to a smaller screen with their content
+  scrolling and the buttons in view.
+
+**Dialogs that are forms**
+
+- `Dialog::accept($answer)`: return false to keep the dialog open (a form that is not valid
+  yet), instead of closing and reopening it.
+- Tab and Shift-Tab in a dialog go through its fields first and its buttons after; no more
+  rebinding Tab in form dialogs. The focus starts on the first field. Enter in a field presses
+  the first button. The buttons are `Button` components (style them as `Button`; the parts
+  `Dialog::button` are gone).
+
+**Auto sizes no longer swallow their siblings**
+
+- A one-line `Editor` without a width in a `Row` no longer takes the whole row: a `Text(width:
+  20)` after it is drawn. A `Table` or `Select` without a height in a `Column` no longer
+  measures as all its 10,000 rows: the `Help` line under it keeps its row. The rule: an
+  `'auto'` item gets what its content needs, but no more than a `'1fr'` share while its
+  siblings need room. A `Table` measures as wide as its columns need.
+
+**Focus and the mouse**
+
+- `$board->focus()` after `$board->filter->focus()` gives the focus to the board again, not
+  back to the filter: a component with keys of its own (bindings, or an `onKey()`) takes the
+  focus itself; containers (a `Box`, a `Dialog`, a `Form`, a screen of fields) still pass it to
+  the field they focused. `canFocus()` decides, and can be overridden.
+- A mouse drag goes to the component that got the press, with its release, wherever the
+  pointer goes, in coordinates relative to that component that may lie outside it (negative,
+  or beyond its size). Drag and drop between siblings no longer needs the root's `onMouse()`.
+
+**Editor**
+
+- A multi-line `Editor` never joins lines: a paste of more lines than `maxLines` used to join
+  the extra lines with spaces. `maxLines` is now how many rows it shows (it scrolls beyond);
+  only a single-line editor (`maxLines: 1`) joins.
+- An editor with `maxLines` above 1 grows with its text up to that many rows, and a `Box`
+  around it with it: a chat input.
+- `history: true`: Up and Down on the first and last rows walk the submitted texts, as
+  `TextInput` did; `history()`, `setHistory()`.
+- `complete: fn(string $word) => [...]`: Tab shows completions for the word at the cursor in a
+  list under it; typing filters, Tab or Enter accepts, Escape closes.
+- `Editor` is no longer `final`: extend it for a chat input or a field of your own (bindings,
+  the public actions, `insert()`, `onKey()`, `measure()`).
+- Enter in a single-line editor without `onSubmit` goes on to the dialog or form it is in.
+
+**Select**
+
+- A multi-select can filter on text with spaces: typing starts a filter mode in which Space is
+  a space; Enter ends the mode (the filter stays) so Space marks again; Escape clears it. `/`
+  starts the mode without typing.
+- `dropdown: true`: a one-line field that opens its list under itself (above near the bottom),
+  as an overlay.
+
+**New widgets**
+
+- `Button` (Enter, Space, a click; `:focused`, `:pressed`, `:disabled`), `Checkbox` (also as a
+  switch, `toggle: true`), `ProgressBar` (a value from 0 to 1 with a label, or indeterminate),
+  `Spinner` (animates by itself, no coroutine of yours), `ScrollView` (content taller than its
+  box; the focused field stays in view), and `Form`: fields from the element tree by `id`, Tab
+  order, validation with messages and `:invalid` fields, submit by Enter or a button. The
+  README's example is a form made of them.
+
+**Styling and Help**
+
+- `setStyleState('selected', true)` puts a component of yours in a state of its own, so
+  `.card:selected` works without inventing a part.
+- A self-drawing component that clears its surface (`\e[2J`) gets its themed background: the
+  pen is set to the component's style before `render()`.
+- `Help` fits one row: it is cut with "…" where it does not fit and wraps only when given a
+  height. `new Help(show: 'focused' | 'application')` lists only the focused component's keys,
+  or only the application's.
+
+**Testing headless, and the docs**
+
+- `FakeTerminal::settle()` waits for the frame the input asked for: a screen read right after
+  `type()` or `press()` showed the previous frame. The docs' examples use it, and say that
+  `usleep()` blocks the loop.
+- `FakeTerminal::run(fn(FakeTerminal $t) => ...)` detaches the terminal afterwards, also when
+  the test throws: a failing test fails instead of hanging `fiber\run()`.
+- `$component->children()` reads a child by key from outside (`$app->children()['log']`);
+  creating children stays the component's.
+- docs/components.md says plainly that a child placed with `new` and unchanged props does not
+  render again when its parent renders, and gives the two remedies (a prop, or a shared
+  `State`); it documents the overlays, the key rule under dialogs, focus and drags.
+
 ## 0.0.2-beta1 (2026-10-30)
 
 The components layer, first cut: screens are described as element trees, components render

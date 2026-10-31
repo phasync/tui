@@ -132,9 +132,30 @@ the decoder as they are, for sequences the other calls cannot express or bytes c
 real terminal. Each `feed()` is one read followed by a pause: a sequence must be whole within the
 call (a bracketed paste may span calls), and a lone ESC at the end is the Escape key.
 
+**Reading the screen after input, and tests that fail.** Input is dispatched at once, but a
+component renders in the next frame: read the screen after `settle()`, which waits until the
+renders the input asked for have run and the screen is drawn. Never `usleep()` in a coroutine:
+it blocks the loop, so nothing renders (nor anything else runs) while it sleeps; use
+`settle()`, `waitFor()` or `fiber\sleep()`. Wrap the test in `run()`: it detaches the terminal
+afterwards, also when the test throws, so a failing assertion ends the program and reaches
+`fiber\run()` instead of the terminal's coroutines keeping it running for ever.
+
+```php
+fiber\run(function () {
+    $app = (new App())->start($terminal = new FakeTerminal(40, 10));
+    $terminal->run(function (FakeTerminal $t) {
+        $t->type('hello');
+        $t->settle();
+        expect($t->text())->toContain('hello');
+    });
+});
+```
+
 | Method | What it does |
 |---|---|
 | `new FakeTerminal(int $cols = 80, int $rows = 24)` | |
+| `run(Closure $code): mixed` | Run `$code($terminal)` and detach afterwards, also when it throws (then the exception goes on to `fiber\run()`). Returns what `$code` returned. |
+| `settle(float $timeout = 1.0)` | Wait until the renders the input so far asked for have run and the screen is up to date (cooperatively, `$timeout` at most). |
 | `text(): string`, `dump(): string` | What the terminal shows (see `Surface::text()`/`dump()`), after drawing what is pending. |
 | `output(): string`, `takeOutput(): string` | Every byte the device sent, or those since the previous call. |
 | `clipboardText(): string` | The last text copied to the clipboard (OSC 52). |
