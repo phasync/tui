@@ -5,7 +5,8 @@ namespace phasync\Tui\Internal;
 /**
  * @internal The check that the installed fiber-interop/api has what the library uses, run when a
  * program starts (`Component::start()`, `TerminalDevice::attach()`), so an old version gives a
- * clear message instead of an undefined function deep inside a coroutine.
+ * clear message instead of an undefined function deep inside a coroutine; and the watcher that
+ * ends a program when the code that started it fails (`watch()`).
  */
 final class Runtime
 {
@@ -39,5 +40,66 @@ final class Runtime
             ));
         }
         self::$checked = self::$checked || $asked;
+    }
+
+    /**
+     * Versions of the packages that cannot await a task's `fiber\current()` handle from a task
+     * started inside it: fiber-interop/api 0.3.1 and older, and fiber-interop/phasync 0.4.1 and
+     * older (that adapter runs the awaited task's body a second time). Fixed on the main
+     * branches (api 4dc3d41, phasync adapter 8445790), not tagged yet.
+     */
+    private const CANNOT_AWAIT_STARTER = ['fiber-interop/api' => '0.3.1', 'fiber-interop/phasync' => '0.4.1'];
+
+    /** For tests: force whether watch() watches (null: decide from the installed versions). */
+    public static ?bool $watching = null;
+    private static ?bool $canWatch = null;
+
+    /**
+     * Run $onFailure when the task calling this ends with an exception, and let the exception
+     * go on to `fiber\run()` as before: how `attach()` and `start()` end a program whose own
+     * code failed, instead of the program's coroutines keeping `fiber\run()` from ever
+     * returning with it. A watcher task awaits the caller's `fiber\current()` handle; nothing
+     * happens when the caller returns normally, when there is no current task, or when the
+     * installed packages cannot do it (see CANNOT_AWAIT_STARTER).
+     *
+     * @param \Closure(\Throwable): void $onFailure
+     */
+    public static function watch(\Closure $onFailure): void
+    {
+        $starter = \fiber\current();
+        if ($starter === null || !(self::$watching ?? self::$canWatch ??= self::canWatch())) {
+            return;
+        }
+        \fiber\go(static function () use ($starter, $onFailure): void {
+            try {
+                \fiber\await($starter);
+            } catch (\Throwable $e) {
+                try {
+                    $onFailure($e);
+                } finally {
+                    throw $e;       // (awaited here, so fiber\run() sees it through this task)
+                }
+            }
+        });
+    }
+
+    private static function canWatch(): bool
+    {
+        if (!class_exists(\Composer\InstalledVersions::class)) {
+            return false;
+        }
+        foreach (self::CANNOT_AWAIT_STARTER as $package => $last) {
+            if (!\Composer\InstalledVersions::isInstalled($package)) {
+                if ($package === 'fiber-interop/api') {
+                    return false;
+                }
+                continue;
+            }
+            $version = ltrim((string) \Composer\InstalledVersions::getPrettyVersion($package), 'vV');
+            if (preg_match('/^\d+(\.\d+)*$/', $version) && version_compare($version, $last, '<=')) {
+                return false;
+            }
+        }
+        return true;
     }
 }

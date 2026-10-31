@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "9d546da121444eaff91626e05454500f",
+    "content-hash": "ad2a01886aa60def60e3d9b0eda141ab",
     "packages": [
         {
             "name": "fiber-interop/api",
-            "version": "v0.3.1",
+            "version": "dev-main",
             "source": {
                 "type": "git",
                 "url": "https://github.com/fiber-interop/api.git",
-                "reference": "b1b3491e2982b78183e877a040fc5bbff0f02dd4"
+                "reference": "4dc3d41070ec124ad0ad75c598ad76052a03b7d5"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/fiber-interop/api/zipball/b1b3491e2982b78183e877a040fc5bbff0f02dd4",
-                "reference": "b1b3491e2982b78183e877a040fc5bbff0f02dd4",
+                "url": "https://api.github.com/repos/fiber-interop/api/zipball/4dc3d41070ec124ad0ad75c598ad76052a03b7d5",
+                "reference": "4dc3d41070ec124ad0ad75c598ad76052a03b7d5",
                 "shasum": ""
             },
             "require": {
@@ -27,6 +27,7 @@
             "require-dev": {
                 "phpunit/phpunit": "^10.5 || ^11"
             },
+            "default-branch": true,
             "bin": [
                 "bin/fiber-interop-conformance",
                 "bin/fiber-interop-stress"
@@ -52,9 +53,9 @@
             "description": "One surface for fiber-based concurrency: go, await, sleep, readable, writable on phasync, Revolt, AMPHP and ReactPHP.",
             "support": {
                 "issues": "https://github.com/fiber-interop/api/issues",
-                "source": "https://github.com/fiber-interop/api/tree/v0.3.1"
+                "source": "https://github.com/fiber-interop/api/tree/main"
             },
-            "time": "2026-10-30T21:26:08+00:00"
+            "time": "2026-10-31T01:32:37+00:00"
         },
         {
             "name": "fiber-interop/scope",
@@ -480,16 +481,16 @@
         },
         {
             "name": "fiber-interop/phasync",
-            "version": "v0.4.1",
+            "version": "dev-main",
             "source": {
                 "type": "git",
                 "url": "https://github.com/fiber-interop/phasync.git",
-                "reference": "4b6a7b19b90c7c4b295ae9a5929acccdf0d39bb4"
+                "reference": "8445790287397bb0387fac125db8f8a3812e549a"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/fiber-interop/phasync/zipball/4b6a7b19b90c7c4b295ae9a5929acccdf0d39bb4",
-                "reference": "4b6a7b19b90c7c4b295ae9a5929acccdf0d39bb4",
+                "url": "https://api.github.com/repos/fiber-interop/phasync/zipball/8445790287397bb0387fac125db8f8a3812e549a",
+                "reference": "8445790287397bb0387fac125db8f8a3812e549a",
                 "shasum": ""
             },
             "require": {
@@ -501,6 +502,7 @@
             "require-dev": {
                 "phpunit/phpunit": "^10.5 || ^11"
             },
+            "default-branch": true,
             "type": "library",
             "extra": {
                 "branch-alias": {
@@ -522,9 +524,9 @@
             "description": "fiber-interop/api adapter for the phasync event loop.",
             "support": {
                 "issues": "https://github.com/fiber-interop/phasync/issues",
-                "source": "https://github.com/fiber-interop/phasync/tree/v0.4.1"
+                "source": "https://github.com/fiber-interop/phasync/tree/main"
             },
-            "time": "2026-10-30T21:26:09+00:00"
+            "time": "2026-10-31T01:32:52+00:00"
         },
         {
             "name": "fidry/cpu-core-counter",
@@ -4761,7 +4763,9 @@
     "aliases": [],
     "minimum-stability": "dev",
     "stability-flags": {
-        "charm/parsing": 20
+        "charm/parsing": 20,
+        "fiber-interop/api": 20,
+        "fiber-interop/phasync": 20
     },
     "prefer-stable": true,
     "prefer-lowest": false,

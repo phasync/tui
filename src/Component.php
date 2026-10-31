@@ -122,6 +122,8 @@ use function fiber\current;
  * error; the rest of the program keeps running. An exception in the root component ends the
  * program: the tree is disposed, the surface closed (so the terminal is detached and restored),
  * and the exception is rethrown, by `start()` when it happens there and else by `fiber\run()`.
+ * So does an exception in the code that called `start()` (the closure given to `fiber\run()`,
+ * or a coroutine): the program ends with it, and `fiber\run()` throws it (see `start()`).
  */
 abstract class Component extends Element
 {
@@ -180,6 +182,8 @@ abstract class Component extends Element
     private array $bound = [];
     /** @var array<string, array<string, mixed>> bindings for components of a class in the subtree */
     private array $boundFor = [];
+    /** On a root: the key that disposes it when nothing binds it (`Tui::run()`). */
+    private ?string $quitKey = null;
     /** @var array<string, Overlay> the open overlays this component opened, by the key of their content child */
     private array $overlays = [];
     /** The overlay this component is the content of. */
@@ -331,6 +335,18 @@ abstract class Component extends Element
      *
      * Must be called inside `fiber\run()`. Child components are started by `child()`, not by this.
      * An exception in `mount()` or the first `render()` disposes what was started and is rethrown.
+     * `Tui::run()` does all of it for a program: the terminal, the run, the end.
+     *
+     * **When the code that called it fails** (the closure given to `fiber\run()` throws after
+     * `start()`, or the coroutine that called it does), the program ends: the component is
+     * disposed, the terminal detached and restored, and the exception comes out of
+     * `fiber\run()` as it would without a terminal UI, instead of the program's coroutines
+     * keeping `fiber\run()` running with the exception waiting behind them. This needs a
+     * runtime that can await the calling task from a task started inside it:
+     * fiber-interop/api newer than 0.3.1 (main from commit 4dc3d41) and, under phasync,
+     * fiber-interop/phasync newer than 0.4.1 (main from commit 8445790). With older versions
+     * the library does not watch the caller: use `Tui::run()`, which owns the run and always
+     * sees the exception, or `FakeTerminal::run()` in tests.
      *
      * @throws \LogicException when already started
      */
@@ -381,6 +397,15 @@ abstract class Component extends Element
         $this->guard($this->mount(...));
         if ($this->parent === null) {
             $this->firstRender();
+            if (!$on instanceof TerminalDevice) {
+                // the code that started it fails: the program ends with it (on a device, attach() sees to it)
+                Runtime::watch(function (\Throwable $e): void {
+                    if ($this->mounted) {
+                        $this->error ??= $e;
+                        $this->dispose();
+                    }
+                });
+            }
         }
         // a child is sized and rendered by its parent's render that shows it
         return $this;
@@ -1326,7 +1351,21 @@ abstract class Component extends Element
                 return true;
             }
         }
+        $root = $this->rootComponent();
+        if ($root->quitKey !== null && (string) $key === $root->quitKey) {
+            $root->dispose();       // (Tui::run(): nothing bound the key)
+            return true;
+        }
         return false;
+    }
+
+    /**
+     * @internal On a root: dispose it when $key reaches it and no component on the key path
+     * binds it (`Tui::run()`'s Ctrl-Q); null for none. `Help` lists it as "quit".
+     */
+    final public function quitOn(?string $key): void
+    {
+        $this->quitKey = $key === null ? null : (string) Key::parse($key);
     }
 
     /** True if no other component is on the key path below this one. */
@@ -1446,6 +1485,9 @@ abstract class Component extends Element
                 if ($description !== null && (!$c->suspended() || $always)) {
                     $out[$key] ??= $description;
                 }
+            }
+            if ($c->parent === null && $c->quitKey !== null && $show !== 'focused') {
+                $out[$c->quitKey] ??= 'quit';
             }
         }
         return array_map(fn($k, $d) => [(string) $k, $d], array_keys($out), $out);

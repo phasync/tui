@@ -66,7 +66,10 @@ use function fiber\sleep;
  * disposes a component on it, and so the whole component tree and the programs of its
  * `Terminal`s; closing the root (or disposing the root component) detaches the device. The
  * device's coroutines run while it is attached, so an attached device keeps `fiber\run()` from
- * returning; once it is detached and the programs have ended, `fiber\run()` returns.
+ * returning; once it is detached and the programs have ended, `fiber\run()` returns. When the
+ * code that called `attach()` fails (the closure given to `fiber\run()`, or the coroutine that
+ * attached, throws), the device detaches by itself, so the terminal is restored and the
+ * exception comes out of `fiber\run()` (with the runtime versions `Component::start()` names).
  *
  * `attach()`, `detach()` and `wait()` must be called inside `fiber\run()`.
  */
@@ -181,7 +184,8 @@ abstract class TerminalDevice
     /**
      * Show $root on this terminal and send it the terminal's input, until `detach()`. The root is
      * resized to the terminal's size at once and whenever the terminal is resized (in inline
-     * mode too: the region is the part of it with content).
+     * mode too: the region is the part of it with content). Detaches by itself when the task
+     * that called it ends with an exception (see the class description).
      *
      * @throws \LogicException when already attached
      */
@@ -231,6 +235,12 @@ abstract class TerminalDevice
         $this->send(($this->inline ? self::INLINE_TAKEOVER : self::TAKEOVER) . ($root->title() !== '' ? Ansi::title($root->title()) : '') . "\e[?u\e[>0q\e[c");
         go($this->frames(...));
         go($this->inputs(...));
+        // the code that attached fails: give the terminal back, so the exception ends fiber\run()
+        Internal\Runtime::watch(function () use ($root): void {
+            if ($this->root === $root) {
+                $this->detach();
+            }
+        });
     }
 
     /**

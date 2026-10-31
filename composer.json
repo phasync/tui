@@ -23,7 +23,8 @@
         "fiber-interop/api": "^0.3.1"
     },
     "require-dev": {
-        "fiber-interop/phasync": "^0.4.1",
+        "fiber-interop/api": "0.3.x-dev",
+        "fiber-interop/phasync": "0.4.x-dev",
         "pestphp/pest": "*",
         "charm/parsing": "dev-master"
     },
