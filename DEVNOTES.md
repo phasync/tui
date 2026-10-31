@@ -3,23 +3,70 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
-## Status (0.0.2-beta3, in progress; TODO-0.0.2-beta3.md)
+## Status (0.0.2-beta3; TODO-0.0.2-beta3.md)
 
-SPEC section 9 (commit 5110407, "phase 3, from 0.0.3") arrived during this version; it is for
-0.0.3 and not in this TODO.
+All items of TODO-0.0.2-beta3.md done, in CHANGELOG.md; tests green with and without
+ext-phasync. SPEC section 9 (commit 5110407, "phase 3, from 0.0.3") arrived during this
+version; it is for 0.0.3 and not started.
 
-- [x] Surface: OSC 8 hyperlinks in the cells (Style::link/linkId), Ansi::link()/hyperlink(),
-      compositor forwards them (committed 4458015)
-- [x] Device: inline mode, println(), supportsHyperlinks()/terminalName() (committed 84eff9e)
-- [ ] Layout: container 'auto' sizes from children; max-width/max-height
-- [ ] Defects: overlay re-measure (Editor completion pins its height), sized Dialog (mount
-      measures the tree), Form in Dialog (Form::enter(), `submit` event, Dialog::choose()
-      submits forms; a null button answer no longer falls back to the first) -- code done,
-      tests in tests/Widgets/DefectsTest.php, uncommitted
-- [ ] Stylesheet: parts composed (style(['quote', 'link']))
-- [ ] Scrollable trait, used by Log and Markdown
-- [ ] Merge widget/Markdown; dialog one-at-a-time; docs, README, CHANGELOG, example
-      inline-progress.php (written, not yet tested)
+- [x] 1. Defects, tests in tests/Widgets/DefectsTest.php and tests/Elements/SizingTest.php:
+      overlays measured every frame (the Editor pinned its completion's height; now
+      max-height), sized Dialog (mount() measures the tree), container 'auto' from children
+      (Tree makes containers 'auto'), Form in Dialog (Form::enter(), `submit` event,
+      Dialog::choose() submits its forms)
+- [x] 2. Inline mode: TerminalDevice::drawInline(), println(), Tty::inline(),
+      FakeTerminal::inline()/frozen()/region(); tests/Terminal/InlineTest.php;
+      docs/terminal.md; examples/inline-progress.php
+- [x] 3. widget/Markdown merged (ff695b1) and moved onto Scrollable and composed parts; OSC 8
+      in the cells; supportsHyperlinks(); Scrollable used by Log and Markdown; docs
+- [x] 4. dialog(key:); overlays on the root documented; CHANGELOG; README tour (Markdown pane,
+      inline progress; both run in tests/Examples/ReadmeTest.php)
+
+## Design decisions (0.0.2-beta3)
+
+- **Inline model.** The root is cols x (rows - 1): the row under the region is where the
+  cursor parks, so a region as high as the terminal never scrolls the terminal by itself (the
+  first try sized the root rows x cols and a height shrink duplicated a row). The region is the
+  rows down to the last non-blank one, or the cursor's row when the cursor shows. Rows that
+  leave the root's top (Surface::linesScrolled() deltas) and println() lines are written at the
+  region's top with LF pushing the frame down, then the region is redrawn from there. Only
+  CUU/CUD/CR/CHA/LF: no CUP, no DECSTBM, so the shell's output above is never touched. A width
+  change redraws the region; a height change shifts it by what the terminal lost.
+- **Inline restore after a crash** can not put the cursor back under the region (the device
+  does not know where the terminal's cursor is); it restores modes and moves to column 0.
+- **println() full screen** holds the lines until detach, then writes them on the normal
+  screen; detached it writes at once.
+- **Hyperlinks** are part of Style (interned with link and id) so the cell model needs no
+  second array; SGR 0 does not end a link (as in terminals). DECSC/DECRC save it with the pen.
+  A host's wrap() closes a link the producer left open at its window's edge. The device
+  writes links only when supportsHyperlinks(); Tty decides from the environment (a table in
+  Tty::hyperlinksFromEnvironment()) and XTVERSION, false inside tmux/screen even when the
+  outer terminal could (tmux drops them unless configured).
+- **Scrollable** keeps [top, following] in the trait by default; Log overrides
+  scrollState()/setScrollState() to keep them in its Viewport (absolute = top() +
+  scrollbackSize), so the emulator's own scrollback stays the storage. Moves return false at
+  the edges so the keys go on (to the next field, to the parent).
+- **Composed parts**: Stylesheet::compute() with a list folds resolve() over the parts, each
+  inheriting from the one before, so "attributes add up, innermost colour wins" is the
+  inheritance rule and nothing new. A part may turn an attribute off (`bold: false`).
+- **Markdown review**: own scroll code replaced by Scrollable (j/k/Space dropped as defaults,
+  bindable); combine() replaced by style([...]); `\e[0m` resets replaced by the Markdown's own
+  style so a themed background fills; links through Ansi::link() (control characters
+  stripped); key/id/class/style taken by the constructor like the other widgets.
+- **A root's dispose renders pending frames first** (Component::dispose()), so the last state
+  a program set before quitting is the frame an inline device leaves. Only from dispose(), not
+  from the failure path, so an error in that render reaches the caller.
+- **Form in a Dialog**: the Dialog subscribes to each Form's `submit` (found by walking its
+  children at mount and every render) and answers its first button; its buttons submit the
+  forms first unless the button is the cancel answer. Form's Enter is bound to enter(), which
+  returns nothing: a failed validation must not let Enter go on to the Dialog.
+
+## Left for later versions (0.0.2-beta3)
+
+- SPEC 9 (Tui::run, utility classes, markup, themes, the dashboard test): 0.0.3.
+- Table and ScrollView still scroll with their own code; they could use Scrollable.
+- `echo` from coroutines is not captured into the inline scrollback (println() is the way).
+- Markdown: reference links, footnotes, task boxes, raw HTML (shown as text).
 
 ## Status (0.0.2-beta2; TODO-0.0.2-beta2.md, SPEC 8.5)
 
@@ -45,7 +92,7 @@ ext-phasync (503 tests).
 
 ## Left for later versions (0.0.2)
 
-- SPEC 4.1 **inline mode** (`Tty::inline()`, `FakeTerminal::inline()`, the root's scrollback as
+- (done in beta3) SPEC 4.1 **inline mode** (`Tty::inline()`, `FakeTerminal::inline()`, the root's scrollback as
   the terminal's) was added to the spec while this version was being built (commit 3281ee8)
   and is not in TODO-0.0.2-beta2; not started. Nothing in this version is in its way: the
   device layer is unchanged, so it is a second painting mode of TerminalDevice (relative

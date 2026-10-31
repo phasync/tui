@@ -1,16 +1,103 @@
 # Changelog
 
-## Unreleased
+## 0.0.2-beta3 (2026-10-31)
+
+Inline mode, the Markdown widget, hyperlinks, one way to scroll, and four defects from use.
+Everything from 0.0.2-beta2 works as before, except where an entry says what changed.
+
+**Fixed**
+
+- A popup whose content shrinks no longer keeps its old size: an `Editor`'s completion list
+  filtered from four candidates to one is one row tall, and the rows it covered (the border of
+  the box under it) show again. The same when it grows again after Backspace (the list now
+  filters on every change of the text, not only on typed letters), when a dropdown's items are
+  replaced while its list is open (`Select::setItems()`), and when a dialog's content changes
+  size (a validation message appearing). An overlay is measured every frame.
+- A dialog given `with(width:, height:)` draws its content, gives its first field the focus and
+  takes what you type, as it does without a size; a multi-line `Editor` in it fills the room.
+- A `Row` of one-line fields, a toolbar of buttons or a `Column` of one-line texts no longer
+  takes a share of the screen when it has no `height:`: a container without a size is as large
+  as its children need (the sum along it, the largest across), and takes a share only when a
+  child of it takes whatever it is given.
+- A `Form` inside a `Dialog` can be submitted: Enter in a field validates the form and, when it
+  is valid, answers the dialog with its first button's value (`accept()` is called); an invalid
+  form stays open with its messages. Tab reaches the dialog's buttons, which press as without a
+  form; the Add button submits the form first, Cancel does not. docs/widgets.md "A form in a
+  dialog" works as written.
+- A dialog button whose value is `null` (`'Cancel' => null`) answers null instead of the first
+  button's value.
+- An inline program that sets its last state and quits at once shows that state in the frame
+  it leaves behind: disposing a root renders what was asked for first.
+- Full screen, the cursor is no longer sent again on frames where nothing moved it.
+
+**Inline mode: a live region under the shell's output**
+
+- `Tty::inline()` (and `FakeTerminal::inline()` for tests) shows the root as a region at the
+  bottom of the terminal instead of taking the terminal over: no alternate screen, the shell's
+  output stays above it, rows that scroll off the root's top are written once into the
+  terminal's scrollback as they looked then, and on exit the last frame stays with the prompt
+  under it (`keep: false` erases it). Width changes repaint the region; a lower terminal pushes
+  its top rows into the scrollback. Only relative cursor moves are used. The mouse is reported
+  only while a surface asks for it. The same component tree runs full screen or inline.
+- `TerminalDevice::println($text)`: a line (or several, wrapped, with SGR) above the region,
+  into the terminal's scrollback. Full screen it waits until the terminal is given back.
+- `examples/inline-progress.php`: five jobs with progress bars and a total, finished jobs
+  printed above them (`--fullscreen` for the same full screen).
+
+**Hyperlinks (OSC 8)**
+
+- Links written as OSC 8 (`Ansi::link()`, `Ansi::hyperlink($text, $uri)`, or a program in a
+  `Terminal` pane, such as `ls --hyperlink`) are kept in the cells (`Style::$link`), survive
+  compositing and a replay of the byte stream, and are clickable on terminals that support
+  them; elsewhere the text shows plain.
+- `TerminalDevice::supportsHyperlinks()`: `Tty` decides from the environment (kitty,
+  WezTerm, iTerm2, foot, ghostty, VS Code, Windows Terminal, VTE; not inside tmux or screen)
+  and the terminal's own name, conservatively; `FakeTerminal(hyperlinks: false)` for tests.
+  `terminalName()` is the name the terminal answered with (XTVERSION), when it did.
 
 **Markdown**
 
 - New widget `Component\Markdown`: CommonMark in the terminal (headings, wrapped paragraphs,
   emphasis, strong, code spans, links, nested lists, block quotes, fenced code with a simple
-  php/js/sh/json highlighter, tables, thematic breaks), styled by one stylesheet part per
-  kind (`Markdown::h1`, `Markdown::code`, ...; the default theme sets them), scrolling with the
-  keys and the wheel, following the end with `tail: true`, and streaming: `append()` takes text
-  that ends mid-construct, remembers the rows of unchanged blocks and writes only the screen
-  rows that changed. `set()` replaces the text. Example: `examples/markdown.php`.
+  php/js/sh/json highlighter, tables, thematic breaks), styled by one stylesheet part per kind
+  (`Markdown::h1`, `Markdown::code`, ...; the default theme sets them), scrolling like `Log`,
+  following the end with `tail: true`, and streaming: `append()` takes text that ends anywhere,
+  remembers the rows of unchanged blocks and writes only the screen rows that changed. `set()`
+  replaces the text. `hyperlinks: true` (pass `supportsHyperlinks()`) makes links clickable
+  instead of showing their address; `scrollbar: true`. Contributed; example
+  `examples/markdown.php`.
+
+**Scrolling: one helper, `Component\Scrollable`**
+
+- A widget that draws its own scrolling content uses the trait `Scrollable`: the position,
+  Up/Down, Page Up/Page Down and Home/End, the wheel, following the end, the `scroll` event and
+  a scrollbar in the parts `::scrollbar` and `::scrollbar:thumb`. `Log` and `Markdown` use it.
+- `Log` scrolls with the keys when it has the focus, and `new Log(scrollbar: true)` shows a
+  scrollbar. **Changed:** `Log::scrollTo($row)` and the new `scrollTop()` count rows from the
+  oldest row kept (0), no longer from the top of the following window; `scrollBy()` is as
+  before.
+
+**Styles**
+
+- Style parts that apply together compose: `$this->style(['heading', 'strong', 'link'])` (and
+  `Stylesheet::compute()` with a list) adds the attributes up and lets the innermost colour
+  win, so a widget no longer merges them by hand.
+- `max-width` and `max-height` in the stylesheet: the most an `'auto'` size, or an overlay's
+  measured size, may take (a completion list at most 8 rows).
+
+**Small**
+
+- `$this->dialog($dialog, key: 'add')`: a dialog of that key that is open already gets the focus
+  and its answer is returned, so a key that opens a dialog does not open a second one when
+  pressed twice.
+- `Form` emits `submit` (with the form) when it submits, and `enter()` is the action of Enter in
+  it; Tab at the last field of a form in a dialog goes on to the dialog's buttons
+  (`focusNext(wrap: false)` on surfaces and components).
+- docs/components.md says where overlays live: on the root, above the whole tree (not on the
+  nearest `Layers`), as the spec does.
+- docs/surface.md: writing into the last column with autowrap off leaves the cursor on that
+  column, so `\e[K` erases what was just written; that is what xterm does. docs/components.md:
+  the conventions of a widget's constructor (props, callbacks, `...attributes`).
 
 ## 0.0.2-beta2 (2026-10-31)
 

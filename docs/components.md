@@ -401,6 +401,9 @@ primitive, on the component:
 $overlay = $this->overlay(Element $element, ?Rect $anchor = null, string|Rect $place = 'below', bool $modal = false);
 ```
 
+- **Hosted on the root.** Every overlay is a window of the root component's surface (not of a
+  `Layers` or the opener's parent), above the whole tree, so nothing around the opener clips
+  or covers it.
 - **Where.** Next to `$anchor`, a rectangle in the component's own coordinates (default: the
   whole component), by `$place`: `'below'` or `'above'` it, `'center'` of the screen, or a
   `Rect` (in the component's coordinates). The root's rectangle is a hard boundary: on the
