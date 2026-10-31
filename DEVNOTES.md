@@ -5,22 +5,40 @@ README.md and docs/.
 
 ## Status (0.0.2-beta5; TODO-0.0.2-beta5.md)
 
-All items of TODO-0.0.2-beta5.md done, in CHANGELOG.md; tests green with and without
-ext-phasync (fiber-interop/api 0.3.x-dev and fiber-interop/phasync 0.4.x-dev: still no tags
-newer than 0.3.1 / 0.4.1, so the dev pins stay).
+All items of TODO-0.0.2-beta5.md done, in CHANGELOG.md, except one target of item 1 (the
+50-row monitor at "a few percent of a core": 14-15% now, with a runtime floor of 6.5%; see
+the findings below). Tests green with and without ext-phasync (fiber-interop/api 0.3.x-dev and
+fiber-interop/phasync 0.4.x-dev: still no tags newer than 0.3.1 / 0.4.1, so the dev pins
+stay). Not tagged.
 
-- [x] 1. Render cost (624ba14, a9a05e6, 3946cc2): Stylesheet::compute() memo, Tree items and
-      ElementLayouts reused by path and signature, ElementLayout keeps placed windows, measure
-      by the built items, LayoutItem::natural() memo, Component::measureFor() remembered until
-      markDirty()/render, focus settled only when it may move, hasFocus() cache, one frame
-      coroutine, Host composes only stale windows, one-terminal CSI in the grammar, runs of
-      single-width cells printed at once, showsAgain() (an equal tree keeps layout and paint),
-      Signal timeouts on one shared clock. Numbers (FakeTerminal 120x60): flat 50x
-      Row[Text,Text] 44 ms (TODO's machine) / 6.5 ms (beta4 here) -> 1.3 ms a frame; monitor
-      of 50 row components at 10 Hz: ~20% of a core with one row in 20 changing, 50-60% with
-      every row every tick; key latency < 1 ms median. tests/Benchmark/RenderCostTest.php
-      (100 frames < 1.5 s CPU; one Text changing paints 1 surface, measures <= 1 probe, the
-      parent of a row component does not render); docs/surface.md "Performance".
+Left for item 1, all structural (each a change of the layer, not a patch):
+- Text elements painted into their container's surface instead of a surface of their own
+  (one level less of write, parse and diff for every Text; Layers and focus would need care).
+- The generated parser costs about 2.5 µs per item beside about 1 µs in the emulator's action;
+  a compiler that emitted a first-character dispatch for Item would take most of it (that is
+  charm/parsing's code generation, not the grammar).
+- About 6600 closures (listeners) in the monitor's heap make each idle collection 4-5 ms; fewer
+  would shorten the runs, but phasync's 5% duty cap would stay while the loop idles often.
+
+- [~] 1. Render cost (624ba14, a9a05e6, 3946cc2; continued in 8c15d07, b6114ea):
+      Stylesheet::compute() memo, Tree items and ElementLayouts reused by path and signature,
+      ElementLayout keeps placed windows, measure by the built items, LayoutItem::natural()
+      memo, Component::measureFor() remembered until markDirty()/render, focus settled only
+      when it may move, hasFocus() cache, Host composes only stale windows, one-terminal CSI
+      and ESC in the grammar, runs of single-width cells printed at once, showsAgain() (an
+      equal tree keeps layout and paint), Signal timeouts on one shared clock; then: renders
+      with the device's frames, re-renders of the same frame in that frame, Component::sleep()
+      on a 60 Hz frame clock, a determinate ProgressBar without a coroutine, whole-row copy and
+      compare in Viewport::paint(), covers filtered by overlap, a minimal compositing wrapper
+      and paint preludes. Numbers (FakeTerminal 120x60): flat 50x Row[Text,Text] 1.3 ms a frame;
+      monitor of 50 row components at 10 Hz: 14-15% of a core with one row in 20 changing
+      (was 20%), 55-57% with every row every tick; key to frame 0.2 ms median, 2 ms max.
+      **Not met: "a few percent" for the monitor.** It cannot be on phasync: see the finding
+      below (the runtime alone is 6.5% for this program, 4.5% of it idle GC). Tests:
+      tests/Benchmark/RenderCostTest.php (budget, work counts, frames at most 60/s, a parent's
+      relayout in the same frame), StateTest (frame clock), SmallWidgetsTest (ProgressBar
+      idle), SequencesTest (ESC with and without embedded controls); docs/surface.md
+      "Performance" (numbers, measuring, big trees), docs/components.md "Frames".
 - [x] 2. Tabs: components inside element contents kept (tabComponents()) and focused
       (focusContent(): first canFocus(), else first; else the bar); content($key);
       tests/Widgets/TabsFocusTest.php (both shapes, keys, select(), click, child() ownership).
@@ -36,6 +54,49 @@ newer than 0.3.1 / 0.4.1, so the dev pins stay).
       start(); docs/components.md on where a coroutine lives; tests/Component/SmallBeta5Test.php.
 
 ## Design decisions (0.0.2-beta5)
+
+- **Renders go with the device's frames.** markDirty() of a component whose surface root is
+  attached to a running TerminalDevice only damages the device (TerminalDevice::drawsFrames());
+  the device's frame loop refreshes at most 60 times a second, and its refresh flushes (renders)
+  first. Rendering faster than the terminal draws is wasted, and fifty coroutine steps that
+  fell in one frame were fifty render passes, composes and draws, each with a go() of ~30-45 µs.
+  Trees not on a device keep the go(sleep(0)) frame. A request during a refresh sets
+  `frameAgain` (the next frame). The cost: a render may come up to 1/60 s after the change
+  instead of in the next tick; tests that slept 5-10 ms before looking at a component (not the
+  screen) now use frame() = 1/60 + 5 ms. Key latency is not worse: draws were paced before too,
+  and a frame after a quiet 1/60 s is drawn at once.
+- **Re-render in the same frame.** A component asked for again by a render of the frame (a
+  child whose size changed relayouts its parent after the parent rendered) renders again in up
+  to three more passes of the same frame; before, it waited for the next frame, which drew the
+  half-done layout for one frame (with device frames that would have been visible for 16 ms).
+- **Sleeps on a frame clock.** Signal::wait(inStep: true) (Component::sleep()) ends at a 1/60 s
+  tick: the first at or after (end - 2 ms). Loops begun at different moments wake together (the
+  runtime then wakes once per tick group instead of once per coroutine), and a sleep(0.1) loop
+  stays at ten steps a second (rounding up alone made it 8.6). Not for Pty, Input or the
+  device's own waits.
+- **No skipping of step renders.** A step that wrote no state still renders: a coroutine that
+  polls data outside the component (a clock, a job object) relies on it. Comparing the
+  component's properties would miss changes inside objects it holds. The step render is cheap
+  instead (an equal tree: ~35 µs) and batched per frame.
+- **Compositing wrapper.** DECRC restores the pen, so the trailing SGR 0 went; origin mode, SI,
+  G0 and the link close are written only when the host's producer has them on. Text paints and
+  the ProgressBar set `?7;25l` in one sequence and restore nothing (their surfaces are theirs).
+- **Finding (runtime cost, phasync adapter, PHP 8.5 without JIT):** `fiber\go()` about 29 µs
+  (with a sleep(0) in it 45 µs), resolving a Deferred and resuming its waiter about 12 µs,
+  `fiber\sleep()` about 7 µs. 50 coroutines in a `fiber\sleep(0.1)` loop with phases spread
+  over the 100 ms cost 6.5-6.9% of a core even without any TUI in the process; in phase, 1.1%.
+  Of that, phasync's idle collection (EventLoop::tick: gc_collect_cycles() whenever the loop is
+  about to idle, roots exist and 20x the last collection's time has passed, i.e. up to 5% of
+  the time) is about 4-4.5%: in the monitor each run takes 4-5 ms over ~150k zvals and collects
+  nothing. The library cannot avoid roots (any decref of an array or object makes one) and
+  should not touch the collector (gc_disable() would be going beneath the runtime). So the
+  50-row monitor has a floor of about 6.5% of a core on phasync before it renders anything,
+  which is why item 1's "a few percent" is not reachable; the library's own share is about 8%.
+- **Finding (measuring):** the machine's CPU governor is schedutil. The same frame of 20
+  changed rows cost 412 µs a row back to back and 1035 µs a row with 40 ms of idle between
+  frames (tested with the same code in one process). Percentages of a core for bursty loads
+  here overstate the work about 2.5 times; frame costs measured back to back are the honest
+  numbers.
 
 - **Least height, not a minimum attribute.** A ScrollView must not squeeze, but its content
   may hold something that takes any room (measure null), which made the whole content measure

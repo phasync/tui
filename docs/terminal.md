@@ -30,7 +30,8 @@ fiber\run(function () use ($tty) {
 
 - **Draws** the root's damage as the minimum cursor moves and SGR runs against the previous
   frame, at most 60 frames a second and only when something changed, from a coroutine of its
-  own. Frames are wrapped in synchronized output (2026) and the cursor is hidden while drawing;
+  own. Components of the tree marked for a render render at the start of a frame, so all that
+  was asked for since the last one is one render pass and one draw. Frames are wrapped in synchronized output (2026) and the cursor is hidden while drawing;
   the cursor shown is the root's `activeCursor()` (the focused window's, with its shape).
 - **Decodes input** (keys in legacy, SS3, CSI, kitty and modifyOtherKeys forms, Alt prefixes,
   UTF-8; SGR mouse with buttons, wheel and drags; bracketed paste; focus in/out) into events for
@@ -243,7 +244,9 @@ call (a bracketed paste may span calls), and a lone ESC at the end is the Escape
 
 **Reading the screen after input, and tests that fail.** Input is dispatched at once, but a
 component renders in the next frame: read the screen after `settle()`, which waits until the
-renders the input asked for have run and the screen is drawn. Never `usleep()` in a coroutine:
+renders the input asked for have run and the screen is drawn (`text()` and `dump()` draw what
+is pending first, too). Frames come at most 60 a second, so a test that waits for a render
+with `fiber\sleep()` sleeps a sixtieth of a second or more. Never `usleep()` in a coroutine:
 it blocks the loop, so nothing renders (nor anything else runs) while it sleeps; use
 `settle()`, `waitFor()` or `fiber\sleep()`. Wrap the test in `run()`: it detaches the terminal
 afterwards, also when the test throws, so a failing assertion ends the program and reaches

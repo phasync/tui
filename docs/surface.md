@@ -215,8 +215,8 @@ far more than a terminal program produces.
 
 ### What a frame of components costs
 
-Measured on PHP 8.5 without JIT, FakeTerminal 120x60 (`tests/Benchmark/RenderCostTest.php`
-holds the budgets, with 10x headroom):
+Measured on PHP 8.5 without JIT, FakeTerminal 120x60, phasync adapter
+(`tests/Benchmark/RenderCostTest.php` holds the budgets, with 10x headroom):
 
 | What | Cost |
 |---|---|
@@ -224,8 +224,21 @@ holds the budgets, with 10x headroom):
 | The same tree rendered again unchanged (the render returns an equal tree) | the `render()` call and a comparison of the trees: the layout, the windows and the paint stand |
 | One `Text` changes in that tree | one surface painted; nothing measured again but the row it is in (a component in an unchanged row is not measured: its answer stands until it renders) |
 | A row that is a component of its own changes its state | that row renders, measures and paints; the parent does not render (the row's size did not change) |
-| A changed row of a `ProgressBar`, two `Text`s and two `Button`s, 4 levels of surfaces deep | about 0.7-1 ms (the writes and their parsing at each level up to the screen, its layout) |
-| A key to the screen, with 50 such rows ticking at 10 Hz | median under 1 ms, at most about 10 ms |
+| A changed row of a `ProgressBar`, two `Text`s and two `Button`s, 3 levels of surfaces up to the screen | about 0.6 ms alone in a frame, about 0.4 ms each when many rows change in one frame (the writes and their parsing at each level, the row's layout) |
+| Such a row rendered again unchanged (a step of its coroutine that changed nothing) | about 35 µs |
+| 50 such rows, each with its coroutine ticking at 10 Hz (500 steps a second), one row in twenty changing per tick | about 14-15% of a core; every row changing on every tick: about 55-57% |
+| The same 50 coroutines sleeping with `fiber\sleep()` and drawing nothing | about 6.5% of a core: the runtime's part of the above (4.5% of it is phasync's idle garbage collection, which runs whenever the loop idles, up to 5% of the time) |
+| A key to the frame that shows it, with those 50 rows ticking | median 0.2 ms, at most about 2 ms |
+
+A frame renders everything asked for since the last one (see "Frames" in
+[components.md](components.md#state-rendering-by-itself)), and `sleep()` ends on ticks of the
+frame clock, so fifty rows that tick at 10 Hz are at most ten frames a tick, not fifty.
+
+**Measuring.** Percentages of a core for a light load that runs in short bursts overstate the
+work on a machine whose CPU clocks down when idle (the `schedutil` and `powersave`
+governors): on the machine these numbers come from, the same frames cost 2.5 times the CPU
+time with 40 ms of idle between them as back to back. Compare the cost of a frame (as the
+first rows do) rather than a percentage when you tune a tree.
 
 **Budget.** A few hundred elements of which a few change make a frame of one or two
 milliseconds. What costs is what changed, times the levels of surfaces it is composited
@@ -239,9 +252,7 @@ through: a frame is cheap when little in it changed, whatever the size of the tr
   [components.md](components.md#state-rendering-by-itself)).
 - **Keep what does not change the same.** A `render()` that returns the same tree as before
   costs almost nothing; one that changes a counter in one `Text` repaints that `Text`.
-- **Fewer coroutines that wake.** Each wake of a coroutine is a step that renders its component.
-  Fifty rows each sleeping 0.1 s are 500 wakes a second, which the runtime pays for apart from
-  the render (on the phasync adapter about 20% of a core for 50 rows ticking at 10 Hz when one
-  row in twenty changes, most of it the loop and the fiber switches; about 50-60% when every row
-  changes on every tick). Wake at the rate the screen needs (2-4 Hz for a progress display),
-  or let one coroutine update the rows' states.
+- **Fewer coroutines that wake.** Each wake of a coroutine is a step that renders its component
+  (about 35 µs when nothing changed) and that the runtime pays for apart from the render (the
+  loop, the fiber switch, its idle collection). Wake at the rate the screen needs (2-4 Hz for a
+  progress display), or let one coroutine update the rows' states.

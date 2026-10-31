@@ -12,16 +12,28 @@ dialog taller than the terminal scrolls instead of squeezing its fields. Everyth
   of 50 `Row([Text, Text])` that changes a counter in one `Text` at 10 Hz took about 44 ms of
   CPU a frame (44% of a core); it takes about 1.3 ms (about 1.3%). A 50-row monitor with a
   component per row (a `ProgressBar`, two `Text`s and two `Button`s) whose rows tick at 10 Hz
-  went from a whole core to about 20% with one row in twenty changing (most of the rest is the
-  runtime waking 50 coroutines ten times a second), and its key-to-screen latency from 47 ms
-  (spikes to 97 ms) to under 1 ms (at most about 10 ms). What changed: styles are computed once
-  per question; the windows, layouts and measures of what did not change are kept from frame to
-  frame; a render that returns the same tree keeps its layout and paint; a component's measure
-  stands until it renders, so a parent does not measure its unchanged rows again; a child that
-  re-renders at the same size does not make its parent lay out again; text runs are written
-  and parsed as runs; the focus is settled only when it may have moved; the timed waits of all
-  coroutines share one clock (fifty rows sleeping 0.1 s wake in one frame). docs/surface.md,
-  "Performance", has the numbers and what to do when a tree is big.
+  went from a whole core to about 14-15% with one row in twenty changing (about 6.5% of that is
+  the runtime waking 50 coroutines ten times a second and its idle garbage collection, which a
+  program pays with no rendering at all), and from far more than a core to about 55% with every
+  row changing on every tick. Its key-to-screen latency went from 47 ms (spikes to 97 ms) to
+  0.2 ms (at most about 2 ms). What changed: styles are computed once per question; the
+  windows, layouts and measures of what did not change are kept from frame to frame; a render
+  that returns the same tree keeps its layout and paint; a component's measure stands until it
+  renders, so a parent does not measure its unchanged rows again; a child that re-renders at
+  the same size does not make its parent lay out again; text runs are written and parsed as
+  runs; compositing copies and compares whole rows, and the escape sequences around a window's
+  drawing and in a text's paint are the ones needed and no more (ESC 7 and the like are parsed
+  as one token); the focus is settled only when it may have moved; the timed waits of all
+  coroutines share one clock. docs/surface.md, "Performance", has the numbers, how to measure
+  and what to do when a tree is big.
+- Renders go with the terminal's frames: on a terminal device, what all components asked for
+  since the last frame renders at the start of the next one, together, and is drawn in that
+  frame (at most 60 a second; at once after a quiet sixtieth of a second, so a key in a quiet
+  program shows right away). Fifty rows that wake in one frame were fifty render passes,
+  composes and draws. A parent that has to lay out again because a child's size changed in the
+  same frame does so in that frame: the half-done layout is no longer drawn for a frame.
+- A `ProgressBar` with a value no longer wakes ten times a second: only an indeterminate one
+  animates (fifty determinate bars were 500 wake-ups a second doing nothing).
 
 **Fixed**
 
@@ -72,6 +84,15 @@ dialog taller than the terminal scrolls instead of squeezing its fields. Everyth
   that declared one of them for itself silently broke the library before; it now fails where it
   is declared, with "Cannot override final method phasync\Tui\Component::children()". Rename
   the method.
+- A component shown on a terminal renders with the terminal's next frame (see "Faster"), so a
+  render may come up to a sixtieth of a second after the change instead of in the next tick. A
+  test that slept a few milliseconds and then looked at a component (not at the screen, which
+  `text()` and `settle()` draw first) should sleep `1 / 60` or more, or `settle()`.
+- `sleep()` of a component ends at a tick of a 60 Hz frame clock: the first after the time
+  asked for, or one at most 2 ms before it. So the loops of many components wake together, in
+  one frame, whenever they began; a `sleep(0.1)` loop still makes ten steps a second, but a
+  `sleep(0.005)` lasts a sixtieth of a second. Use `fiber\sleep()` where a coroutine needs the
+  millisecond.
 - `Component::measure()` is asked once per room until the component is marked for a render or
   renders: compute it from what goes with a render (state, props, style). One that read
   something else that changes without a render should call `requestRender()` when it changes.

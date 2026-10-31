@@ -49,8 +49,8 @@ fiber\run(function () {
    starts (the built-in `Terminal` starts its program there), text laid out for the width, a
    view computed for the height. Later sizes arrive with `onResize()` and a render.
 4. `render()` runs again whenever the component's **area** changed, and after
-   `requestRender()` (batched: calls in the same moment give one render, as soon as the current
-   coroutine yields). The area is the rectangle the component has: its size
+   `requestRender()` (batched: calls before the next frame give one render; see "Frames"
+   below). The area is the rectangle the component has: its size
    (`$this->surface->cols()`/`rows()`) and where it shows on the screen
    (`$this->surface->area()`, a `Rect` in root coordinates). The library renders again when
    either changed since the last render, whatever changed it: the terminal was resized, a
@@ -334,8 +334,19 @@ changed, after one of its handlers took an event (`onKey()` and the others retur
 bound key), after a step of one of its coroutines (each `sleep()`, and the end of a `go()`
 that waited), after a closure of the component that it gave to a child ran (a callback such as
 `onSubmit`, a listener given to `on()`), when a parent's render gave it new props, and when its
-area changed.** Everything in one moment is one render, parents before their children, so a
+area changed.** Everything in one frame is one render, parents before their children, so a
 coroutine loop that changes the state many times between two waits renders once per step.
+
+**Frames.** A tree shown on a terminal device (`Tty`, `FakeTerminal`, a `Tui` runner) renders
+with the device's frames: what was asked for since the last frame renders, is composed and is
+drawn together, at most 60 times a second, and at once when the terminal drew nothing for a
+sixtieth of a second (a key in a quiet program shows right away). A tree that is not shown on
+a device renders as soon as the current coroutine yields. A component asked for again by a
+render of the same frame (a child whose size changed makes its parent lay out again) renders
+again in that frame, so no half-done state is drawn. `sleep()` ends at a tick of the same
+clock (see its entry below), so the coroutines of many components wake together and are one
+frame. In tests, read the screen with `text()` or after `settle()`: both draw what is pending
+first.
 There are no signals, observables or dependency tracking: what `render()` shows is computed in
 `render()` (or in methods it calls). `requestRender()` is the explicit call for the rest, a
 change the component cannot see.
@@ -737,7 +748,7 @@ any other method.
 | `layoutElement(Element $element): Layout` (protected) | An element tree laid out as a layout, not set: for a component that shows a tree on a surface of its own (as `ScrollView` does). |
 | `state` (protected `State`) | The component's state (see "State: rendering by itself"). |
 | `go(Closure $task)` (protected) | Another coroutine of the component: contained like `run()`; the component's end waits for it; when it ends after it waited, the component renders. |
-| `sleep(float $seconds): bool` (protected) | Sleep, less if disposed meanwhile; returns `isMounted()`. What the coroutine did before shows in the next frame. |
+| `sleep(float $seconds): bool` (protected) | Sleep about `$seconds`, less if disposed meanwhile; returns `isMounted()`. What the coroutine did before shows in the next frame. The sleep ends at a tick of the frame clock (60 a second): the first after the time asked for, or one at most 2 ms before it, so many components' loops wake together and a `sleep(0.1)` loop still makes ten steps a second. For timing to the millisecond, use `fiber\sleep()`. |
 
 ```php
 protected function render(): ?Layout
