@@ -166,6 +166,7 @@ final class Host
     public function markDirty(): void
     {
         $this->dirty = true;
+        $this->vt->version++;       // (the surface's change count: a window showing it is drawn anew)
         ($this->notify)();
     }
 
@@ -437,6 +438,68 @@ final class Host
         if ($left >= $right || $top >= $bottom) {
             return;
         }
+        // a window covers its rectangle: drawn as before (its subtree, look, place, clip and
+        // shadows the same), its cells are those of the last frame
+        $key = $v->source->changeCount() . ",$x0,$y0,$w,$h,$left,$top,$right,$bottom," . $v->lookKey() . ($shades === [] ? '' : json_encode($shades));
+        $drawn = $v->drawn;
+        if ($drawn !== null && $drawn[0] === $key && $drawn[1] !== null) {
+            foreach ($drawn[1] as $i => $c) {
+                Area::put($chars[$top + $i], $styles[$top + $i], $left, $c, $drawn[2][$i]);
+            }
+            return;
+        }
+        $holding = $this->holding;
+        $this->holding = false;
+        $this->draw($chars, $styles, $v, $x0, $y0, $w, $h, $left, $top, $right, $bottom, $shades);
+        if ($this->holding) {
+            $v->drawn = null;       // (a window in it holds back an update: drawn anew next frame)
+        } elseif ($drawn === null || $drawn[0] !== $key) {
+            $v->drawn = [$key, null, null];     // (changed: kept once it stays as it is for a frame)
+        } else {
+            $c = $s = [];
+            for ($y = $top, $n = $right - $left; $y < $bottom; $y++) {
+                $c[] = \array_slice($chars[$y], $left, $n);
+                $s[] = \array_slice($styles[$y], $left, $n);
+            }
+            $v->drawn = [$key, $c, $s];
+        }
+        $this->holding = $this->holding || $holding;
+    }
+
+    /**
+     * The spans of $a..$z (exclusive) that none of $covers covers.
+     *
+     * @param list<array{int,int}> $covers
+     * @return list<array{int,int}>
+     */
+    private static function uncovered(int $a, int $z, array $covers): array
+    {
+        sort($covers);
+        $out = [];
+        foreach ($covers as [$c1, $c2]) {
+            if ($c1 > $a) {
+                $out[] = [$a, min($c1, $z)];
+            }
+            $a = max($a, $c2);
+            if ($a >= $z) {
+                return $out;
+            }
+        }
+        $out[] = [$a, $z];
+        return $out;
+    }
+
+    /**
+     * Draw window $v at $x0,$y0 ($w x $h) of the frame, inside $left,$top - $right,$bottom: its
+     * border, its source's cells in view, the windows its source hosts, its selection, and the
+     * shadows of the windows above it.
+     *
+     * @param array<int, list<string>>         $chars
+     * @param array<int, list<Style>>          $styles
+     * @param list<array{int,int,int,int,int}> $shades
+     */
+    private function draw(array &$chars, array &$styles, Viewport $v, int $x0, int $y0, int $w, int $h, int $left, int $top, int $right, int $bottom, array $shades): void
+    {
         $b = $v->hasBorder() ? 1 : 0;
         if ($b) {
             $style = $v->borderStyleNow();
@@ -479,26 +542,43 @@ final class Host
             $firstRow = $v->top();
             $firstCol = $v->left();
             $selection = $v->selectionRange();
-            $n = $ir - $il;
-            $from = $firstCol + $il - $ix;
+            $views = $source->viewports();
+            $sx = $ix - $firstCol;
+            $sy = $iy - $firstRow;
+            $cl = max($il, $sx);
+            $ct = max($it, $sy);
+            $cr = min($ir, $sx + $source->cols());
+            $cb = min($ib, $sy + $source->rows());
+            // what the source's windows cover of each row: its own cells are not copied there
+            $covered = [];
+            foreach ($views as $cv) {
+                [$vx, $vy, $vw, $vh] = $cv->rect();
+                $x1 = max($sx + $vx, $cl);
+                $x2 = min($sx + $vx + $vw, $cr);
+                if ($x1 < $x2) {
+                    for ($y = max($sy + $vy, $ct), $y2 = min($sy + $vy + $vh, $cb); $y < $y2; $y++) {
+                        $covered[$y][] = [$x1, $x2];
+                    }
+                }
+            }
+            $plain = Style::plain();
             for ($y = $it; $y < $ib; $y++) {
                 $row = $firstRow + $y - $iy;
                 $line = $row >= 0 ? ($row < $sourceRows ? $lines[$row] : null) : $source->scrollbackLine($row);
-                if ($line === null) {
-                    $c = array_fill(0, $n, ' ');
-                    $s = array_fill(0, $n, Style::plain());
-                } else {
-                    [$c, $s] = Area::cut($line->chars, $line->styles, $from, $n);
+                $spans = isset($covered[$y]) ? self::uncovered($il, $ir, $covered[$y]) : [[$il, $ir]];
+                foreach ($spans as [$a, $z]) {
+                    $n = $z - $a;
+                    if ($line === null) {
+                        Area::put($chars[$y], $styles[$y], $a, array_fill(0, $n, ' '), array_fill(0, $n, $plain));
+                    } else {
+                        [$c, $s] = Area::cut($line->chars, $line->styles, $firstCol + $a - $ix, $n);
+                        Area::put($chars[$y], $styles[$y], $a, $c, $s);
+                    }
                 }
-                Area::put($chars[$y], $styles[$y], $il, $c, $s);
             }
             // the windows the source hosts, clipped by this window and by the source's edges
-            $views = $source->viewports();
             if ($views !== []) {
-                $sx = $ix - $firstCol;
-                $sy = $iy - $firstRow;
-                $this->blitAll($chars, $styles, $views, $sx, $sy, max($il, $sx), max($it, $sy),
-                    min($ir, $sx + $source->cols()), min($ib, $sy + $source->rows()));
+                $this->blitAll($chars, $styles, $views, $sx, $sy, $cl, $ct, $cr, $cb);
             }
             // a selection shows in inverse, over all the window shows (its windows too)
             if ($selection !== null) {
@@ -507,7 +587,7 @@ final class Host
                     for ($x = $il; $x < $ir; $x++) {
                         if ($chars[$y][$x] === '' && $x > $il) {
                             $styles[$y][$x] = $styles[$y][$x - 1];   // (a wide character is shown in the style of its first half)
-                        } elseif (Viewport::inSelection($selection, $from + $x - $il, $row)) {
+                        } elseif (Viewport::inSelection($selection, $firstCol + $x - $ix, $row)) {
                             $st = $styles[$y][$x];
                             $styles[$y][$x] = $st->has(Style::INVERSE) ? $st->without(Style::INVERSE) : $st->with(Style::INVERSE);
                         }

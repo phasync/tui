@@ -1290,6 +1290,16 @@ final class Surface implements \Stringable
     }
 
     /**
+     * @internal A number that grows with every change of this surface or of what it hosts,
+     * without composing it (see `version()`): a window showing it whose number is the same
+     * shows the same cells.
+     */
+    public function changeCount(): int
+    {
+        return $this->vt->version;
+    }
+
+    /**
      * @internal The rows of this surface's own cells (what its producer wrote, without the
      * windows it hosts), for the compositor.
      *

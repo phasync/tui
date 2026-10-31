@@ -541,6 +541,22 @@ final class Viewport
         return [$this->x, $this->y, $this->width, $this->height];
     }
 
+    /**
+     * @internal What the host drew for this window in its last frame: [key, rows of graphemes,
+     * rows of styles] (see Host::blit()).
+     *
+     * @var array{string, list<list<string>>, list<list<Style>>}|null
+     */
+    public ?array $drawn = null;
+
+    /** @internal Everything about the window's look that its cells depend on, as a string to compare. */
+    public function lookKey(): string
+    {
+        return ($this->border ? $this->borderKind : '') . "\0" . spl_object_id($this->borderStyleNow()) . "\0" . $this->title
+            . "\0" . $this->titleAlign . "\0" . $this->top() . "\0" . $this->left
+            . ($this->selection === null ? '' : "\0" . implode(',', $this->selectionRange()));
+    }
+
     /** @internal The style the border is drawn in now: the focus style while focused, if there is one. */
     public function borderStyleNow(): Style
     {
