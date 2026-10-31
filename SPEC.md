@@ -383,8 +383,15 @@ fiber\run(function () {
 is a whole program (`fiber\run()` is the one entry point of `fiber\`; `go()` outside it throws, and
 `run()` returns when the program's own coroutines have finished, so a coroutine that should stop
 with the screen checks a flag or the runner's result). Element content may be a closure (`new Text(fn() => ...)`) so a single
-element can be dynamic without the tree around it being rebuilt. Classes stay for anything with
-behaviour of its own; a closure component is the same thing without a name.
+element can be dynamic without the tree around it being rebuilt. Input reaches a closure program
+without a class: `Tui::run($root, keys: ['down' => fn() => ..., 'shift+right' => ...])` binds
+keys on the root (same syntax as `bindings()`), elements take `onKey:` and `onMouse:` closures
+(an element with `onKey:` is focusable; one with `onMouse:` receives presses, drags and releases
+over it), and `Dialog::open($dialog)` / `Confirm::ask(...)` are awaitable from any coroutine and
+host the dialog on the running root. A component instance kept across renders (`$bars[$i] ??= new
+ProgressBar(...)`) keeps its identity, state and surface wherever it appears in the next tree.
+Classes stay for anything with behaviour of its own; a closure component is the same thing
+without a name.
 
 ### 9.2 Utility classes
 
