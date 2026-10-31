@@ -3,6 +3,85 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.4-beta1; TODO-0.0.4-beta1.md)
+
+- [x] 1. emulator: Kitty graphics + iTerm2 inline images (src/Surface/Graphics.php), Image,
+      ImageFragment, Style::$image; tests/Surface/ImagesTest.php; blit property test with images
+- [x] 2. device: probe (Kitty query + CSI 16 t), images(), kitty placements / iterm2 rectangles,
+      quarter-block fallback, inline freeze; tests/Terminal/ImagesTest.php
+- [x] 5. closing 0.0.3: Help lines, Ctrl-B Ctrl-Q, goodbyes, Dialog/Confirm timeout, Terminal
+      exit event + element attributes, fps, MIT, charm/parsing removed, CHANGELOG 0.0.3 summary;
+      tests/Release/Closing03Test.php, tests/Examples/ExamplesTest.php
+- [~] branches: widget/* deleted locally (their worktrees removed first). NOT deleted on origin:
+      that is a push, and this work pushes nothing. To do: `git push origin --delete` each
+      `widget/*` on origin (`git ls-remote origin 'refs/heads/widget/*'`).
+- [x] 3. Canvas element (src/Component/Canvas.php, CanvasContext.php); tests/Widgets/CanvasTest.php
+- [x] 4. graphs.php, README Graphics paragraph. It runs, but shows no axes, no cpu line and a
+      tiny photo until phasync/canvas fixes the gaps below; nothing in the example changes then.
+
+### phasync/canvas gaps (at 7643f60, 2026-10-31; tests skip through canvasGap() and run once fixed)
+
+Found by tests/Widgets/CanvasTest.php; not worked around in tui (no 2D context of our own):
+
+1. `toDots(w, h)` at the backend's own size segfaults (GD 2.3.3, `imagescale` with
+   IMG_BILINEAR_FIXED). The element always rasterises at cells x cell size in pixels, so toDots
+   only ever scales down; that is a design choice that also makes markers agree, not a
+   workaround, but the segfault is upstream's.
+2. `stroke()` with `lineWidth <= 1` (in user units) draws with `imageline` on the untransformed
+   points: a line of a dot or two lands at pixel coordinates (top-left, tiny). `lineWidth > 1`
+   is transformed (as a polygon) and is in user units as in a browser. `strokeRect()` ignores
+   the transform at every width. (graphs.php: the axes and the cpu line are missing.)
+3. `clearRect()` does not clear (GD alpha blending is on, so a transparent fill blends to
+   nothing) and ignores the transform.
+4. `drawImage()` of a path or of bytes calls `imagecreatefromfile()`, which does not exist in
+   ext-gd; `drawImage()` of a `GdImage` ignores the transform for the destination rectangle
+   (graphs.php: the photo comes out a few pixels in the corner).
+5. `fillText()` ignores the transform and uses GD's built-in font 1. Not needed: the element
+   puts text in cells as characters (CanvasContext::fillText), which is the TUI's job.
+6. `toDots()` scales bilinearly, so an edge bleeds into the next dot (about one dot); tests
+   compare braille against pixels with that tolerance. A box filter (or nearest at integer
+   ratios) would be exact.
+7. There is no way to make a `Canvas` with a `Context` subclass (the context is created inside),
+   so the element constructs the backend itself (`Canvas::$backendClass`, else Gd, else Imagick)
+   and `CanvasContext extends Context` with it. A factory or a `Context` that takes a backend in
+   a public constructor (it does) is enough; a `Canvas::fromBackend()` would make it clean.
+
+### Design decisions (Canvas)
+
+- The raster is cells x cell size in pixels for every marker, glyph markers downscale with
+  toDots(): a drawing covers the same cells on braille and on pixels (the test compares them).
+- Units are cells: CanvasContext's base transform is the pixel scale, and it keeps its own
+  matrix (in cells) beside the backend's for fillText placement; setTransform() takes cells.
+- Text is glyph text in the cells (one cell high, textAlign/textBaseline), on every marker.
+- `pixels` writes one Kitty image (`Ansi::image`) after `ESC[2J`; the device does the rest, so
+  a canvas in a nested window or a pane costs placements only. Writes nothing when the bytes
+  equal the last drawing's.
+- `auto` is resolved on every render (`markerInUse()`), and the element asks to render again
+  after the device's probe answers (`whenProbed`), because images() is only known then.
+
+## Design decisions (0.0.4-beta1)
+
+- **Image fragments live in the Style**, like the hyperlink: a placed cell's style is the pen
+  with `image` set to an `ImageFragment` (image, source rect, the placement's cols x rows, this
+  cell's col,row, the producer's placement id). So copyArea/drawArea/shade/scroll/erase need
+  nothing new, a glyph over an image drops it (the pen has no image), and the diff compares
+  with ===. Image, ImageFragment and image Styles are interned through WeakReferences (the
+  plain styles stay interned forever as before): an image redrawn every frame must not leak.
+  Style::blank() of an image style is the style itself and is NOT memoised ($blank = $this
+  would be a cycle). Ansi::style() and the device's sgr cache key by spl_object_id: they map an
+  image style to its style without the image first (an image style's id may be reused).
+- **Fragment identity for tests and dumps**: `ImageFragment::__toString()` is the image id and
+  the pixels the cell shows (`pixels()`), so two placements that show the same pixels in the
+  same cells dump the same (the reference compositor places each cell 1x1 with its pixels).
+- **Cursor after an image**: kitty's rule (right of the last row; at the right edge column 0 of
+  the next line, scrolling) for both protocols. iTerm2 itself does the same (VT100Screen
+  appends the image like characters); imgcat prints a line feed after, so "below" is what a
+  user sees. TODO said "moves below as iTerm2 does": this is that.
+- **No kitty/imgcat here**: tests/fixtures/images/*.bytes are written by tools/image-fixtures.php
+  in the forms icat (direct, chunked, q=2, centred with CUF) and imgcat (name, size, BEL) send.
+- A long OSC/APC across many write() chunks: while nothing in a chunk can end it, the chunk is
+  appended to the pending tail without parsing (MAX_PENDING raised to 64 MB for images).
+
 ## Status (0.0.3-beta8; TODO-0.0.3-beta8.md, SPEC 3 as amended 2026-11-01)
 
 - [x] 1a. Blitting: Area (copyArea/drawArea), Host::compose() makes one frame per host from
@@ -1402,15 +1481,15 @@ Built bottom-up in the order of SPEC.md. Done layers are committed one by one.
 - No reflow on resize (non-goal); DECSLRM, double-width lines, OSC 4, DECRQSS not implemented.
 - `fiber\Deferred` is `@internal` in fiber-interop/api 0.3.0 but SPEC names it; used for
   `Component::stopped()` and in `Internal\Signal`. Any then-able would do.
-- charm/parsing is required as `dev-master` (no tagged release on Packagist yet).
+- charm/parsing is not a dependency (0.0.4-beta1): `composer grammar` and GrammarTest use a
+  `charm-compile` on the PATH (a global install); GrammarTest skips without one.
 - (0.0.3-beta8: compositing no longer grows with nesting; it costs the damaged rows.)
 
 ## Surface / emulator
 
 - `src/Surface/ansi.cpeg` is the grammar; `AnsiParser.php` is generated (`composer grammar`),
-  `tests/Surface/GrammarTest.php` fails when it is stale. charm/parsing is a dev dependency only:
-  the generated class is standalone. (charm/parsing is GPL-3.0; the generated file contains the
-  compiler's template code. Frode owns charm/parsing, so this is his call; flagged here.)
+  `tests/Surface/GrammarTest.php` fails when it is stale (where `charm-compile` is on the PATH;
+  skipped elsewhere). The generated class is standalone; the package is MIT.
 - The grammar runs on valid UTF-8: `Surface::write()` holds back a code point cut at the end of
   a chunk and scrubs malformed bytes to U+FFFD *before* parsing (compiled regexes always carry
   the `/u` flag, and PCRE refuses invalid UTF-8 subjects). C1 controls are U+0080-U+009F as in

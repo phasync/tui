@@ -1178,7 +1178,9 @@ All in `phasync\Tui\Component\`. The widgets of the components layer (`Editor`, 
 ### Terminal
 
 A command in a pseudo-terminal, as a component: `new Terminal(string|array $command, ?string
-$cwd = null, array $env = [], ?Closure $onExit = null)`. The program gets the component's surface
+$cwd = null, array $env = [], ?Closure $onExit = null, ?string $key = null, ?string $id = null,
+string|array|null $class = null, ?array $style = null)`, so it goes in an element tree like any
+widget (`new Terminal('htop', onExit: fn(int $code) => $s->status = "htop: $code", class: 'grow')`). The program gets the component's surface
 as its terminal: size and resizes, keys and pastes while focused, answers to its queries. The
 program starts when the component is sized (the render of its parent that shows it), in a pty
 that already has the pane's size, so full-screen programs that read their size once (vim, htop,
@@ -1186,7 +1188,8 @@ less) fill their pane; until then `pty()` is null (`exited()` can be awaited fro
 
 When the program exits, the window keeps its last output and the end is announced:
 `$onExit(int $code, Terminal $terminal)` is called (in a coroutine of the component, so it may
-wait, and a failure in it is contained), and the `exited()` awaitable resolves with the code
+wait, and a failure in it is contained), the event `exit` is emitted with the code and the
+component (`$terminal->on('exit', fn(int $code) => ...)`), and the `exited()` awaitable resolves with the code
 (`fiber\await($terminal->exited())`). The host can then close the pane, show the status, or
 `restart()`: the command runs again in the same window (a running program is hung up first,
 without being announced; the terminal is reset). Disposing the component, and so quitting the

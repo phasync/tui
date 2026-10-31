@@ -1,5 +1,100 @@
 # Changelog
 
+## 0.0.4-beta1 (2026-11-01)
+
+Pictures in the terminal: a program in a pane can show images, a program can draw with the
+browser's 2D canvas, and both come out in real pixels where the terminal shows images and in
+Braille or blocks everywhere else. And what was left of 0.0.3. Everything from 0.0.3 works as
+before, except where an entry says what changed.
+
+**Images in a pane**
+
+- `kitten icat`, `chafa -f kitty`, `timg`, `imgcat` or any program that shows a picture with
+  Kitty graphics (`ESC _ G ... ST`) or iTerm2 inline images (`OSC 1337 ; File=...`, and the
+  `MultipartFile`/`FilePart`/`FileEnd` form) printed garbage or nothing in a pane; now the
+  picture shows in its cells. Chunked transfers, image ids and numbers, placements with crops
+  and sizes in cells, pixels, percent or auto, keeping the aspect ratio, the cursor moved after
+  the image (or not, with `C=1`), the delete forms, `q=` and the replies (`OK`, `ENOENT`,
+  `EINVAL`) work as in kitty for directly sent data (`t=d`); PNG, RGB, RGBA and (with GD) JPEG, GIF, WebP and BMP data.
+- Programs that ask about the cell size (`CSI 14 t`, `CSI 16 t`, the Kitty query `a=q`) get an
+  answer, so they size their pictures to the pane: `Surface::cellSize()` (8x16 unless the real
+  terminal says otherwise; `setCellSize()` sets it, and a hosted surface takes its host's).
+- An image is part of the cells it covers (`Style::$image`, an `ImageFragment`, like a
+  hyperlink): it moves, scrolls, crops and gets covered with its window, is copied by
+  `copyArea()`/`drawArea()` and survives a nested multiplexer. An image no cell and no Kitty id
+  refers to any more is freed; the images of a surface are capped at 64 MB.
+- `Ansi::image($pngOrImage, cols, rows)` writes a picture into a surface from PHP;
+  `Ansi::kitty($keys, $payload)` any Kitty graphics command, chunked.
+
+**Images on the real terminal**
+
+- The device asks the terminal at start (the Kitty graphics query and its cell size) and shows
+  image cells with what it has: `kitty` (kitty, WezTerm, Ghostty, Konsole: each image sent once,
+  placed as rectangles, moved and covered without being sent again), `iterm2` (iTerm2, VS Code:
+  the changed rectangles, cropped) or `none` (tmux, screen, the Linux console, anything that did
+  not answer: the picture as quarter-block characters). `TerminalDevice::images()` says which;
+  it is chosen from the environment first (`TERM_PROGRAM`, `TMUX`, `STY`, `TERM`) and asked
+  for only when that does not tell.
+- In inline mode the pictures in rows that scroll up into the shell's history stay there.
+- `FakeTerminal` takes `images:` (`'none'` by default; `'kitty'`, `'iterm2'`, or null to answer
+  as its surface does), and so does `Tui::headless()`, to test what a program shows.
+
+**Canvas**
+
+- `new Canvas(draw: fn(CanvasContext $c) => ...)`: the browser's `CanvasRenderingContext2D` of
+  phasync/canvas (paths, arcs, curves, fills, strokes, gradients, transforms, clipping,
+  `drawImage`, `globalAlpha`) in an element, with cells as units and `fillText()` as real
+  characters. `marker:` is `braille`, `quarter`, `half`, `block`, `pixels` or `auto` (pixels
+  where the terminal shows images, Braille elsewhere). It draws again when a `State` it read
+  changes, and writes nothing when the drawing came out the same. `onMouse:` gets the pointer
+  in the canvas's units (`Mouse::$canvasX`, `$canvasY`). Requires phasync/canvas (and ext-gd or
+  ext-imagick). See docs/widgets.md.
+- phasync/canvas does not yet apply the transform to strokes thinner than one unit, to
+  `strokeRect`, `clearRect` and `drawImage()`, and its `drawImage()` of a file or PNG bytes
+  fails: such lines and images come out at the wrong place or size (DEVNOTES.md has the list).
+
+**Examples**
+
+- `examples/graphs.php` is a graphics demo: a live graph of two series with an area, axes and
+  labels, a logo of paths and a photo, on Canvas elements; `--marker=`, `--inline` (the graph
+  only), `--theme=`, `--headless=` for the Braille version as text.
+- Every example shows how to quit on its bottom line (`working.php` and `inline-progress.php`
+  had none).
+- `coroutine-pane.php` and `split-shells.php` also quit on Ctrl-B Ctrl-Q (besides Ctrl-B q).
+- `coroutine-pane.php` and `host.php` no longer hang when the shell or the command exits: they
+  show a goodbye with the exit status for three seconds, then end.
+
+**Small things**
+
+- `Dialog` and `Confirm` take `timeout:` (seconds): they close by themselves with the cancel
+  answer (`Confirm::ask(..., timeout: 10)` is false then), for a notice that needs no key.
+- `Terminal` emits `exit` with the status and itself (`$term->on('exit', fn(int $code) =>
+  ...)`), besides calling `onExit`, and takes `key:`, `id:`, `class:` and `style:` like every
+  element.
+- `fps:` on `Tui::run()`, `Tui::inline()` and `Tui::headless()` caps the frames a second (60
+  by default; `TerminalDevice::setFrameRate()`, `frameRate()`); a graph that changes a hundred
+  times a second no longer draws a hundred frames.
+- The licence is plain MIT: charm/parsing is no longer a dependency (not even for development).
+  `composer grammar` and the test that checks the generated parser need `charm-compile` on the
+  `PATH`; without it that test is skipped.
+- The merged `widget/*` branches are gone locally.
+
+## 0.0.3 (2026-11-01)
+
+What 0.0.3 brought over 0.0.2, in short (the betas below have the details):
+
+- A program can be one file without a class: `Tui::run(fn() => ...)` with a closure that
+  renders again when the `State` it read changes, `Tui::go()` jobs that stop with the program.
+- Styling: Tailwind's utility classes in `class:`, variants (`focus:`, `md:`), markup in text,
+  and three themes (`dark`, `light`, `mono`) chosen by the terminal's background.
+- A cookbook of ten screens, a sixty-line dashboard in the README, `--headless=COLSxROWS` and
+  `--theme=` on every program.
+- Focus that stays where it was through re-renders, dialogs and layout changes; kept components
+  keep their identity; a focused `Terminal` keeps the keys its shell needs.
+- Hangs report why; a key costs the rows it changes, at 2 rows or 200, in a `ScrollView` or not.
+- Compositing is copying cells (blitting) with one diff for the terminal at the end: a frame ten
+  levels deep costs about a millisecond.
+
 ## 0.0.3-beta8 (2026-11-01)
 
 Hosted surfaces are composited by copying cells instead of writing escape sequences, the

@@ -216,10 +216,16 @@ One primitive, one structure:
    with variables and states, symfony/console markup in text (`<b>`, `<fg=red>`); the themes
    `dark`, `light` and `mono`, chosen by the terminal's background; colours drawn in what the
    terminal has.
-9. **Cookbook** ([docs](docs/cookbook.md)): ten screens of under forty lines each, to copy from.
 8. **Widgets** ([docs](docs/widgets.md)): `Editor` (with history and completion), `Select`
    (a list, or a dropdown), `Table`, `Dialog` and `Confirm`, `Form` with `Button` and
-   `Checkbox`, `ScrollView`, `ProgressBar`, `Spinner`, `Markdown`.
+   `Checkbox`, `ScrollView`, `ProgressBar`, `Spinner`, `Canvas`, `Markdown`.
+9. **Graphics** ([surface](docs/surface.md), [terminal](docs/terminal.md#images),
+   [Canvas](docs/widgets.md#canvas)): images are cells too. The emulator understands Kitty
+   graphics and iTerm2 inline images (a program in a pane can show pictures, and they move,
+   crop and get covered with its window); the device asks the terminal what it shows and draws
+   them in Kitty graphics, iTerm2 images or quarter blocks; `Canvas` is the browser's 2D context
+   on top of that.
+10. **Cookbook** ([docs](docs/cookbook.md)): ten screens of under forty lines each, to copy from.
 
 The surfaces form one tree, whatever is in it: every surface knows its `parent()` and its
 `area()` on the root, and focus (`focus()`, `focusNext()`, `focusToward('left')`) follows that
@@ -555,8 +561,8 @@ The examples with a class start on a `Tty` themselves and need a terminal.
   colours (with `echo` under ext-phasync).
 - `examples/dashboard.php`: the dashboard at the top: three jobs, their events and release
   notes in under sixty lines without a class; `--inline`, `--theme=light|mono`.
-- `examples/graphs.php`: bar charts drawn with escape sequences from coroutines, by components
-  that are classes.
+- `examples/graphs.php`: a live graph of two series, a logo of paths and a photo on `Canvas`
+  elements; `--marker=braille|quarter|half|block|pixels`, `--inline`, `--theme=`.
 - `examples/inline-progress.php`: five progress bars and a total under the shell's output
   (inline mode), finished jobs printed above them; `--fullscreen` for the same full screen.
 - `examples/markdown.php [file.md]`: a Markdown document streamed in chunks, followed as it
@@ -566,6 +572,43 @@ The examples with a class start on a `Tty` themselves and need a terminal.
 - `examples/tabs.php`: tabs holding a shell, a log that fills by itself and help pages; tabs
   added with Ctrl-N and closed with Delete.
 - `examples/tree.php [directory]`: a directory browser whose folders load as they are opened.
+
+## Graphics
+
+`Canvas` draws with the browser's 2D canvas API (paths, fills, strokes, gradients, transforms,
+`drawImage`, text), in cells as units, from a closure that runs again when the `State` it read
+changes. In kitty, WezTerm, Ghostty and Konsole (Kitty graphics) and in iTerm2 and VS Code's
+terminal (iTerm2 inline images) it is real pixels; everywhere else, and in tmux and screen, it is
+Braille dots or block characters, with labels in real text, and nothing in the program changes.
+Hosted programs get the same: `kitten icat` or `imgcat` in a pane shows its picture in the pane.
+`examples/graphs.php` printed headless (`php examples/graphs.php --headless=88x20@2 --marker=braille`):
+
+```text
+ graphs                                                       marker: braille   cpu 50%
+╭ cpu and net ───────────────────────────────────────────────╮╭ logo ──────────────────╮
+│ 100%                                                       ││          ⢀⣠⣦⣀          │
+│       cpu  net                                             ││       ⣀⣴⣾⣿⣿⣿⣿⣿⣶⣄⡀      │
+│                                                            ││      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿      │
+│                                                            ││      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿      │
+│                                                            ││      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿      │
+│          ⢰                                                 ││      ⠈⠛⢿⣿⣿⣿⣿⣿⣿⣿⠟⠋      │
+│          ⢸                                                 ││         ⠈⠙⠻⡿⠛⠉         │
+│  50%     ⢸                                                 │╰────────────────────────╯
+│          ⢸⡀                                                │╭ photo ─────────────────╮
+│          ⣿⡇                                                ││⠛⠛⠛                     │
+│          ⣿⡇                                                ││                        │
+│          ⣿⡇                                                ││                        │
+│         ⢀⣿⡇                                                ││                        │
+│      ⣶⣾⣷⣿⣿⡇                                                ││                        │
+│   0% ⠿⠿⠿⠿⠿⠇                                                ││                        │
+│    -60 s                                                now││                        │
+╰────────────────────────────────────────────────────────────╯╰────────────────────────╯
+ ctrl+q quit
+```
+
+(The axes, the cpu line and the photo are missing here because phasync/canvas does not yet
+apply the transform to strokes thinner than a unit or to `drawImage()`; see DEVNOTES.md. They
+appear without a change to the example once it does.)
 
 ## How it compares
 
@@ -585,10 +628,11 @@ php -d extension=vendor/phasync/phasync/ext/phasync-8.5-nts-x86_64-glibc.so vend
 composer grammar                                          # recompile src/Surface/ansi.cpeg
 ```
 
+`composer grammar` (and the test that checks `AnsiParser.php` is current) needs `charm-compile`
+on the `PATH`, from a global install of charm/parsing; without it the test is skipped.
+
 See [CHANGELOG.md](CHANGELOG.md) for the changes per version.
 
 ## Licence
 
-MIT. `src/Surface/AnsiParser.php` is generated from `src/Surface/ansi.cpeg` by
-[charm/parsing](https://github.com/frodeborli/charm-parsing), whose author licenses this
-generated output for use under this package's licence.
+MIT.

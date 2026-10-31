@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "79636eeb462576032eb31a42705e6ee1",
+    "content-hash": "44c1653d5c9cc1bc6816ca290ef95ec2",
     "packages": [
         {
             "name": "fiber-interop/api",
@@ -120,7 +120,7 @@
             "dist": {
                 "type": "path",
                 "url": "../canvas",
-                "reference": "cec2f3648b0029a569f934cef03304b8e43c6e51"
+                "reference": "7643f605e5ceb476db78e4a093d69414952e6d5a"
             },
             "require": {
                 "php": ">=8.2"
@@ -248,227 +248,6 @@
                 }
             ],
             "time": "2026-10-29T13:58:46+00:00"
-        },
-        {
-            "name": "charm/map",
-            "version": "1.0.5",
-            "source": {
-                "type": "git",
-                "url": "https://bitbucket.org/ennerd/charm-map.git",
-                "reference": "b835772a780d753796ad834a97bf5bea1ac57f02"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://bitbucket.org/ennerd/charm-map/get/b835772a780d753796ad834a97bf5bea1ac57f02.zip",
-                "reference": "b835772a780d753796ad834a97bf5bea1ac57f02",
-                "shasum": ""
-            },
-            "require-dev": {
-                "phpunit/phpunit": "^9.5"
-            },
-            "type": "library",
-            "autoload": {
-                "files": [
-                    "Map.php"
-                ],
-                "psr-4": {
-                    "Charm\\Map\\": "src/"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Frode Børli",
-                    "email": "frode@ennerd.com"
-                }
-            ],
-            "description": "A hashmap implementation similar to Map in javascript - allowing keys and values of any data type. A small, thorough and efficient hashmap implementation.",
-            "homepage": "https://bitbucket.org/ennerd/charm-map",
-            "support": {
-                "source": "https://bitbucket.org/ennerd/charm-map/src/b835772a780d753796ad834a97bf5bea1ac57f02/?at=1.0.5"
-            },
-            "time": "2021-12-21T08:07:06+00:00"
-        },
-        {
-            "name": "charm/options",
-            "version": "1.1.5",
-            "source": {
-                "type": "git",
-                "url": "https://bitbucket.org/ennerd/charm-options.git",
-                "reference": "1508ae6d87eb710676520dda62631cc0f2b59d32"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://bitbucket.org/ennerd/charm-options/get/1508ae6d87eb710676520dda62631cc0f2b59d32.zip",
-                "reference": "1508ae6d87eb710676520dda62631cc0f2b59d32",
-                "shasum": ""
-            },
-            "type": "library",
-            "autoload": {
-                "files": [
-                    "AbstractOptions.php"
-                ],
-                "psr-4": {
-                    "Charm\\Options\\": "src/"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Frode Børli",
-                    "email": "frode@ennerd.com"
-                }
-            ],
-            "description": "A generic class for storing options while enforcing option types.",
-            "homepage": "https://bitbucket.org/ennerd/charm-options",
-            "support": {
-                "source": "https://bitbucket.org/ennerd/charm-options/src/1508ae6d87eb710676520dda62631cc0f2b59d32/?at=1.1.5"
-            },
-            "time": "2024-06-25T09:26:41+00:00"
-        },
-        {
-            "name": "charm/parsing",
-            "version": "dev-master",
-            "source": {
-                "type": "git",
-                "url": "https://bitbucket.org/ennerd/charm-parsing.git",
-                "reference": "3d9d75747310832f5dab96670633bb0623c840b4"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://bitbucket.org/ennerd/charm-parsing/get/3d9d75747310832f5dab96670633bb0623c840b4.zip",
-                "reference": "3d9d75747310832f5dab96670633bb0623c840b4",
-                "shasum": ""
-            },
-            "require": {
-                "charm/map": "^1.0.2",
-                "charm/options": "^1.0",
-                "charm/util-phpencode": "^1.0",
-                "charm/vector": "^1.0",
-                "psr/log": ">=1.0"
-            },
-            "require-dev": {
-                "nikic/php-parser": "^4.13",
-                "phpunit/phpunit": "^9"
-            },
-            "default-branch": true,
-            "bin": [
-                "bin/charm-compile"
-            ],
-            "type": "library",
-            "autoload": {
-                "files": [
-                    "functions.php"
-                ],
-                "psr-4": {
-                    "Charm\\Parsing\\": "src/"
-                },
-                "classmap": [
-                    "Parser.php"
-                ]
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "GPL-3.0-only"
-            ],
-            "authors": [
-                {
-                    "name": "Frode Borli",
-                    "email": "frode@ennerd.com"
-                }
-            ],
-            "description": "A PEG grammar parser, for parsing most context free grammar such as programming languages, database queries and mathematical expressions.",
-            "homepage": "https://bitbucket.org/ennerd/charm-parsing",
-            "support": {
-                "source": "https://bitbucket.org/ennerd/charm-parsing/src/3d9d75747310832f5dab96670633bb0623c840b4/?at=master"
-            },
-            "time": "2026-01-22T10:22:04+00:00"
-        },
-        {
-            "name": "charm/util-phpencode",
-            "version": "1.0.2",
-            "source": {
-                "type": "git",
-                "url": "https://bitbucket.org/ennerd/charm-util-phpencode.git",
-                "reference": "3d7d03532b8ce769618554581f21de4881ccd5f1"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://bitbucket.org/ennerd/charm-util-phpencode/get/3d7d03532b8ce769618554581f21de4881ccd5f1.zip",
-                "reference": "3d7d03532b8ce769618554581f21de4881ccd5f1",
-                "shasum": ""
-            },
-            "type": "library",
-            "autoload": {
-                "files": [
-                    "php-encode.php"
-                ]
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Frode Børli",
-                    "email": "frode@ennerd.com"
-                }
-            ],
-            "description": "A small function that encodes compact PHP arrays, like json_encode - but for PHP arrays.",
-            "homepage": "https://bitbucket.org/ennerd/charm-util-phpencode",
-            "support": {
-                "source": "https://bitbucket.org/ennerd/charm-util-phpencode/src/3d7d03532b8ce769618554581f21de4881ccd5f1/?at=1.0.2"
-            },
-            "time": "2022-01-08T23:51:01+00:00"
-        },
-        {
-            "name": "charm/vector",
-            "version": "1.0.1",
-            "source": {
-                "type": "git",
-                "url": "https://bitbucket.org/ennerd/charm-vector.git",
-                "reference": "80597b489ce87d522477856058f4f85f5d9dd92b"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://bitbucket.org/ennerd/charm-vector/get/80597b489ce87d522477856058f4f85f5d9dd92b.zip",
-                "reference": "80597b489ce87d522477856058f4f85f5d9dd92b",
-                "shasum": ""
-            },
-            "require-dev": {
-                "phpunit/phpunit": "^9.5"
-            },
-            "type": "library",
-            "autoload": {
-                "files": [
-                    "Vector.php"
-                ],
-                "psr-4": {
-                    "Charm\\Vector\\": "src/"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Frode Børli",
-                    "email": "frode@ennerd.com"
-                }
-            ],
-            "description": "A Vector implementation optimized for O(1) performance in operations like random access reads, pop(), push(), shift() and unshift().",
-            "homepage": "https://bitbucket.org/ennerd/charm-vector",
-            "support": {
-                "source": "https://bitbucket.org/ennerd/charm-vector/src/80597b489ce87d522477856058f4f85f5d9dd92b/?at=1.0.1"
-            },
-            "time": "2024-05-28T10:23:57+00:00"
         },
         {
             "name": "doctrine/deprecations",
@@ -4800,9 +4579,7 @@
     ],
     "aliases": [],
     "minimum-stability": "dev",
-    "stability-flags": {
-        "charm/parsing": 20
-    },
+    "stability-flags": {},
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {

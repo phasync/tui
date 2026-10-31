@@ -29,7 +29,7 @@ fiber\run(function () use ($tty) {
 ## What a device does while attached
 
 - **Draws** the root's damage as the minimum cursor moves and SGR runs against the previous
-  frame, at most 60 frames a second and only when something changed, from a coroutine of its
+  frame, at most 60 frames a second (`setFrameRate()`) and only when something changed, from a coroutine of its
   own. Components of the tree marked for a render render at the start of a frame, so all that
   was asked for since the last one is one render pass and one draw. Frames are wrapped in synchronized output (2026) and the cursor is hidden while drawing;
   the cursor shown is the root's `activeCursor()` (the focused window's, with its shape).
@@ -40,6 +40,8 @@ fiber\run(function () use ($tty) {
 - **Passes up** the root's title (OSC 2), bell and clipboard requests (OSC 52).
 - **Writes hyperlinks** (OSC 8) of the root's cells when the terminal supports them
   (`supportsHyperlinks()`); to one that does not, the text alone.
+- **Shows images** of the root's cells (a `Canvas` drawing in pixels, a hosted program's
+  pictures) with the terminal's image protocol (`images()`), or as quarter blocks (see "Images").
 - **Takes the terminal over**: raw mode, the alternate screen, mouse reporting (button events,
   SGR encoding, and motion without a button while a program anywhere in the tree asks for it
   with mode 1003), bracketed paste and focus reporting, and the kitty keyboard protocol
@@ -61,6 +63,8 @@ fiber\run(function () use ($tty) {
 | `terminalName(): string` | The name the terminal gave when asked (XTVERSION) at `attach()`, such as `kitty(0.36.4)`; `''` when it did not answer. |
 | `isInline(): bool` | True for a device made with `inline()` (see below). |
 | `background(): ?string` | `'light'` or `'dark'`: the terminal's background, as it answered when asked (OSC 11) at `attach()`; null when it did not answer (yet). A program that sets no theme is drawn in `light` on a light terminal, else in `dark` (see [styling.md](styling.md#themes)); the answer comes a moment after `attach()`, never holding start-up up, and the screen is drawn again when it says light. |
+| `images(): string` | The image protocol the terminal shows images with: `'kitty'`, `'iterm2'` or `'none'` (see "Images"). |
+| `setFrameRate(int $fps)`, `frameRate(): int` | Draw at most `$fps` frames a second (default 60): fewer for a slow link or to use less CPU (a dashboard at 10). Changes that come faster are drawn together in the next frame. `Tui::run(..., fps: 30)` sets it. |
 | `colors(): int`, `setColors(int $colors)` | The colours the terminal has: `Color::DEPTH_16`, `DEPTH_256` or `DEPTH_TRUECOLOR`. Cells in colours it lacks are drawn in the nearest it has (see below). |
 | `println(string\|Text $text = '')` | Plain output of the program: in inline mode above the live region, at the next frame; not attached, to the terminal at once; attached full screen, after `detach()` (the alternate screen would hide it). A string takes markup (`'<fg=green>✔</> built'`) and escape sequences; a `Text` prints its runs in their styles; `Text::raw($s)` prints `$s` exactly as written (a command's output, a file name). A line break ends each call. |
 | `freeze(int\|Surface $what)` | Keep rows of the root as they show now: a row by number, or the rows a surface covers (a component's: `$tty->freeze($bar->surface)`). Inline, they go above the region at the next frame, into the scrollback, never to change; full screen, they are written after `detach()`. See "Freezing a finished row". |
@@ -85,6 +89,36 @@ is 256; else 16); `setColors()` corrects a terminal that says it wrong. `FakeTer
 told the same way: `new FakeTerminal(80, 24, background: 'light')` answers OSC 11 as a light
 terminal (and its surface's default colours are black on white), `background: null` does not
 answer; `'dark'` by default.
+
+## Images
+
+Cells that show part of an image (see [surface](surface.md), "Images") are drawn with the
+protocol the terminal has, which `images()` tells:
+
+- **`kitty`** (kitty, WezTerm, Ghostty, Konsole): after the text of a frame, the image cells are
+  grouped into rectangles of contiguous parts of one placement; each rectangle is placed by cell
+  (`a=p` with its source rectangle and size, the cursor kept), and a rectangle that is no longer
+  in the frame is deleted. An image is sent to the terminal once, and taken out of its memory
+  when no cell shows it any more (and all of them when the program ends). So an image placed
+  once costs one transmission and one placement, a dialog sliding over it costs placements
+  only, and a frame like the last costs nothing.
+- **`iterm2`** (iTerm2, VS Code's terminal, xterm.js with its image add-on): such a terminal
+  cannot place part of an image, and replaces an image's cells with what is written over them,
+  as this library's cells do. So only image cells that changed are sent, a rectangle at a time:
+  cropped with GD, or (without GD) the whole image when the frame shows all of it.
+- **`none`**: image cells are drawn as quarter blocks of their pixels (`▚▞▙` in two colours a
+  cell), through GD; without GD, as blank cells.
+
+`Tty` finds out at `attach()` without holding start-up up: it asks the terminal with Kitty's
+graphics query and for its cell size (`CSI 16 t`, which `Surface::cellSize()` of the root then
+holds), and decides from the answers, from `TERM_PROGRAM` and `LC_TERMINAL` (iTerm2, VS Code)
+and from the terminal's name (`terminalName()`: WezTerm, Konsole); never inside tmux or screen,
+which do not pass images on (`Tty::imagesFromEnvironment($env)`). Until the terminal has
+answered, `images()` is `'none'`; the screen is drawn again when the answer says more.
+`FakeTerminal` is told: `new FakeTerminal(80, 24, images: 'kitty')`; `'none'` by default, or
+`null` to ask its surface (which has Kitty graphics, so it answers `'kitty'`). Its surface
+understands both protocols, so its cells show the images as such a terminal would: the device's
+output replayed into a surface gives the same image cells as the root.
 
 ## Inline mode: a live region in the terminal's normal screen
 

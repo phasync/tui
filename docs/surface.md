@@ -24,9 +24,8 @@ negative rows are the scrollback, `-1` being the line that most recently scrolle
 ## What the emulator understands
 
 It emulates xterm as `TERM=xterm-256color` describes it, parsed character by character by a
-parser generated from the PEG grammar in `src/Surface/ansi.cpeg` (with
-[charm/parsing](https://packagist.org/packages/charm/parsing); the compiled parser is committed and
-needs nothing at runtime):
+parser generated from the PEG grammar in `src/Surface/ansi.cpeg` (the compiled parser,
+`src/Surface/AnsiParser.php`, is part of this package and needs nothing at runtime):
 
 - UTF-8 text with autowrap, grapheme clusters (combining marks, ZWJ emoji, variation selectors),
   East Asian wide characters and emoji presentation as two cells. Malformed UTF-8 shows as U+FFFD.
@@ -45,10 +44,13 @@ needs nothing at runtime):
 - ESC sequences: RIS, IND, RI, NEL, HTS, DECSC/DECRC, DECKPAM/DECKPNM, DECALN, charset
   designation (the DEC line drawing set is honoured).
 - OSC: window title (0, 2) stored, colour queries (10, 11, 12) answered, clipboard writes (52)
-  passed up, hyperlinks (8) kept in the cells (see below); other OSC, DCS, APC, PM and SOS
-  strings are consumed and ignored.
+  passed up, hyperlinks (8) kept in the cells (see below), iTerm2 inline images (1337); other
+  OSC, DCS, PM and SOS strings are consumed and ignored.
+- APC: Kitty graphics (`ESC _ G ... ST`, see "Images" below); other APC strings are consumed
+  and ignored.
 - Queries answered on the input channel: DSR 5 and 6 (cursor position), DA1, DA2, XTVERSION,
-  DECRQM, kitty keyboard flags, OSC 10/11 colours.
+  DECRQM, kitty keyboard flags, OSC 10/11 colours, the window and cell size in pixels (`CSI 14
+  t`, `CSI 16 t`, from `cellSize()`), Kitty graphics queries and replies.
 
 Unknown sequences are consumed without corrupting the screen. A sequence or a UTF-8 character
 split across two `write()` calls is completed by the next call.
@@ -66,7 +68,48 @@ URI, and `linkId`), apart from the colours: SGR, `ESC [ 0 m` included, leaves it
 erased or inserted blank cells are not in it. A host passes its windows' links on when it
 composites them, and a terminal device writes them to the real terminal when that terminal
 supports them (see [terminal](terminal.md)). Build them with `Ansi::link()` or
-`Ansi::hyperlink()`. Not implemented, on purpose for
+`Ansi::hyperlink()`.
+
+**Images.** Two image protocols put pictures in the cells, so a program that shows images in
+kitty or iTerm2 (`kitty +kitten icat`, `imgcat`, a plotting tool) shows them in a window too:
+
+- **Kitty graphics** (`ESC _ G <keys> ; <base64> ESC \`): transmit (`a=t`, in chunks with
+  `m=1` ... `m=0`), PNG (`f=100`) or raw RGB/RGBA (`f=24`/`f=32` with `s=` and `v=`),
+  zlib-compressed with `o=z`, sent directly (`t=d`; files and shared memory are refused with an
+  error the program can read); transmit and display (`a=T`); put (`a=p`) with an image id
+  (`i=`) or number (`I=`), a placement id (`p=`: putting the same one again moves it), a source
+  rectangle (`x=`, `y=`, `w=`, `h=` in pixels) and a size in cells (`c=`, `r=`; from the image
+  and the cell size when not given, the missing one from the image's shape); delete (`a=d`
+  with `d=a`, `i`, `n`, `c`, `p`, `x`, `y`, `r`, upper case freeing the image too); query
+  (`a=q`). It answers `OK` or an error as kitty does (only to commands that name an image;
+  `q=1` keeps the OK back, `q=2` the errors too). After a placement the cursor moves right of
+  its last row (to the next line at the right edge, scrolling at the bottom), unless `C=1`.
+  Keys it does not know (animation, z-index, Unicode placeholders) are ignored, and the
+  payload is never printed.
+- **iTerm2 inline images** (`ESC ] 1337 ; File=<args> : <base64> BEL`, and the
+  `MultipartFile`/`FilePart`/`FileEnd` form): `inline=1` images (PNG, JPEG, GIF, WebP) are
+  placed at the cursor over `width` x `height` (cells, `Npx`, `N%` of the screen, or `auto`:
+  from the image's pixels and the cell size), the image's shape kept unless
+  `preserveAspectRatio=0`, narrowed to fit the screen; the cursor moves as after a Kitty
+  placement (imgcat prints a line feed after it). A file that is not inline is a download, ignored.
+
+A cell an image covers keeps its colours and gets a blank character and, in its style, the
+part of the image it shows: `$surface->cell($x, $y)->style->image` is an `ImageFragment` (the
+`Image`, the placement's source rectangle and size in cells, the cell's column and row in it;
+`pixels()` is the part of the image the cell shows). Fragments are values like styles, so
+copying cells between surfaces (`copyArea()`, compositing) keeps them, and the cells of an
+image placed again the same way compare `===` with the old ones (a frame that shows the same
+picture costs nothing to draw). A character written over an image cell replaces it (the
+character wins, as in kitty); erasing drops it; scrolling and inserting move it with its cell.
+An image lives as long as a cell or a Kitty id refers to it. Images are measured in the
+surface's cell size, `cellSize()` (8x16 pixels until a terminal device sets its root's from
+the real terminal; a hosted surface takes its host's). Write images yourself with
+`Ansi::image($png, $cols, $rows)`, or draw them with a `Canvas` (see [widgets](widgets.md#canvas));
+a terminal device shows them with the real terminal's protocol, or as quarter blocks (see
+[terminal](terminal.md#images)). Dumps write an image cell as `img=<id>:<x>,<y>,<w>x<h>`: the
+image and the pixels it shows.
+
+Not implemented, on purpose for
 now: left/right margins (DECSLRM), double-width lines, reverse wrap, 132-column mode, palette
 queries (OSC 4), DECRQSS, and reflow on resize.
 
@@ -102,6 +145,7 @@ queries (OSC 4), DECRQSS, and reflow on resize.
 | `modifyOtherKeys(): int` | The xterm modifyOtherKeys level the program set: 0, 1 or 2. |
 | `isKeypadApplication(): bool` | Whether the keypad is in application mode (DECKPAM). |
 | `setDefaultColors(int $fg, int $bg)` | The colours reported to programs asking for the default foreground and background (OSC 10/11); many choose a light or dark theme from them. Default: light grey on black. |
+| `cellSize(): array`, `setCellSize(int $width, int $height)` | A cell's size in pixels, `[8, 16]` until set: what images are measured in and what `CSI 16 t` reports. Setting it sets the surfaces it hosts too; a surface hosted later takes its host's. A terminal device sets its root's from the terminal's answer. |
 
 ## Damage: what changed
 
@@ -169,6 +213,8 @@ $s->input->read();                          // "\eOA"
 | `link($uri = '', $id = '')` | OSC 8: start a hyperlink to `$uri` (with an `$id`, pieces of one link are joined); without a URI, end it. Control characters are dropped. |
 | `hyperlink($text, $uri, $id = '')` | `$text` as a hyperlink, ended after it |
 | `altScreen(bool $on = true)` | mode 1049 |
+| `image(string\|Image $image, $cols, $rows)` | an image (PNG bytes or an `Image`) at the cursor over `$cols` x `$rows` cells, the cursor left where it is: Kitty graphics, which every Surface understands and a terminal device shows with what the real terminal has |
+| `kitty(array $keys, string $payload = '')` | any Kitty graphics command (`['a' => 'p', 'i' => 7, 'c' => 4]`), the payload base64-encoded and sent in chunks of 4096 as the protocol asks: for ids, placements and deletes |
 
 ```php
 $s->write(Ansi::moveTo(2, 1) . Ansi::styled('ok', Style::of(Color::GREEN, attrs: Style::BOLD)));
@@ -177,12 +223,13 @@ $s->write(Ansi::moveTo(2, 1) . Ansi::styled('ok', Style::of(Color::GREEN, attrs:
 ## Styles and colours
 
 `Style` is an immutable, interned value (compare with `===`): `Style::of(int $fg = Color::DEFAULT,
-int $bg = Color::DEFAULT, int $attrs = 0, string $link = '', string $linkId = '')`,
-`Style::plain()`, `has($attrs)`, `withFg($fg)`, `withBg($bg)`, `with($attrs)`, `without($attrs)`,
-`withLink($uri, $id = '')`, and `__toString()` (`"bold fg=1 link=https://example.com"`, `''` for
+int $bg = Color::DEFAULT, int $attrs = 0, string $link = '', string $linkId = '', ?ImageFragment
+$image = null)`, `Style::plain()`, `has($attrs)`, `withFg($fg)`, `withBg($bg)`, `with($attrs)`,
+`without($attrs)`, `withLink($uri, $id = '')`, `withImage(?ImageFragment $image)`, and `__toString()` (`"bold fg=1 link=https://example.com"`, `''` for
 plain). Attributes are bit flags: `Style::BOLD`, `DIM`, `ITALIC`, `UNDERLINE`, `BLINK`,
 `INVERSE`, `HIDDEN`, `STRIKE`. `link` is the URI of the hyperlink the cell is in (`''` for
-none), `linkId` its id. `blank()` is the style a space in this style looks the same as: its
+none), `linkId` its id. `image` is the part of an image the cell shows, null for none (see "Images"
+above; a pen never has one: images get into cells by an image protocol). `blank()` is the style a space in this style looks the same as: its
 background and link alone (a space shows no foreground, bold or italic), or the style itself
 when it inverts, underlines or strikes through; two blanks look the same exactly when their
 `blank()` styles are `===`. A terminal device compares frames by what cells look like, so a

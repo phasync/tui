@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, and `Markdown`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, and `Markdown`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -297,6 +297,11 @@ or no with `Confirm::ask($title, $text)` (see [components](components.md#without
 ```php
 'delete' => [fn() => fiber\await(Confirm::ask('Delete', 'Delete 3 files?')) && deleteFiles(), 'delete'],
 ```
+
+**A dialog that closes itself**: `timeout:` (seconds) closes it with its cancel answer when
+nobody answered in time: a notice that needs no key ("The program ended", "Saved"), or a
+question with a default. `new Dialog('Bye', "sh exited with status $code", ['OK' => true],
+timeout: 3)`, `Confirm::ask('Update', 'Install now?', timeout: 10)` (false when it times out).
 
 `Dialog::open()` shows the dialog on the program's root, one at a time (another while one is
 open returns the open one's awaitable), and throws a `LogicException` when no program runs.
@@ -621,6 +626,72 @@ new Spinner('saving')                                            // ⠹ saving, 
 | `new ProgressBar(float\|Closure\|null $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label (markup allowed) and the percentage after it, the percentage alone without a label. A label holding `{percent}` (`58%`) or `{value}` (`0.58`) is shown with them filled in, and no percentage after. The label takes at most half the width (cut with "…"); nothing is drawn past the bar's width. Null: indeterminate, a block moving to and fro (animated by the bar itself, ten steps a second, while it is indeterminate; a bar with a value has no coroutine and renders only when its value changes). A closure value (`fn() => $state->done / 100`) is read when the bar renders, and the bar renders by itself when a `State` the closure read changes (its parent does not); it draws only when the bar then looks different, so a closure over a value that changes a thousand times a second costs its call, not a repaint. `$value` and `$label` are props; `setValue(float\|Closure\|null $value, ?string $label = null)` renders only when the bar then looks different (a change below a cell, the same percentage: nothing is drawn), so it may be called from a fast loop. A bar that moves writes only the cells that changed and
 its label, not the whole bar. Style: `ProgressBar`, part `ProgressBar::bar`. |
 | `new Spinner(string $label = '', array $frames = Spinner::DOTS, float $interval = 0.08, ...attributes)` | A sign cycling through `$frames` (`Spinner::DOTS`, `Spinner::LINE`, or yours) every `$interval` seconds while it is shown, then the label (markup allowed: `'<b>deploying</b> v2.4'`). No coroutine of yours: show it while something runs, take it out of the tree after. `frame(): int`. Style: `Spinner`, part `Spinner::sign`. |
+
+## Canvas
+
+Drawing with the browser's 2D canvas API: lines, shapes, fills, gradients, images and text,
+from a closure, in real pixels where the terminal shows images (Kitty graphics, iTerm2) and in
+Braille dots or block characters everywhere else, without the program changing.
+
+```php
+$s = new State(['samples' => []]);
+Tui::run(fn() => new Box(new Canvas(draw: function (CanvasContext $c) use ($s) {
+    $c->strokeStyle = '#38bdf8';
+    $c->lineWidth = 0.25;                                   // one Braille dot
+    $c->beginPath();
+    foreach ($s->samples as $i => $v) {
+        $c->lineTo($i * $c->width() / 100, $c->height() * (1 - $v));
+    }
+    $c->stroke();
+    $c->fillText('load', 1, 1);                             // real characters
+}), 'load', class: 'h-12'));
+```
+
+`new Canvas(?Closure $draw = null, string $marker = 'auto', key:, id:, class:, style:, width:,
+height:, onMouse:)`. The closure gets a `CanvasContext`: phasync/canvas's `Context` (its README
+lists the methods: paths with `beginPath`, `moveTo`, `lineTo`, `arc`, `arcTo`, `ellipse`,
+`bezierCurveTo`, `quadraticCurveTo`, `rect`, `roundRect`, `closePath`; `fill`, `stroke`,
+`fillRect`, `strokeRect`, `clearRect`; `fillStyle`/`strokeStyle` with CSS colours or
+`createLinearGradient()`/`createRadialGradient()`; `lineWidth`, `globalAlpha`; `save`/`restore`,
+`translate`/`scale`/`rotate`/`transform`/`setTransform`; `clip`; `drawImage`; `getImageData`/
+`putImageData`), and the canvas itself as a second argument. What the terminal adds:
+
+- **Units are cells**: x from 0 to `$c->width()`, y from 0 to `$c->height()`, with fractions
+  (`(3.5, 1.25)` is inside the cell at column 3, row 1); `lineWidth` too (`0.25` is one Braille
+  dot). A cell is about twice as tall as wide: a round circle is `ellipse($x, $y, $r, $r / 2, 0,
+  0, 2 * M_PI)`. A graph usually starts with `translate(0, $c->height())` and `scale(1, -1)`.
+- **Text is text**: `fillText()` puts real characters in the cells nearest the point (one cell
+  high, in the `fillStyle` colour, placed by `textAlign` and `textBaseline`), so labels stay
+  sharp on every marker; `measureText()` measures in cells.
+- `$c->resolution()`: dots (or pixels, on `pixels`) per cell; `$c->marker()`: the marker drawn with.
+
+**Markers**: `braille` (2x4 dots a cell; a cell's dots share one colour, the one most of them
+have), `quarter` (2x2), `half` (1x2, two colours a cell), `block` (1x1), `pixels` (an image in the
+terminal's pixels; `quarter` on a terminal without images), and `auto` (the default: `pixels`
+where `TerminalDevice::images()` is not `none`, else `braille`). `markerInUse()` tells which.
+The canvas draws on a raster of its cells times the cell size in pixels (`Surface::cellSize()`,
+8x16 unless the terminal says otherwise) for every marker; the glyph markers scale it down to
+their dots, so a drawing covers the same cells on every marker.
+
+**When it draws**: when it renders: its size changed, a `State` the closure read changed (a live
+graph needs nothing else), or a new closure came with the parent's render. A drawing that comes
+out as the last one writes nothing, so a canvas that is drawn again every frame costs only the
+drawing when nothing moved. On `pixels` it writes one Kitty image through `write()` like any
+producer; the device sends it to the terminal once and places it, and a window over part of it
+costs placements only (see [terminal](terminal.md#images)).
+
+**Pointer**: with `onMouse:` it follows the mouse (motion without a button too) and each `Mouse`
+carries the position in the canvas's units in `canvasX`/`canvasY` (the middle of the cell, with
+`precise` false). As for any element, a press, drag or release is taken unless the closure
+returns false, the wheel only when it returns true.
+
+**Style**: `Canvas`. Its colour (the theme's accent; `text-` classes) is the starting `fillStyle`
+and `strokeStyle`, its background (`bg-` classes) what shows where nothing is drawn. Needs
+`ext-gd` or `ext-imagick` (phasync/canvas draws with one of them).
+
+**phasync/canvas is young**: strokes thinner than a unit (`lineWidth` under 1, so every line of a
+dot or two) and `drawImage()` do not follow the transform yet, so they come out at the wrong
+size, and `drawImage()` of a path or PNG bytes fails; pass a `GdImage` meanwhile (see DEVNOTES).
 
 ## Markdown
 
