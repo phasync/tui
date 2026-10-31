@@ -3,6 +3,79 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.3-beta7; TODO-0.0.3-beta7.md)
+
+- [x] bench: tools/monitor-bench.php `scroll [rows] [focus|nofocus]` and `tabs [cols] [rows]`
+      (the two programs of the TODO; reproduced 4.8/22/43 ms and 27/19 ms)
+- [x] 1. Tab in a ScrollView of rows: 200 rows 6 ms (2 rows 3.7); tests/Release/ScrollTabBeta7Test.php
+- [x] 2. tab switch at 120x40: 14-15 ms at the bench's pace (27 before), 80x24 10 ms; Markdown
+      not drawn again; tests/Release/TabSwitchBeta7Test.php
+- [x] 3. small: Table writes changed rows, cells cached as drawn (3.0 vs 1.8 ms; 18 vs 8 in the
+      report); TUI_THEME / --theme=; Component::takesEveryKey() (Terminal); ProgressBar writes
+      changed cells; tests/Release/SmallBeta7Test.php. The 50-bar frame: 40 -> 37 ms paced (19
+      back to back), 31 / 15 with closure values; what stays is the rows' own windows (onKey:
+      makes them focus stops) and the program's render when it reads the values
+- [x] CHANGELOG, docs (components.md: flat containers, takesEveryKey, Terminal keys;
+      widgets.md: around a Terminal, Table and ProgressBar costs; styling.md: TUI_THEME), README
+
+## Design decisions (0.0.3-beta7)
+
+- **layoutElement() trees restyle** (Component::$laidOut, $restyling): a component that lays
+  an element tree out somewhere else (ScrollView) renders again on a focus change with
+  `restyling` set, and layoutElement() of the same element object runs Tree::restyle() instead
+  of build(); measureElement() of the laid-out element uses the built items. The layout of
+  such a tree runs without a reader (a Button's hasFocus() read in the layout subscribed the
+  ScrollView to every button's focus: a full render per Tab). ScrollView::onKey() asks a
+  restyle, not a render. A restyle-render skips the children cleanup (nothing left the tree).
+- **rearrange()**: a child whose size changed (Component::show()) has its parent's layout
+  arranged again in the next frame (restyle path, `$rearrange`), not its render run: a Text
+  closure growing a column ("sel 9" -> "sel 10") ran the program's closure over 200 rows.
+- **Viewport::scrollTo()/pan() to where it is** changes nothing (it repainted the window and
+  told every area watcher). ScrollLayout re-sets its content's layout only when it is another,
+  the size changed or an item is stale.
+- **Flat containers** (LayoutItem::$flat, ElementLayout::arrangeAt()): a Column/Row with no
+  handler (onKey/onFocus/onBlur/onMouse), no focused:/state, no border/shadow/title, the same
+  fill as its parent's layout, not hover-aware and whose style with `focused` is the same
+  object, places its items on its parent's host in its rectangle. Every window is a level of
+  compositing (its host parses what it writes); `Row([Tabs, Box])` in a Column cost a whole
+  level. The flatness is part of the item signature (it depends on the sheet). Mouse::over()
+  still lists them (ElementLayout::flatAt(): host and rectangle). Not inside Layers (z-order
+  is hosting order). A container that turns flat gives up its windows (they move to the host).
+- **Detached roots announce no focus** (Surface::$detached: shown once, in no window now):
+  a hidden tab's pane settling a focus request told its components they had the focus (and
+  again that they lost it when shown: joinTree()). Components whose root is detached skip the
+  render for an area change; one shown again where it rendered last (`renderedAt`) does not
+  render either.
+- **Blanking is deferred to compose** (Host::$blanks, blankUncovered()): unhost() and moved()
+  queue their rectangles; compose blanks them except where a window that paints anew covers
+  (it is diffed against the host's cells). The host's producer writing first (a Split's
+  separator) flushes the queue (Host::beforeWrite()).
+- **Parser and diff**: the grammar's `Stream = Item* $` (the `!$` predicate called expect() per
+  item: 25% of the parse); SGR that starts with a reset memoized per parameter string (pure);
+  SGR dispatched before params(); printCells() assigns cells instead of splicing the row;
+  Ansi::style() memoized per interned Style; diffAnsi() fills gaps of up to 4 unchanged cells
+  (one run per line of words), iterates only the written cells, skips the wide-character pass
+  when the row has none.
+- **Table draws changed rows** (Table::$paintedRows, $cells): each row is built as one string
+  of escape sequences; only rows that differ from what was written are written. Everything is
+  written anew (`\e[2J`) when the size, the columns in view, the alignments, the base style or
+  the sheet change. Cells are cached as drawn (markup, cut, pad, row style) by row-style
+  object, width, alignment and text; the cache is bounded (4096, cleared) and dropped on a full
+  repaint. Footer rows (Select's filter line) are cleared and drawn whole every render.
+- **TUI_THEME / --theme=** (Tui::themeAsked()): only when the program passes no theme.
+- **takesEveryKey()**: at the key end, a component that says so lets its parents run only
+  bindings marked `always` (runBinding($key, true)) in the bubbling phase, no elements' onKey,
+  no `anywhere`, no non-modal Escape of a parent's overlay; `first` bindings ran on the way
+  down as before, and the root's quitKey stays. Terminal says so. examples/tabs.php's Ctrl-N
+  had to become `first`. An alternative was to document only; the TODO allowed either, and a
+  parent binding taking Ctrl-D from a shell is never what a program means.
+- **ProgressBar draws changed cells** (ProgressBar::$cells): with the same cols, bar width and
+  styles, only the runs whose fill changed and (if it changed) the label, after `\e[K`; a
+  label of another width changes the bar width, so a full drawing. Styles computed once per
+  render (look() and drawing() share them).
+- Measuring: timings in one process vary 2x with the CPU clock (and with garbage collection
+  every couple of switches); the bench's 20 switches at 50 ms are the stable figure.
+
 ## Status (0.0.3-beta6; TODO-0.0.3-beta6.md)
 
 - [x] 1. Tab cost O(rows): restyle instead of render (Tree::restyle), interned ComputedStyle,

@@ -178,6 +178,10 @@ A program picks one with `Tui::run($root, theme: 'light')` (also `Tui::inline()`
 `Tui::headless()`); without it the terminal's background decides: at attach the device asks for
 it (OSC 11), and a light background gets `light`, a dark or silent one `dark`
 (`FakeTerminal` answers as its `background:` says, `'dark'`, `'light'` or `null` for silent).
+A program that passes no theme can be given one when it is started: `--theme=light` on its
+command line or `TUI_THEME=mono` in its environment (the argument wins over the variable, a
+theme the program passes wins over both), for `Tui::run()` and `Tui::inline()`; so a cookbook
+screen run headless (`TUI_HEADLESS=80x24 TUI_THEME=light php screen.php`) shows that theme.
 The theme can change while the program runs (`$component->setTheme('mono')`);
 `$component->theme()` tells which is in force.
 

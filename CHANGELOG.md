@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.0.3-beta7 (2026-11-01)
+
+A Tab inside a `ScrollView` of 200 rows costs what it costs at 2, a tab switch in a full
+layout at 120x40 costs half, a `Table` of markup cells costs about what a plain one does, a
+focused `Terminal` keeps the keys its shell needs, and a headless run can be given a theme.
+Everything from 0.0.3-beta6 works as before, except where an entry says what changed. All
+times are `press()` + `settle()` (or `text()`) around `hrtime()` under `Tui::headless()`, a key
+every 50 ms, on the machine the report's numbers were taken on.
+
+**A Tab in a ScrollView**
+
+- A Tab in a `ScrollView` of rows (a `Text` and two `Button`s each, `key:`, `gap-1`,
+  `onFocus:` writing a `State` that a footer `Text` closure reads) cost O(rows): 2 rows 4.6 ms,
+  50 rows 22.6 ms, 200 rows 43 ms. Now 3.6 ms at 2 rows and 6.3 ms at 200, with or without
+  `onFocus:`, and the closure program is not rendered at all for a Tab
+  (`tools/monitor-bench.php scroll 200` is that program). What changed:
+  - The `ScrollView` rendered its whole content again for every key that passed it, to follow
+    the focus. It now lays out again only the elements whose look the focus changed (the two
+    rows the focus moved between) and scrolls the view to the focus without a repaint.
+  - Its layout of the content read the buttons' focus as a render does, so it rendered again
+    whenever one gained or lost it. It no longer does.
+  - A `Text` closure that grows a column ("sel 9" to "sel 10") re-ran the program's `render()`
+    to make room. The layout around it is now arranged again without a render.
+  - `Viewport::scrollTo()` and `pan()` to where the window already is repaint nothing.
+
+**Switching tabs**
+
+- A tab switch in a full layout (`Tabs` with `Row([Markdown, Box(Select)])` and
+  `Box(Terminal)`, inside `Column([Row([Tabs, Box(tools)]), Box(Editor), Text(closure)])`)
+  cost 26-28 ms at 120x40 and 18.5-19.5 ms at 80x24; now 14.2 ms and 11 ms
+  (`tools/monitor-bench.php tabs 120 40`). A `Markdown` tab costs what a `Text` tab does: it is
+  laid out once and never drawn again by the switches (its size does not change). What changed:
+  - A `Row` or `Column` that only arranges (no border, background, title, shadow, keys,
+    `onFocus:`/`onBlur:`/`onMouse:`, state or focus and hover look) no longer has a window of
+    its own: its items are windows of the surface around it, so nesting no longer adds a level
+    at which everything is composited again. It is still listed in `Mouse::over()`, and gets
+    its window back (focus and text intact) when its look needs one.
+  - The components of a hidden tab were told they had the focus when the tab hid and drew
+    themselves for nobody, and every component of a pane shown again drew itself again for its
+    area. A hidden tab's components now hear nothing of the focus until it is shown, and one
+    whose area is what it drew for does not draw again.
+  - A pane replaced by another was blanked before the new one painted over it; now only what
+    nothing covers is blanked, in one write.
+  - The escape-sequence parser and the window diff do less per sequence (an SGR that starts
+    with a reset, a run of text into a row, the gaps between changed cells).
+
+**Small things**
+
+- A `Table` with six columns of markup cells cost 18 ms per key against 8 ms for two plain
+  columns at 120x40. A key that moves the current row now writes only the two rows it changes,
+  and each cell is kept as drawn (its markup turned into escape sequences once per text):
+  3.0 ms against 1.8 ms. Scrolling, resizing and new columns or styles draw the whole table as
+  before. `Table::rowsWritten()` (internal) says how many rows the last render wrote.
+- A program that passes no theme to `Tui::run()` or `Tui::inline()` can now be given one when
+  started: `TUI_THEME=light` in the environment or `--theme=mono` on the command line (the
+  argument wins; a theme the program passes wins over both). So a cookbook screen run under
+  `TUI_HEADLESS` shows the theme you ask for.
+- A focused `Terminal` no longer loses Ctrl-D (or Ctrl-R, Escape, Tab, the arrows, any key) to
+  the plain bindings of the components around it, their elements' `onKey:` or `anywhere`
+  bindings: its program gets them. Bindings marked `first` or `always` still come before it, and
+  so does the Ctrl-Q of `Tui::run()`. **Changed:** an application key that should work from
+  inside a shell must now be marked `'first' => true` (`examples/tabs.php` marks its Ctrl-N so);
+  docs/components.md lists the keys to avoid binding around a Terminal. A widget of your own
+  can say the same with `protected function takesEveryKey(): bool { return true; }`.
+- A `ProgressBar` whose value moves writes only the cells that changed and its label, not the
+  whole bar (a bar that moves a cell writes about 60 bytes instead of the 300 of a whole bar
+  of 90 cells). The frame as a whole (`$s->p[$i]` read in the program's render, so
+  the render runs, then each bar, its row and the screen composited) went from 40 to 37 ms at a
+  frame every 50 ms (19 ms back to back); with closure values (`new ProgressBar(fn() =>
+  $s->p[$i])`) the program's render does not run and the frame is 31 ms (15 ms back to back).
+  The rows of that monitor have `onKey:` and so are focus stops with windows of their own: that
+  level of compositing stays.
+
 ## 0.0.3-beta6 (2026-11-01)
 
 A key costs the same at 200 rows as at 2, switching to a Markdown tab costs what any tab does,

@@ -11,6 +11,12 @@ The older built-ins (`TextInput`, `ListView`, `Log`, `Terminal`, `StatusBar`, `B
 described in [components](components.md#built-in-components); `Editor` with `maxLines: 1`
 does what `TextInput` does and more, `Select` what `ListView` does.
 
+**Around a `Terminal`.** A focused `Terminal` gets every key the components around it bind
+plainly (a shell needs Ctrl-D, Ctrl-R, Escape, Tab and the arrows); only bindings marked
+`first` or `always` come before it. Bind the keys an application needs from inside a shell
+that way, and pick ones a shell does not use (Ctrl-Tab, Alt-number, a prefix key such as
+Ctrl-B, function keys): see [Terminal](components.md#terminal).
+
 ## Editor
 
 Editable text: a one-line field or a multi-line text, with word wrap, selection by keyboard and
@@ -114,7 +120,10 @@ worked out when the rows change (a new `rows` array, `setItems()`; rows equal to
 what moving through 100 does (the rows in view are drawn). A subclass that shows only some rows
 overrides `filterRows(array $keys): array` and returns what they depend on from
 `filterKey(): string`. After `$table->rows = $fresh` from outside a render, call
-`requestRender()` (or give the rows by placing a `new Table(...)` in the tree).
+`requestRender()` (or give the rows by placing a `new Table(...)` in the tree). A key that moves
+the current row writes the two rows it changes, and the cells are kept as drawn (markup turned
+into escape sequences once per cell text), so six columns of markup cost about what two plain
+ones do.
 
 | Method | What it does |
 |---|---|
@@ -607,7 +616,8 @@ new Spinner('saving')                                            // ⠹ saving, 
 
 | | |
 |---|---|
-| `new ProgressBar(float\|Closure\|null $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label (markup allowed) and the percentage after it, the percentage alone without a label. A label holding `{percent}` (`58%`) or `{value}` (`0.58`) is shown with them filled in, and no percentage after. The label takes at most half the width (cut with "…"); nothing is drawn past the bar's width. Null: indeterminate, a block moving to and fro (animated by the bar itself, ten steps a second, while it is indeterminate; a bar with a value has no coroutine and renders only when its value changes). A closure value (`fn() => $state->done / 100`) is read when the bar renders, and the bar renders by itself when a `State` the closure read changes (its parent does not); it draws only when the bar then looks different, so a closure over a value that changes a thousand times a second costs its call, not a repaint. `$value` and `$label` are props; `setValue(float\|Closure\|null $value, ?string $label = null)` renders only when the bar then looks different (a change below a cell, the same percentage: nothing is drawn), so it may be called from a fast loop. Style: `ProgressBar`, part `ProgressBar::bar`. |
+| `new ProgressBar(float\|Closure\|null $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label (markup allowed) and the percentage after it, the percentage alone without a label. A label holding `{percent}` (`58%`) or `{value}` (`0.58`) is shown with them filled in, and no percentage after. The label takes at most half the width (cut with "…"); nothing is drawn past the bar's width. Null: indeterminate, a block moving to and fro (animated by the bar itself, ten steps a second, while it is indeterminate; a bar with a value has no coroutine and renders only when its value changes). A closure value (`fn() => $state->done / 100`) is read when the bar renders, and the bar renders by itself when a `State` the closure read changes (its parent does not); it draws only when the bar then looks different, so a closure over a value that changes a thousand times a second costs its call, not a repaint. `$value` and `$label` are props; `setValue(float\|Closure\|null $value, ?string $label = null)` renders only when the bar then looks different (a change below a cell, the same percentage: nothing is drawn), so it may be called from a fast loop. A bar that moves writes only the cells that changed and
+its label, not the whole bar. Style: `ProgressBar`, part `ProgressBar::bar`. |
 | `new Spinner(string $label = '', array $frames = Spinner::DOTS, float $interval = 0.08, ...attributes)` | A sign cycling through `$frames` (`Spinner::DOTS`, `Spinner::LINE`, or yours) every `$interval` seconds while it is shown, then the label (markup allowed: `'<b>deploying</b> v2.4'`). No coroutine of yours: show it while something runs, take it out of the tree after. `frame(): int`. Style: `Spinner`, part `Spinner::sign`. |
 
 ## Markdown

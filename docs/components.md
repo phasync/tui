@@ -310,7 +310,12 @@ keys itself (a text field) returns true for the keys it uses.
 `render()` may return a tree of **elements**, plain PHP values made anew on every render. The
 library lays the tree out into the component's surface (a surface for each text and each
 container, the child components' own surfaces where they are placed) and paints every element
-through `write()`, the way any producer draws: there is no other way onto a Surface.
+through `write()`, the way any producer draws: there is no other way onto a Surface. A `Row`
+or `Column` that only arranges (no border, background, title or shadow of its own, no `onKey:`,
+`onFocus:`, `onBlur:`, `onMouse:`, state or focus and hover look) has no surface: its items are
+windows of the surface around it, so every level of nesting does not add a level of
+compositing. It is still an element of the tree for the mouse (`Mouse::over()` lists it) and
+gets its surface back when its look needs one.
 
 ```php
 use phasync\Tui\Element\{Box, Column, Help, Layers, Row, Span, Text};
@@ -673,6 +678,14 @@ in every render. A key nobody takes goes to the focused surface's program (a `Te
 focused text field types every letter an application binds, the application's Ctrl-Q works
 wherever the focus is, and a method that returns `false` did not take the key (an editor's Up
 on its first row), which goes on.
+
+**A component that takes every key** (`takesEveryKey()` returns true; a `Terminal` does) is
+the exception: while it is focused, the keys its own bindings do not take go to its program,
+not to the plain bindings of its parents, their elements' `onKey:` or `anywhere` bindings. Its
+parents' bindings marked `first` (asked on the way down) and `always` still come before it, and
+so does the runner's Ctrl-Q of `Tui::run()`. So a shell gets Ctrl-D, Ctrl-R and Escape
+whatever the application binds, and a key the application needs from inside a shell is bound
+`'first' => true`.
 
 **A container that wants some keys first and some last** (tabs around panes, a split view)
 says which in its bindings: the ones it takes whatever is focused inside it (Ctrl-Tab to the
@@ -1162,6 +1175,16 @@ without being announced; the terminal is reset). Disposing the component, and so
 program, hangs the program up with everything it started, a shell's foreground job included
 (`Pty::hangUp()`: SIGHUP, then SIGKILL after half a second). `pty(): ?Pty`,
 `isRunning()`, `exitCode()`.
+
+**Keys.** While it has the focus, its program gets every key the components around it would
+take with plain bindings (it `takesEveryKey()`, see "Order" above): a shell needs Ctrl-D,
+Ctrl-C, Ctrl-R, Ctrl-A/E/K/U/W, Tab, Escape and the arrows, an editor in it Ctrl-S, Ctrl-Q and
+the function keys. A key the application needs while a shell has the focus is bound
+`'first' => true` (or `'always' => true`), and it is then not the shell's, so pick ones a shell
+does not use, as tmux does: Ctrl-Tab and Alt-number (what `Tabs` binds), a prefix key such as
+Ctrl-B or Ctrl-Space, function keys the program does not read. Avoid binding Ctrl-A to Ctrl-Z,
+Escape, Tab and the arrows `first` around a Terminal. The runner's Ctrl-Q (`Tui::run()`) still
+ends the program when nothing binds it.
 
 ### Log
 

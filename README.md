@@ -552,6 +552,8 @@ on the way out, or install the newer versions.
 in-memory terminal of that size for a second, then it prints the screen as text and exits
 (`php examples/dashboard.php --headless=100x30`; `@SECONDS` after the size runs it longer or
 shorter: `TUI_HEADLESS=100x30@3`). For a look at a screen in CI, over a pipe or in a bug report.
+The theme of such a run (of any run whose program passes none) is chosen the same way:
+`--theme=light` or `TUI_THEME=mono`.
 The examples with a class start on a `Tty` themselves and need a terminal.
 
 - `examples/working.php`: the one-file program at the top, inline; `--full` for full screen.
