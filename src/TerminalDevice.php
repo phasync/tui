@@ -2,6 +2,7 @@
 
 namespace phasync\Tui;
 
+use phasync\Tui\Element\Text;
 use phasync\Tui\Internal\Signal;
 
 use function fiber\go;
@@ -323,14 +324,34 @@ abstract class TerminalDevice
     }
 
     /**
-     * Print $text (lines, with escape sequences if you like) as plain output of the program. In
-     * inline mode it goes above the live region, into the terminal's scrollback, at the next
-     * frame, and the region is drawn again under it. Not attached, it is written to the terminal
-     * at once; attached full screen (where the alternate screen would hide it), after `detach()`.
-     * A line break ends each call.
+     * Print $text (lines) as plain output of the program. In inline mode it goes above the
+     * live region, into the terminal's scrollback, at the next frame, and the region is drawn
+     * again under it. Not attached, it is written to the terminal at once; attached full screen
+     * (where the alternate screen would hide it), after `detach()`. A line break ends each call.
+     *
+     * A string takes markup like every other string of the library (`'<fg=green>✔</> built'`,
+     * `<span class="text-sky-400">`, see `Markup`) and escape sequences of its own; a `Text`
+     * prints its runs in their styles, and `Text::raw($line)` prints a string exactly as it is,
+     * `<` and all (a file name, a command's output): `$tty->println(Text::raw($output))`.
      */
-    public function println(string $text = ''): void
+    public function println(string|Text $text = ''): void
     {
+        $sheet = $this->component()?->stylesheet() ?? Stylesheet::default();
+        if ($text instanceof Text) {
+            $text = $text->resolved();
+            $line = '';
+            foreach ($text->content as $run) {
+                if (\is_string($run)) {
+                    $line .= $text->isRaw() ? $run : Markup::toAnsi($run, null, $sheet);
+                } else {
+                    $style = $sheet->compute($run);
+                    $line .= Ansi::style($style->text) . ($text->isRaw() ? $run->text : Markup::toAnsi($run->text, $style, $sheet)) . "\e[0m";
+                }
+            }
+            $text = $line;
+        } else {
+            $text = Markup::toAnsi($text, null, $sheet);
+        }
         $text = str_replace(["\r\n", "\n"], ["\n", "\r\n"], $text) . "\r\n";
         if ($this->root === null) {
             $this->send($text);

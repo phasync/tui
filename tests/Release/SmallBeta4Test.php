@@ -167,3 +167,30 @@ it('switches tabs with Alt-number wherever the focus is inside the Tabs content'
         expect($app->tabs->current())->toBe('one');
     });
 })->with(['editor', 'multi-line editor', 'select', 'dropdown', 'shell', 'nested tabs']);
+
+it('takes markup in println(), and prints Text::raw() as written', function () {
+    fiber\run(function () {
+        $t = FakeTerminal::inline(40, 6);
+        $root = new phasync\Tui\Surface(40, 1);
+        $t->attach($root);
+        $t->println('<b>built</> <fg=green>ok</>');
+        $t->println(Text::raw('<b>as is</b> a \< b'));
+        $t->println(new Text(['plain ', new phasync\Tui\Element\Span('span', style: ['bold' => true])]));
+        frame();
+        $frozen = $t->frozen();
+        expect($frozen)->toContain('built ok')->not->toContain('<fg=green>')
+            ->and($frozen)->toContain('<b>as is</b> a \< b')->and($frozen)->toContain('plain span');
+        // the replay of what was sent shows the bold where the markup said
+        $replay = new phasync\Tui\Surface(40, 6, 100);
+        $replay->write($t->output());
+        $found = null;
+        for ($y = -$replay->scrollbackSize(); $y < 6; $y++) {
+            if (str_starts_with($replay->line($y), 'built ok')) {
+                $found = $y;
+            }
+        }
+        expect($found)->not->toBeNull()->and($replay->cell(0, $found)->style->has(phasync\Tui\Style::BOLD))->toBeTrue()
+            ->and($replay->cell(6, $found)->style->has(phasync\Tui\Style::BOLD))->toBeFalse();
+        $t->detach();
+    });
+});
