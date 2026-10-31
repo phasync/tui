@@ -37,7 +37,7 @@ $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
 \fiber\run(function () use ($jobs, $s, $log, $screen, $boxes, $theme, $argv) {
     $running = true;
     foreach ($jobs as $job => $every) {
-        \fiber\go(function () use ($job, $every, $s, $log, &$running) {
+        Tui::go(function () use ($job, $every, $s, $log, &$running) {
             while ($running) {
                 \fiber\sleep($every * (0.5 + mt_rand() / mt_getrandmax()));
                 $step = mt_rand(2, 12) / 100;

@@ -87,7 +87,11 @@ class Table extends Component
         if ($keys === []) {
             return null;
         }
-        return $this->currentKey !== null && isset($this->order[5][$this->currentKey]) ? $this->currentKey : $keys[0];
+        if ($this->currentKey !== null && isset($this->order[5][$this->currentKey])) {
+            return $this->currentKey;
+        }
+        // (the current row went, or is filtered out: the row now at its place, the last one when it was below)
+        return $keys[max(0, min(\count($keys) - 1, $this->currentAt))];
     }
 
     /** Make the row with key $key current and scroll it into view; false if there is no such row. */
@@ -282,9 +286,9 @@ class Table extends Component
             return;
         }
         $this->free = false;
+        $old = $this->current();
         $this->currentAt = max(0, min(\count($keys) - 1, $at));
         $key = $keys[$this->currentAt];
-        $old = $this->current();
         $this->currentKey = $key;
         if ($old !== $key) {
             $this->currentChanged($key);

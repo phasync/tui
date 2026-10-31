@@ -6,6 +6,8 @@
 //   go     - a coroutine of the root component (go()) throws
 //   tui    - Tui::run() of a root whose run() throws
 //   closure - Tui::run() of a closure that throws when the state it reads changes
+//   tuigo  - a coroutine started with Tui::go() before Tui::run() throws
+//   keys   - a key handler given with Tui::run(keys:) throws (the program presses it itself)
 // It must end at once with the exception on stderr and the terminal restored.
 require __DIR__ . '/../../../vendor/autoload.php';
 
@@ -57,6 +59,31 @@ if ($mode === 'closure') {
             $s->n = 1;
         });
         Tui::run(fn() => $s->n > 0 ? throw new RuntimeException('failed in the closure') : new Text("n {$s->n}"));
+    });
+    exit(0);
+}
+if ($mode === 'tuigo') {
+    fiber\run(function () {
+        $running = true;
+        Tui::go(function () use (&$running) {
+            fiber\sleep(0.1);
+            throw new RuntimeException('failed in Tui::go()');
+        });
+        try {
+            Tui::run(new Text('a screen'));
+        } finally {
+            $running = false;
+        }
+    });
+    exit(0);
+}
+if ($mode === 'keys') {
+    fiber\run(function () {
+        fiber\go(function () {
+            fiber\sleep(0.1);
+            Component::runningRoot()?->surface->dispatch(new phasync\Tui\Key('x'));
+        });
+        Tui::run(new Text('a screen'), keys: ['x' => fn() => throw new RuntimeException('failed in a key handler')]);
     });
     exit(0);
 }

@@ -6,7 +6,8 @@ by `tests/Docs/CookbookTest.php` under a `FakeTerminal` at 60x20 and at 160x50, 
 read here works.
 
 The pattern is the same in all of them: a `State` holds what changes, coroutines
-(`fiber\go()`) or callbacks (`onSubmit:`, `onSelect:`, `onFocus:`) change it, and a closure
+(`Tui::go()`, which ends the program when one fails), key handlers (`keys:`, `onKey:`) or
+callbacks (`onSubmit:`, `onSelect:`, `onFocus:`) change it, and a closure
 builds the screen from it; the screen follows the state by itself (see
 [components.md](components.md), "Reactive"). Utility classes (`grow`, `text-muted`,
 `md:flex-row`, see [styling.md](styling.md)) do the styling, and the default theme the rest.
@@ -27,7 +28,7 @@ $jobs = ['compile' => 0.04, 'test' => 0.07, 'package' => 0.02, 'upload' => 0.05]
 $s = new State(['done' => array_map(fn() => 0.0, $jobs)]);
 \fiber\run(function () use ($jobs, $s) {
     foreach ($jobs as $job => $every) {
-        \fiber\go(function () use ($job, $every, $s) {
+        Tui::go(function () use ($job, $every, $s) {
             while ($s->done[$job] < 1.0) {
                 \fiber\sleep($every);
                 $s->done = [...$s->done, $job => min(1.0, $s->done[$job] + 0.05)];
@@ -60,7 +61,7 @@ $show = function () use ($s, $log) {
 };
 \fiber\run(function () use ($s, $log, $show) {
     $running = true;
-    \fiber\go(function () use ($s, $show, &$running) {
+    Tui::go(function () use ($s, $show, &$running) {
         for ($i = 1; $running; $i++) {
             $level = ['info', 'info', 'warn', 'error'][$i % 4];
             $s->lines = [...array_slice($s->lines, -999), sprintf('%04d %-5s request %d served', $i, $level, $i * 7)];
@@ -276,7 +277,7 @@ $chart = function (int $height) use ($s): string {
 };
 \fiber\run(function () use ($s, $chart) {
     $running = true;
-    \fiber\go(function () use ($s, &$running) {
+    Tui::go(function () use ($s, &$running) {
         for ($t = 0; $running; $t++) {
             $s->samples = [...array_slice($s->samples, -119), 0.5 + 0.4 * sin($t / 6) * cos($t / 17)];
             \fiber\sleep(0.1);
@@ -284,7 +285,7 @@ $chart = function (int $height) use ($s): string {
     });
     Tui::run(fn() => new Column([
         new Box(new Text(fn() => $chart(8), wrap: false, class: 'text-accent'), fn() => sprintf('signal <b>%.2f</b>', $s->samples[count($s->samples) - 1] ?? 0), class: 'title-center'),
-        new Text(fn() => count($s->samples) . ' samples, 10 a second', class: 'text-muted grow'),
+        new Text(fn() => ($n = count($s->samples)) . ($n === 1 ? ' sample' : ' samples') . ', 10 a second', class: 'text-muted grow'),
         new Help(),
     ]));
     $running = false;

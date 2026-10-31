@@ -24,6 +24,12 @@ use phasync\Tui\Text;
  *     ], hints: true, onChange: fn(string $key) => ...));
  *     $tabs->setTabs([...$more]);          // add, remove and rename at runtime; the current tab stays by key
  *
+ * **The tabs are given once.** The tabs (and `$current`) are taken from the first instance:
+ * a `new Tabs([...])` made again by a later render (or by a closure program, on every State
+ * change) changes the props `position`, `hints` and `closable`, not the tabs. Keep the instance
+ * (`child()`, or `$tabs ??= new Tabs(...)`) and change the tabs with `setTabs()`; tabs the
+ * user closed stay closed while the program goes on listing them.
+ *
  * Each tab is `key => ['label' => ..., 'content' => Component|Element, 'closable' => ?bool]`. A
  * content that is a component, and every component in a content's element tree
  * (`new Row([$list, new Box($preview)])`), is a child kept alive while its tab is hidden (see

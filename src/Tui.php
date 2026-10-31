@@ -41,7 +41,11 @@ use phasync\Tui\Internal\Live;
  *
  * `Tui::run()` takes the terminal over (full screen), `Tui::inline()` shows the screen as a live
  * region under the shell's output, `Tui::headless()` on a `FakeTerminal` for tests and headless
- * programs. Each call wraps the program in its own `fiber\run()` (it also works inside one of
+ * programs. **Headless without editing**: a program run with `--headless=COLSxROWS` (or with
+ * `TUI_HEADLESS=COLSxROWS` in the environment) runs `Tui::run()`/`Tui::inline()` on a
+ * `FakeTerminal` of that size instead of the terminal for a second (`COLSxROWS@SECONDS` for
+ * another time), prints the screen and ends (the root quits, as with Ctrl-Q):
+ * `php examples/dashboard.php --headless=100x30`. Each call wraps the program in its own `fiber\run()` (it also works inside one of
  * yours, which a program that starts coroutines with `fiber\go()` needs: `fiber\go()` must be
  * called inside `fiber\run()`). It returns when the root has ended, with the root component
  * (read what it collected from it). **Quitting**: the root quits when it is disposed
@@ -53,14 +57,54 @@ use phasync\Tui\Internal\Live;
  * stylesheet of the program's (`$root->setStylesheet(Stylesheet::default()->with([...]))`)
  * refines the theme in force.
  * **Failing**: an exception anywhere in the program that no error boundary contains (the
- * root's hooks, handlers or coroutines, the closure given as the root) ends the program: the
- * tree is disposed, the terminal restored, and the exception comes out of the call, as it
- * would without a terminal UI.
+ * root's hooks, handlers or coroutines, the closure given as the root, the handlers given with
+ * `keys:` and to elements, a coroutine started with `Tui::go()`) ends the program: the tree is
+ * disposed, the terminal restored, and the exception comes out of the call, as it would
+ * without a terminal UI. Start the program's own coroutines with `Tui::go()`, not
+ * `fiber\go()` (see `go()`).
  */
 final class Tui
 {
     /** The key that quits a program run by `Tui` when nothing binds it. */
     public const QUIT = 'ctrl+q';
+
+    /** The exception of a coroutine started with go(), for the runner to throw. */
+    private static ?\Throwable $failure = null;
+
+    /**
+     * Start a coroutine of the program, as `fiber\go()` does, except that an exception in it
+     * ends the program at once: the screen is disposed, the terminal restored, and the
+     * exception comes out of `Tui::run()` (and so out of your `fiber\run()`), readable on the
+     * restored terminal. Started before `Tui::run()` (a job the screen shows) or from a
+     * handler. Make it end with the screen as any coroutine: check a flag the program clears
+     * when `Tui::run()` returns.
+     *
+     *     fiber\run(function () use ($s) {
+     *         $running = true;
+     *         Tui::go(function () use ($s, &$running) {
+     *             while ($running) { fiber\sleep(0.1); $s->done = fetchProgress(); }
+     *         });
+     *         try { Tui::run(fn() => new ProgressBar($s->done)); } finally { $running = false; }
+     *     });
+     *
+     * A coroutine started with `fiber\go()` itself is not seen by the library: an exception in
+     * it is kept by `fiber\run()` until everything inside it has ended (the screen too), and
+     * only then thrown. A coroutine of a component (`$this->go()` in a class) is contained by
+     * the component's error boundary instead: the component shows the error in its rectangle
+     * and the rest of the program goes on.
+     */
+    public static function go(\Closure $task): void
+    {
+        \fiber\go(static function () use ($task): void {
+            try {
+                $task();
+            } catch (\Throwable $e) {
+                self::$failure ??= $e;
+                Component::runningRoot()?->dispose();
+                throw $e;
+            }
+        });
+    }
 
     /**
      * Run $root (an element, a component, or a closure returning either) full screen on the
@@ -74,7 +118,7 @@ final class Tui
      */
     public static function run(Element|\Closure $root, ?string $theme = null, array $keys = []): Component
     {
-        return self::until(new Tty(), $root, $theme, $keys);
+        return self::until(self::headlessSize() === null ? new Tty() : null, $root, $theme, $keys);
     }
 
     /**
@@ -91,7 +135,7 @@ final class Tui
      */
     public static function inline(Element|\Closure $root, bool $keep = true, ?string $theme = null, array $keys = []): Component
     {
-        return self::until(Tty::inline(keep: $keep), $root, $theme, $keys);
+        return self::until(self::headlessSize() === null ? Tty::inline(keep: $keep) : null, $root, $theme, $keys, true);
     }
 
     /**
@@ -118,18 +162,73 @@ final class Tui
         return $terminal;
     }
 
-    /** @param array<string, mixed> $keys */
-    private static function until(TerminalDevice $device, Element|\Closure $root, ?string $theme, array $keys): Component
+    /**
+     * The device for $device null: headless (see headlessSize()), the program runs on a
+     * `FakeTerminal` for a moment, its screen is printed, and it ends.
+     *
+     * @param array<string, mixed> $keys
+     */
+    private static function until(?TerminalDevice $device, Element|\Closure $root, ?string $theme, array $keys, bool $inline = false): Component
     {
-        return \fiber\run(static function () use ($device, $root, $theme, $keys): Component {
+        return \fiber\run(static function () use ($device, $root, $theme, $keys, $inline): Component {
+            if ($device === null) {
+                [$cols, $rows, $seconds] = self::headlessSize();
+                $terminal = $inline ? FakeTerminal::inline($cols, $rows) : new FakeTerminal($cols, $rows);
+                $app = self::start($root, $terminal, $theme, $keys);
+                try {
+                    \fiber\sleep($seconds);
+                    $terminal->settle();
+                    $screen = $inline ? '' : $terminal->text();
+                } finally {
+                    $app->dispose();
+                }
+                echo rtrim($inline ? $terminal->frozen() : $screen), "\n";
+                self::rethrow();
+                return $app;
+            }
             $app = self::start($root, $device, $theme, $keys);
             try {
                 $device->wait();
             } finally {
                 $app->dispose();
             }
+            self::rethrow();
             return $app;
         });
+    }
+
+    /** A coroutine of go() failed: its exception comes out of the runner. */
+    private static function rethrow(): void
+    {
+        if (self::$failure !== null) {
+            [$e, self::$failure] = [self::$failure, null];
+            throw $e;
+        }
+    }
+
+    /**
+     * The size to run headless at, when the program was started with `--headless=COLSxROWS`
+     * (or the environment has `TUI_HEADLESS=COLSxROWS`), with `@SECONDS` to run that long
+     * first (one by default): [cols, rows, seconds]; null when neither says so.
+     *
+     * @return array{int, int, float}|null
+     */
+    private static function headlessSize(): ?array
+    {
+        $spec = null;
+        foreach ($_SERVER['argv'] ?? [] as $arg) {
+            if (\is_string($arg) && str_starts_with($arg, '--headless=')) {
+                $spec = substr($arg, 11);
+            }
+        }
+        $spec ??= getenv('TUI_HEADLESS') ?: null;
+        if ($spec === null) {
+            return null;
+        }
+        if (!preg_match('/^(\d+)x(\d+)(?:@(\d+(?:\.\d+)?))?$/', $spec, $m) || (int) $m[1] < 1 || (int) $m[2] < 1) {
+            throw new \InvalidArgumentException("Headless: '$spec' is not COLSxROWS or COLSxROWS@SECONDS (as in --headless=80x24 or TUI_HEADLESS=80x24@2)");
+        }
+        return [(int) $m[1], (int) $m[2], isset($m[3]) ? (float) $m[3] : 1.0];
     }
 
     /** @param array<string, mixed> $keys */
@@ -139,6 +238,7 @@ final class Tui
             Stylesheet::theme($theme);      // (an unknown one fails before the terminal is taken over)
         }
         Component::normalizeBindings($keys);      // (a mistake fails before the terminal is taken over)
+        self::rethrow();                          // (a coroutine of the program failed already)
         if ($root instanceof \Closure) {
             $live = new Live($root);
             $reads = State::reads();

@@ -2604,6 +2604,7 @@ abstract class Component extends Element
             $oy = $area->y - $origin->y;
             $a = $overlay->anchor;
             $anchor = $a === null ? new Rect($ox, $oy, $area->width, $area->height) : new Rect($ox + $a->x, $oy + $a->y, $a->width, $a->height);
+            $anchor = $opener->framed($anchor, new Rect($ox, $oy, $area->width, $area->height));
             $place = $overlay->place instanceof Rect
                 ? new Rect($ox + $overlay->place->x, $oy + $overlay->place->y, $overlay->place->width, $overlay->place->height)
                 : $overlay->place;
@@ -2632,6 +2633,29 @@ abstract class Component extends Element
             }
         }
         return $again;
+    }
+
+    /**
+     * $anchor (a rectangle of this component, $own its whole area, both in the root's
+     * coordinates as placeOverlays() has them) reaching out to the border of the window this
+     * component fills alone (an `Editor` that is a `Box`'s only content): an overlay below its
+     * last row goes under the border, not over it; one above its first row over the border.
+     */
+    private function framed(Rect $anchor, Rect $own): Rect
+    {
+        $host = $this->surface->parent();
+        $frame = $host?->viewport();
+        if ($host === null || $frame === null || !$frame->hasBorder() || \count($host->viewports()) !== 1) {
+            return $anchor;
+        }
+        $hostArea = $host->area();
+        $area = $this->surface->area();
+        // (the host's rows in the coordinates of $own: the border is the row above and the row under them)
+        $top = $own->y - ($area->y - $hostArea->y) - 1;
+        $bottom = $own->y - ($area->y - $hostArea->y) + $hostArea->height;
+        $y1 = $anchor->y <= $own->y ? $top : $anchor->y;
+        $y2 = $anchor->y + $anchor->height >= $own->y + $own->height ? $bottom + 1 : $anchor->y + $anchor->height;
+        return new Rect($anchor->x, $y1, $anchor->width, max(1, $y2 - $y1));
     }
 
     /** On a root: put its overlays where they were last placed. */

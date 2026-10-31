@@ -150,8 +150,9 @@ it('opens the dropdown of a scrolled field under the row it is shown on', functi
         $rows = explode("\n", $t->text());
         [$y, $x] = $boxes['Priority'];
         expect(mb_substr($rows[$y + 1], $x + 1))->toStartWith('Low')     // the field on its row
-            ->and(mb_substr($rows[$y + 2], $x + 1))->toStartWith('Low')  // the list right under it
-            ->and(mb_substr($rows[$y + 3], $x + 1))->toStartWith('Medium');
+            ->and(mb_substr($rows[$y + 2], $x))->toStartWith('╰')        // its box's border stays
+            ->and(mb_substr($rows[$y + 3], $x + 1))->toStartWith('Low')  // the list right under the box
+            ->and(mb_substr($rows[$y + 4], $x + 1))->toStartWith('Medium');
         $t->press('down', 'enter');
         $t->settle();
         expect($app->priority->selected())->toBe('mid')->and($app->priority->isOpen())->toBeFalse();
@@ -174,9 +175,9 @@ it('keeps the open list anchored or closes it when the terminal shrinks from 80x
             expect($boxes)->toHaveKey('Priority');
             [$y, $x] = $boxes['Priority'];
             $field = $y + 1;
-            $under = mb_substr($rows[$field + 1], $x + 1);
-            $over = mb_substr($rows[$field - 1], $x + 1);
-            // the list next to the field's row: under it, or over it when there is no room below
+            $under = mb_substr($rows[$field + 2], $x + 1);
+            $over = mb_substr($rows[$field - 2], $x + 1);
+            // the list next to the field's box: under it, or over it when there is no room below
             expect(str_starts_with($under, 'Low') || str_starts_with($over, 'Urgent') || str_starts_with($over, 'High'))->toBeTrue($t->text());
         }
         $t->press('escape');

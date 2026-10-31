@@ -120,14 +120,14 @@ it('keeps a completion popup on the side it opened on while it shrinks', functio
         $t->press('tab');
         $t->settle();
         $rows = explode("\n", $t->text());
-        // the field is on row 11, one row under it: four candidates go above
-        expect($rows[11])->toStartWith('│al')->and($rows[7])->toContain('alpha')->and($rows[10])->toContain('also');
+        // the field is on row 11, one row under it: four candidates go above the box
+        expect($rows[11])->toStartWith('│al')->and($rows[10])->toStartWith('╭')->and($rows[6])->toContain('alpha')->and($rows[9])->toContain('also');
         $t->type('ph');
         $t->settle();
         $rows = explode("\n", $t->text());
-        expect($rows[10])->toContain('alpha')                  // still above, one row now
-            ->and($rows[12])->toStartWith('╰')                   // the box's border under the field is not covered
-            ->and($rows[7])->toBe('8')->and($rows[9])->toBe('10');
+        expect($rows[9])->toContain('alpha')                  // still above, one row now
+            ->and($rows[12])->toStartWith('╰')->and($rows[10])->toStartWith('╭')     // the box's borders are not covered
+            ->and($rows[6])->toBe('7')->and($rows[8])->toBe('9');
     });
 });
 

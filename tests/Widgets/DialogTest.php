@@ -243,7 +243,7 @@ it('shrinks a dialog larger than the terminal and scrolls its content; the butto
         expect($t->text())->toContain('line 1')->and($t->text())->toContain('line 20');
         $t->resize(12, 5);                               // a tiny terminal: still inside, still answerable
         frame();
-        expect(explode("\n", $t->text())[0])->toStartWith('╭')->and($t->text())->toContain('OK');
+        expect(explode("\n", $t->text())[0])->toContain('╭')->and($t->text())->toContain('OK');
         $t->press('enter');
         frame();
         expect($app->answers)->toBe([true]);

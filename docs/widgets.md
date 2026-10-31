@@ -479,6 +479,11 @@ field of a scrolled view opens under the row where the field is shown.
 
 A tab bar (top or bottom) and one content per tab: panes of a workspace, open files, shells.
 
+**The tabs are given once**: they come from the first instance. A `new Tabs([...])` made again
+by a later render (a closure program makes it on every `State` change) updates `position`,
+`hints` and `closable`, not the tabs; keep the instance (`child()`, `$tabs ??= new Tabs(...)`)
+and change the tabs with `setTabs()`.
+
 ```php
 $tabs = $this->child('tabs', fn() => new Tabs([
     'shell' => ['label' => 'Shell', 'content' => new Terminal('sh')],

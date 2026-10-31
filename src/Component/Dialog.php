@@ -32,9 +32,10 @@ use phasync\Tui\Rect;
  * Escape cancels with the `$cancel` answer (null by default), which is also the answer when the
  * dialog ends without one (the component that opened it was disposed, the program quit).
  *
- * **Size**: as large as its content needs (a message wraps at 60 columns), never larger than
- * the screen: a dialog that does not fit is shrunk and its content scrolls (it is in a
- * `ScrollView`; Page Up/Page Down and the wheel scroll it). `with(width: 50, height: 12)`
+ * **Size**: as large as its content needs (a message wraps at 60 columns), at most 80% of the
+ * screen's width (a field that fills its width gets that), never larger than the screen: a
+ * dialog that does not fit is shrunk and its content scrolls (it is in a `ScrollView`; Page
+ * Up/Page Down and the wheel scroll it). `with(width: 50, height: 12)`
  * fixes the size.
  *
  * **A `Form` as the content** (or in it) is validated before an answer closes the dialog:
@@ -364,7 +365,11 @@ class Dialog extends Component
         return $area;
     }
 
-    /** As large as the title, the content (a message wrapped at 60 columns) and the buttons need; or the size given with `with()`. */
+    /**
+     * As large as the title, the content (a message wrapped at 60 columns) and the buttons
+     * need, at most 80% of the screen's width (a field that fills the width it is given, as an
+     * `Editor`, gets that); or the size given with `with()`.
+     */
     public function measure(int $cols, int $rows): ?array
     {
         [, $r, , $l] = $this->style()->padding;
@@ -373,7 +378,8 @@ class Dialog extends Component
         if (\is_int($width) && \is_int($height)) {
             return [min($cols, $width), min($rows, $height)];
         }
-        $room = \is_int($width) ? min($cols, $width) : (\is_string($this->content) ? min($cols, 60 + $l + $r) : $cols);
+        $most = max(1, (int) floor($cols * 0.8));
+        $room = \is_int($width) ? min($cols, $width) : (\is_string($this->content) ? min($most, 60 + $l + $r) : $most);
         [$w, $h] = $this->measureElement($this->tree(), $room, $rows) ?? [$room, $rows];
         return [\is_int($width) ? $room : min($cols, $w), \is_int($height) ? min($rows, $height) : $h];
     }

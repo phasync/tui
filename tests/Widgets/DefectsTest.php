@@ -37,17 +37,18 @@ it('shrinks a completion popup when typing filters its candidates, and repaints 
         $t->press('tab');
         $t->settle();
         $rows = explode("\n", $t->text());
-        expect($rows[2])->toContain('alpha')->and($rows[5])->toContain('also');
+        // (under the Box: its border stays, TODO-0.0.3-beta3 item 4)
+        expect($rows[2])->toStartWith('╰')->and($rows[3])->toContain('alpha')->and($rows[6])->toContain('also');
         $t->type('ph');
         $t->settle();
         $rows = explode("\n", $t->text());
-        expect($rows[2])->toContain('alpha')
-            ->and($rows[2])->toStartWith('╰')                  // the Box border under the popup is back
-            ->and($rows[3])->toBe('one')->and($rows[4])->toBe('two')->and($rows[5])->toBe('three');
+        expect($rows[3])->toContain('alpha')
+            ->and($rows[2])->toStartWith('╰')
+            ->and($rows[4])->toBe('two')->and($rows[5])->toBe('three');
         $t->press('backspace', 'backspace');                 // grows again
         $t->settle();
         $rows = explode("\n", $t->text());
-        expect($rows[5])->toContain('also')->and($rows[6])->toBe('four');
+        expect($rows[6])->toContain('also')->and($rows[7])->toBe('five');
     });
 });
 
