@@ -145,6 +145,7 @@ construct one.
 | `setFit(bool $fit)`, `fits()` | Keep the source the size of the inner area, so a program in it fills the window and is told about every resize. Layouts turn it on. |
 | `setBorder(bool\|string $border, ?Style $style = null, ?Style $focusStyle = null)`, `hasBorder()`, `borderKind()` | A one-cell border, in `$focusStyle` while focused; `$border` is the kind of line, `'single'`, `'round'`, `'double'`, `'heavy'` or `'ascii'` (`Viewport::BORDERS`), true for the kind set before, false for none. |
 | `setTitle(string $title)`, `title()` | The title in the top border. |
+| `setShadow(?int $color)`, `shadow()` | A shadow one column right of the window and one row under it, cast on the windows below it: their cells there are drawn dimmed on the background `$color` (`Color::DEFAULT`: dimmed only); null for none. What the host draws itself is not shaded. A `Dialog` has one in every theme (the `shadow` style). |
 | `follow()`, `isFollowing()` | Follow the bottom of the source (the default), so new output stays in view. |
 | `scrollTo(int $row)` | Pin the view with source row `$row` at the top; negative rows are scrollback. Clamped; scrolling to the bottom follows again. The view stays on the same text while more lines scroll in. |
 | `scrollBy(int $rows)` | Negative looks back, positive forward. |

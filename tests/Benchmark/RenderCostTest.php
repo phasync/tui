@@ -164,7 +164,7 @@ it('renders, measures and paints one row when the state of a row component chang
         expect(explode("\n", $t->text())[7])->toContain('1 ticks')
             ->and(CostRow::$renders)->toBe(1)                       // that row
             ->and(RowComponents::$renders)->toBe(0)                  // not the parent: the row's size did not change
-            ->and(CostProbe::$measures)->toBeLessThanOrEqual(1)
+            ->and(CostProbe::$measures)->toBeLessThanOrEqual(2)      // that row's probe: its width, then its height at its share
             ->and(paintedSince($before, $app->surface))->toBe(1);
     });
 });

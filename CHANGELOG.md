@@ -1,5 +1,108 @@
 # Changelog
 
+## 0.0.3-beta2 (2026-10-31)
+
+A program with no styling looks like a modern tool in three themes, the cookbook has ten screens
+to copy, and the README opens with a sixty-line dashboard. Everything from 0.0.3-beta1 works as
+before, except where an entry says what changed.
+
+**Good by default: themes**
+
+- Three themes, `dark`, `light` and `mono`, each a stylesheet (`Stylesheet::theme('light')`).
+  The default look: rounded borders, one accent colour (sky), the focused window's border in it,
+  dimmed titles elsewhere, `Select` rows in inverse, and dialogs with a shadow under and right of
+  them. The theme colours are named classes too: `text-accent`, `border-muted`, `bg-panel`,
+  `text-error`, `text-success`, `text-warning`.
+- `Tui::run($root, theme: 'light')`, also `Tui::inline()` and `Tui::headless()`, picks one.
+  Without it the terminal decides: at attach the device asks for its background (OSC 11), and
+  a program on a light terminal is drawn in `light`, on a dark one or one that does not answer
+  in `dark`. Start-up never waits for the answer. `$device->background()` says what the
+  terminal answered; `new FakeTerminal(80, 24, background: 'light')` (or `null`, no answer)
+  tests it. `$component->setTheme('mono')` and `theme()` change and read it while running.
+- `mono` emits no colour at all, for classes, markup and widgets alike, and marks focus,
+  selection and errors with bold, dim and underline.
+- A program's own stylesheet built with `Stylesheet::default()->with([...])` keeps its rules on
+  every theme: on `light` or `mono` they are applied over that theme's, so a program's rule
+  always overrides the theme's.
+- Changed: the default colours are Tailwind's (truecolour: accent `sky-400`, muted
+  `slate-500`, ...) instead of the 16 terminal colours, drawn in the nearest colours a 256- or
+  16-colour terminal has. A test that compared cells with `Color::parse('cyan')` from the old
+  default theme sees other values.
+- Constructor arguments for the common things, so a first version needs no stylesheet:
+  `Column(gap:, padding:, align:)`, `Row(gap:, padding:, align:)`, `Box($child, $title,
+  padding:)`, `Text($content, align:)`; `style:` given beside them wins.
+- `new Button(fn() => $s->saving ? 'Saving…' : 'Save')`: a button label may be a closure, drawn
+  again by itself when a `State` it read changes, like a `Text`. `$button->label = 'x'` still
+  works.
+- `Viewport::setShadow($color)` casts a window's shadow on the windows below it (the `shadow`
+  property and the `shadow`/`shadow-none` classes); it goes with the window.
+
+**Variants on elements**
+
+- `selected:` and states on any element: `new Text($name, selected: $id === $s->current,
+  class: 'selected:bg-accent')` marks the current row of a class-free screen. `state: 'error'`
+  (or a list) puts an element in states of its own for the stylesheet (`'Text:error'`).
+- `hover:` on any element: `new Box($x, 'jobs', class: 'hover:border-accent')` changes the
+  box's border while the mouse is over it. Before, `hover:` only worked on components. A screen
+  follows the mouse only when a `hover:` class or a `:hover` rule is in it.
+- A border colour on a component (`->with(class: 'border-red-500')`) now colours the `Box` the
+  component renders, when that box sets no colour of its own. Changed: a border colour or
+  attribute alone (`border-red-500`, `'border' => 'dim'`) no longer draws a border on an element
+  without one; write `border border-red-500`. Borders take `bold`, `dim` and `plain` for their
+  lines (`'border' => 'single dim'`).
+- Changed: the width variants are Tailwind's minimum widths: `sm:` from 60 columns, `md:` from
+  80, `lg:` from 100 and the new `xl:` from 140, a wider one overriding a narrower one, so
+  `hidden md:block` shows at every width from 80 on. Before, each named one range (`sm:` under
+  60, `md:` 60 to 99): a program that used `sm:` for narrow screens writes the narrow layout
+  without a variant and the wide one with `md:` (`flex-col md:flex-row`). The stylesheet states
+  `:sm` ... `:xl` follow the same rule. `Stylesheet::widthClass($cols)` is replaced by
+  `Stylesheet::breakpoints($cols)`, the list in force.
+- `onFocus:` and `onBlur:` on elements and components (`new Column([...], onFocus: fn() =>
+  $s->help = 'Your name')`): called when the focus comes into it or leaves it, after the frame
+  that moved it, with no polling of `hasFocus()`.
+
+**The cookbook and the dashboard**
+
+- docs/cookbook.md: ten screens of under forty lines each, a progress runner, a log tail with a
+  filter, a form with validation in a dialog, a file list with a preview, a tabbed shell host, a
+  table with a search box, a chat pane with a growing editor, settings with checkboxes and a
+  select, a live chart from a coroutine, and a Markdown viewer with a table of contents. Each is
+  run by the tests at 60x20 and 160x50.
+- `examples/dashboard.php`, under sixty lines and without a class: three jobs updated by
+  coroutines, their events in a `Log`, release notes in `Markdown`, styled with utility classes
+  only and stacked under 80 columns. `--inline` shows the three job boxes only, as a live region;
+  `--theme=light|mono` picks a theme. The README opens with it. The graph demo that was
+  `examples/dashboard.php` is now `examples/graphs.php`.
+- Inline mode lays a component tree out at the height its content needs: a `Row` of boxes
+  given to `Tui::inline()` is a region of the boxes' height. Before, an element tree root filled
+  the terminal's height.
+- A `Row` whose children wrap their text in their share of the width is as high as the wrapped
+  text: before, it measured each child at the whole row's width, so a box with text that wraps
+  only in its share lost its last lines.
+
+**Small things from use**
+
+- `Spinner` labels take markup (`new Spinner('<b>deploying</b> v2.4')`), like every other
+  label (`Text`, `Box` titles, `Button`, `Checkbox`, `Table`, `Help`, `Log`, `Select`,
+  `ProgressBar`, `Spinner`).
+- An exception in a closure content (`new Text(fn() => ...)`) shows its class and message in
+  the element's place (`✖ TypeError: Argument #1 must be of type int`), wrapped and cut with "…"
+  when it does not fit, instead of a cut "Error:".
+- `Log::append()`, `setLines()` and `setWordWrap()` before the log is shown keep what they were
+  given; the lines are there when it is.
+- A `ProgressBar` with a closure value is called when its `State` changes but draws only when
+  the bar looks different, so rounding in the closure is not needed to keep it cheap.
+- `Tabs`: a tab the user closed stays closed while `render()` goes on listing it in
+  `setTabs()`; it comes back when `setTabs()` names it as `$current`, or after a list without it
+  lists it again.
+- `Select::setItems()` with items equal to the ones it has, and a `Table` given rows equal to
+  its rows as props by every render, measure nothing again: a program that rebuilds its row
+  array per render is not punished.
+- `freeze()` of a component's surface after rows above it left the tree: the reported shapes
+  (two jobs and eight, in a `Column` and in `Row`s, with the replayed byte stream) freeze the
+  right rows at the right values and are regression tests now; the defect did not reproduce in
+  this release.
+
 ## 0.0.3-beta1 (2026-10-31)
 
 A program can be one file without a class, styled with Tailwind's utility classes, with markup

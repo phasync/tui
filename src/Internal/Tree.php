@@ -366,12 +366,19 @@ final class Tree
         [$t, $r, $b, $l] = $layout->padding;
         $extraW = $border + $l + $r;
         $extraH = $border + $t + $b;
-        return static function (int $cols, int $rows) use ($kind, $items, $extraW, $extraH, $gap): ?array {
+        return static function (int $cols, int $rows) use ($kind, $items, $extraW, $extraH, $gap, $layout, $border): ?array {
             $w = $h = 0;
-            foreach ($items as $child) {
+            // (side by side, each child is as high as it needs at the width the row gives it:
+            // text that wraps in a narrow share needs more rows than at the row's whole width)
+            $widths = $kind === 1 ? array_column($layout->rects(max(0, $cols - $border), max(0, $rows - $border)), 2) : [];
+            foreach ($items as $i => $child) {
                 $n = $child->natural(max(0, $cols - $extraW), max(0, $rows - $extraH));
                 if ($n === null) {
                     return null;
+                }
+                if ($kind === 1 && isset($widths[$i]) && $widths[$i] < $n[0]) {
+                    $at = $child->natural($widths[$i], max(0, $rows - $extraH));
+                    $n = [$n[0], $at === null ? $n[1] : max($n[1], $at[1])];
                 }
                 [$w, $h] = match ($kind) {
                     0 => [max($w, $n[0]), $h + $n[1]],

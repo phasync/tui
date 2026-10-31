@@ -10,6 +10,7 @@ use phasync\Tui\Component\Log;
 use phasync\Tui\Component\ProgressBar;
 use phasync\Tui\Component\Select;
 use phasync\Tui\Component\Spinner;
+use phasync\Tui\Component\Table;
 use phasync\Tui\Component\Tabs;
 use phasync\Tui\Element;
 use phasync\Tui\Element\Column;
@@ -162,6 +163,54 @@ it('does not measure a Select again for the same rows built anew on every render
         $select->setItems(['x' => ['other', '1']]);
         $t->settle();
         expect($select->measuredCells())->toBeGreaterThan($measured);
+        $t->detach();
+    });
+});
+
+it('does not measure a Table again for the same rows given anew as props by every render', function () {
+    \fiber\run(function () {
+        $s = new State(['tick' => 0, 'rows' => 500]);
+        $first = null;
+        $t = Tui::headless(function () use ($s, &$first) {
+            $rows = [];
+            for ($i = 0; $i < $s->rows; $i++) {
+                $rows["k$i"] = ["item $i", (string) ($i * 3)];
+            }
+            $table = new Table(columns: ['Name' => 'auto', 'Size' => 'auto'], rows: $rows);
+            $first ??= $table;      // (the instance that runs: later ones hand it their props)
+            return new Column([new Text("tick {$s->tick}"), $table]);
+        }, 40, 10);
+        $t->settle();
+        $measured = $first->measuredCells();
+        expect($measured)->toBe(1000);
+        for ($i = 1; $i <= 5; $i++) {
+            $s->tick = $i;
+            $t->settle();
+        }
+        expect(screenRows($t)[0])->toBe('tick 5')->and($first->measuredCells())->toBe($measured);
+        $s->rows = 3;
+        $t->settle();
+        expect($first->measuredCells())->toBe($measured + 6);
+        $t->detach();
+    });
+});
+
+it('makes a Row as high as text needs where it wraps in its share of the width, also as it grows', function () {
+    \fiber\run(function () {
+        $s = new State(['t' => 'short']);
+        $t = Tui::headless(fn() => new Column([
+            new \phasync\Tui\Element\Row([
+                new \phasync\Tui\Element\Box(new Column([new Text('bar'), new Text(fn() => $s->t)]), 'b', class: 'grow'),
+                new \phasync\Tui\Element\Box(new Text('x'), 'c', class: 'grow'),
+            ]),
+            new Text('below'),
+        ]), 20, 12);
+        $t->settle();
+        expect(screenRows($t)[4])->toBe('below');
+        $s->t = 'a long text that wraps over lines';
+        $t->settle();
+        expect(array_slice(screenRows($t), 2, 7))->toBe(['│a long  ││        │', '│text    ││        │', '│that    ││        │', '│wraps   ││        │', '│over    ││        │', '│lines   ││        │', '╰────────╯╰────────╯'])
+            ->and(screenRows($t)[9])->toBe('below');
         $t->detach();
     });
 });

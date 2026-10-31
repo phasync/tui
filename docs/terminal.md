@@ -59,6 +59,7 @@ fiber\run(function () use ($tty) {
 | `supportsHyperlinks(): bool` | True if the terminal shows OSC 8 hyperlinks, so the device writes the cells' links (see below). |
 | `terminalName(): string` | The name the terminal gave when asked (XTVERSION) at `attach()`, such as `kitty(0.36.4)`; `''` when it did not answer. |
 | `isInline(): bool` | True for a device made with `inline()` (see below). |
+| `background(): ?string` | `'light'` or `'dark'`: the terminal's background, as it answered when asked (OSC 11) at `attach()`; null when it did not answer (yet). A program that sets no theme is drawn in `light` on a light terminal, else in `dark` (see [styling.md](styling.md#themes)); the answer comes a moment after `attach()`, never holding start-up up, and the screen is drawn again when it says light. |
 | `colors(): int`, `setColors(int $colors)` | The colours the terminal has: `Color::DEPTH_16`, `DEPTH_256` or `DEPTH_TRUECOLOR`. Cells in colours it lacks are drawn in the nearest it has (see below). |
 | `println(string $text = '')` | Plain output of the program: in inline mode above the live region, at the next frame; not attached, to the terminal at once; attached full screen, after `detach()` (the alternate screen would hide it). Escape sequences in it work; a line break ends each call. |
 | `freeze(int\|Surface $what)` | Keep rows of the root as they show now: a row by number, or the rows a surface covers (a component's: `$tty->freeze($bar->surface)`). Inline, they go above the region at the next frame, into the scrollback, never to change; full screen, they are written after `detach()`. See "Freezing a finished row". |
@@ -79,7 +80,10 @@ of the 256-colour cube and grays on a 256-colour terminal, one of the 16 on a 16
 `Tty` knows the depth from the environment (`Tty::colorsFromEnvironment($env)`: `COLORTERM`
 truecolor or 24bit, or a terminal known to have them, is truecolour; a `TERM` with `256` in it
 is 256; else 16); `setColors()` corrects a terminal that says it wrong. `FakeTerminal` is told:
-`new FakeTerminal(80, 24, colors: Color::DEPTH_16)`; truecolour by default.
+`new FakeTerminal(80, 24, colors: Color::DEPTH_16)`; truecolour by default. Its background is
+told the same way: `new FakeTerminal(80, 24, background: 'light')` answers OSC 11 as a light
+terminal (and its surface's default colours are black on white), `background: null` does not
+answer; `'dark'` by default.
 
 ## Inline mode: a live region in the terminal's normal screen
 
@@ -122,6 +126,9 @@ fiber\run(function () {
 - **Ending**: `detach()` (or quitting the component tree) leaves the last frame standing with
   the cursor under it; `Tty::inline(keep: false)` erases the region instead. The terminal is
   restored as in full-screen mode, also on a crash or a signal.
+- **As tall as its content**: a component tree in inline mode is laid out at the height it
+  needs, not the terminal's: a `Row` of three boxes is a region of the boxes' height, a `'1fr'`
+  item gets no more than its content. (Full screen, the root fills the terminal.)
 - **Taller than the terminal**: the region is at most the terminal's height less the line
   under it. The root is laid out at that height, so the layout decides what is left out: a
   `Column` of more rows than fit gives the first rows their room, and the rest are clipped and
@@ -162,7 +169,7 @@ the row it keeps is the one the last state change drew (100%, not the 75% of the
 | Method | What it does |
 |---|---|
 | `Tty::inline($in = STDIN, $out = STDOUT, bool $keep = true)` | The terminal in inline mode. |
-| `FakeTerminal::inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR)` | An in-memory terminal in inline mode, for tests. |
+| `FakeTerminal::inline(int $cols = 80, int $rows = 24, bool $keep = true, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR, ?string $background = 'dark')` | An in-memory terminal in inline mode, for tests. |
 | `FakeTerminal::frozen(): string` | The text above the region (the terminal's scrollback first): the lines written above it as the root scrolled and by `println()`, as they were then, and what the terminal showed before. |
 | `FakeTerminal::region(): string` | The text of the live region (`''` when not attached). |
 
@@ -280,7 +287,7 @@ fiber\run(function () {
 
 | Method | What it does |
 |---|---|
-| `new FakeTerminal(int $cols = 80, int $rows = 24, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR)` | A terminal of that size; with `$hyperlinks` false, one that does not show OSC 8 links; with `$colors` 256 or 16, one that has only those colours. `FakeTerminal::inline()` for inline mode (see above). |
+| `new FakeTerminal(int $cols = 80, int $rows = 24, bool $hyperlinks = true, int $colors = Color::DEPTH_TRUECOLOR, ?string $background = 'dark')` | A terminal of that size; with `$hyperlinks` false, one that does not show OSC 8 links; with `$colors` 256 or 16, one that has only those colours; `$background` is what it answers when asked for its background (`'light'`, `'dark'`, null: no answer). `FakeTerminal::inline()` for inline mode (see above). |
 | `run(Closure $code): mixed` | Run `$code($terminal)` and detach afterwards, also when it throws (then the exception goes on to `fiber\run()`). Returns what `$code` returned. |
 | `settle(float $timeout = 1.0)` | Wait until the renders the input so far asked for have run and the screen is up to date (cooperatively, `$timeout` at most). |
 | `text(): string`, `dump(): string` | What the terminal shows (see `Surface::text()`/`dump()`), after drawing what is pending. |

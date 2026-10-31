@@ -41,7 +41,7 @@ $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
             while ($running) {
                 \fiber\sleep($every * (0.5 + mt_rand() / mt_getrandmax()));
                 $step = mt_rand(2, 12) / 100;
-                $s->steps = [...$s->steps, $job => [...array_slice($s->steps[$job], -23), $step * 8]];
+                $s->steps = [...$s->steps, $job => [...array_slice($s->steps[$job], -15), $step * 8]];
                 $s->done = [...$s->done, $job => min(1.0, $s->done[$job] + $step)];
                 if ($s->done[$job] >= 1.0) {
                     $s->runs = [...$s->runs, $job => $s->runs[$job] + 1];

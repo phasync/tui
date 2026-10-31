@@ -129,7 +129,7 @@ final class ElementLayout implements Layout
      *
      * @return list<array{int,int,int,int}>
      */
-    private function rects(int $cols, int $rows): array
+    public function rects(int $cols, int $rows): array
     {
         [$pt, $pr, $pb, $pl] = $this->padding;
         $cols = max(0, $cols - $pl - $pr);

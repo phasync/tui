@@ -3,17 +3,85 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
-## Status (0.0.3-beta2, in progress; TODO-0.0.3-beta2.md, SPEC 9.4-9.6)
+## Status (0.0.3-beta2; TODO-0.0.3-beta2.md, SPEC 9.4-9.6)
+
+All items of TODO-0.0.3-beta2.md done, in CHANGELOG.md. Tests green with and without
+ext-phasync.
 
 - [x] 1. Themes (b1a7326): Stylesheet::theme(dark|light|mono), Component::setTheme()/theme(),
       TerminalDevice::background() (OSC 11 in the attach probe), FakeTerminal background:,
       Tui theme:, dialog shadow (Viewport::setShadow), constructor args; tests/Release/ThemesTest.php
-- [ ] 2. Cookbook (docs/cookbook.md + tests)
-- [ ] 3. examples/dashboard.php under 60 lines + README opening + tests
+- [x] 2. Cookbook (e603518): docs/cookbook.md, tests/Docs/CookbookTest.php (each recipe eval'd
+      with Tui::run/inline replaced by a FakeTerminal runner, at 60x20 and 160x50)
+- [x] 3. examples/dashboard.php (d4ddcae, 59 lines), README opens with it; tests/Examples/
+      DashboardTest.php (eval, three themes, two sizes, inline, flicker bound) and a pty run in
+      ExamplesTest
 - [x] 4. freeze(): not reproduced in this tree; tests in the reported shapes (tests/Release/FreezeTest.php)
 - [x] 5. Variants on elements, min-width breakpoints, onFocus/onBlur (tests/Release/VariantsTest.php)
 - [x] 6. Small items (tests/Release/SmallTest.php)
-- [ ] docs (styling.md, components.md, widgets.md, terminal.md), CHANGELOG, tag
+
+Item 4 could not be reproduced: two jobs and eight, in a Column and with Rows, with the bar
+set to 1.0, a frame's sleep, `freeze($bar->surface)` and then the State change that drops the
+row, freeze the right rows at 100%, with and without ext-phasync, and the byte stream replayed
+into a fresh emulator shows the same. `freeze()` already lays out pending renders first
+(beta5), which is what the report asks for. The tests stay as regression tests.
+
+No gap in fiber\ was met in this version: the theme probe answer (OSC 11) arrives through the
+device's input coroutine and `whenProbed()` listeners, timers are `fiber\sleep()`.
+
+## Design decisions (0.0.3-beta2)
+
+- **Themes are stylesheets; a program's sheet is replayed on the theme.** `Stylesheet::theme()`
+  builds (and caches) dark/light/mono from one rule list with three variable sets; mono adds
+  attribute rules and sets `$mono`, which makes `color()` return DEFAULT for every colour, so no
+  colour of a class, rule or markup gets through. `with()` on a themed sheet records its
+  `[rules, vars]` in `own`; `onTheme($name)` replays them on that theme (cached per sheet and
+  theme). `Component::stylesheet()` resolves the nearest sheet through the nearest theme
+  (`setTheme()`, else the device's background, else dark). So the theme can change at run time
+  and a program's rules always come after the theme's.
+- **OSC 11 is part of the attach probe**, with the kitty query, XTVERSION and DA1: DA1 ends the
+  probe, so a terminal that does not answer OSC 11 is known at once to be silent (dark). The
+  answer's rgb luminance (> 0.5) decides light. `Component::start()` on a device registers
+  `whenProbed()` to render again when it said light: start-up never waits.
+- **Shadows** are a viewport property composited by the host: `Host::compose()` collects the
+  shadow rectangles of every window and gives each window the shades of the windows above it
+  (`Viewport::paint($shades)` dims and sets the background there). A shadow falls on windows
+  only, not on what the host draws itself; that keeps it in the one compositing pass and costs
+  nothing for screens without one. A changed shadow marks its rows as the host's own rows so
+  they repaint.
+- **Border colour passes to the inner Box** (`ComputedStyle::$innerBorder`): a border colour
+  from an element's own classes/inline style on an element with no border (a component) is
+  carried down to the nearest bordered descendant whose own classes set none. A colour alone
+  no longer turns a border on (it did in beta1): that made `border-red-500` on a component draw
+  a second border. Border values are `[kind, colour, attrs]`; `bold`/`dim`/`plain` tokens.
+- **hover on elements**: Tree::states() asks `Component::pointerOver($surface)`, so an element
+  is in `hover` when the pointer is over its rectangle. Pointer following is requested by the
+  presence of any `hover:` class (Stylesheet sets hoverAware) or `:hover` rule, and the
+  component re-lays out only when its hover key (which hovered element, `hoverKey()`) changes,
+  not on every motion.
+- **onFocus/onBlur** are collected by Tree::states() while building (which elements are on the
+  focus path now) and diffed against the previous build (`takeFocusCalls()`); they run after
+  the render, blurs before focuses. A focus that comes and goes within one frame is not
+  reported, by design: the callbacks describe frames, not every intermediate `focus()`.
+- **Min-width breakpoints** (`Stylesheet::breakpoints($cols)`, a list): each breakpoint from its
+  width up is a state; classes are applied ordered by breakpoint rank (`byBreakpoint()`), so
+  `md:x lg:y` gives y from 100 whatever the written order. Supersedes the beta1 exclusive
+  ranges below.
+- **Inline roots at natural height**: Tree::build() lays the root of an inline device's tree
+  out in a Column item at its natural height, so `Tui::inline(fn() => new Row(...))` is as tall
+  as the boxes and not the terminal (a `'1fr'` there would otherwise take all rows).
+- **Row children measured at their share width**: containerMeasure for a Row measures each
+  child's height at the width the layout gives it (`ElementLayout::rects()`), not at the row's
+  width. This measures a child twice when its share is narrower than its natural width
+  (RenderCostTest's probe bound is 2 for that); the alternative, a one-pass measure, gets
+  wrapped text wrong.
+- **Constructor args are inline style** (`Children::style($style, [...])`): `padding:`,
+  `align:` are written into the element's inline style, an explicit `style:` winning, so they
+  follow the cascade like everything else and need no new fields.
+- **Tabs remembers closed keys** until the program stops listing them or names one as
+  `$current`; `replace()` is the internal setter so `close()` does not go through the filter.
+- **Select::setItems()/Table rows** compare with `===` (value equality on arrays) before
+  remeasuring; O(n) comparison, far cheaper than measuring markup.
 
 ## Status (0.0.3-beta1; TODO-0.0.3-beta1.md, SPEC 9.1-9.3)
 
@@ -53,7 +121,7 @@ return at once and leave no process (tests/Component/Small031Test.php covers eac
 - **Utility classes resolve to stylesheet properties** (`Stylesheet::utilityProperties()`,
   cached per class string). The cascade is rules by specificity, then the classes in written
   order, then inline style. Variants are states (`focus` → `focused`, `sm`/`md`/`lg`).
-- **Width variants are exclusive ranges** (sm < 60, md 60-99, lg >= 100), not Tailwind's
+- **(Superseded in 0.0.3-beta2 by min-width breakpoints.) Width variants are exclusive ranges** (sm < 60, md 60-99, lg >= 100), not Tailwind's
   min-width cascade: each is a state of the screen (`Stylesheet::widthClass()` of the root's
   width) that Component::states()/Tree::states() add, so `flex-col lg:flex-row` works by
   ordinary state matching and a resize across a breakpoint re-renders through the existing

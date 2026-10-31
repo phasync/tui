@@ -108,7 +108,7 @@ new Table(
 A cell wider than its column is cut with "…" (by its visible text). When the columns do not
 fit, the table scrolls sideways by column. The current row stays the same row (by key) through
 new rows and sorting. **Cost**: the widths of `'auto'` columns and the order of the rows are
-worked out when the rows change (a new `rows` array, `setItems()`), the sorting changes or a
+worked out when the rows change (a new `rows` array, `setItems()`; rows equal to the ones shown, built anew by every render, are no change), the sorting changes or a
 `Select`'s filter does, not when the cursor or the view moves: moving through 10,000 rows costs
 what moving through 100 does (the rows in view are drawn). A subclass that shows only some rows
 overrides `filterRows(array $keys): array` and returns what they depend on from
@@ -166,7 +166,7 @@ change (Space, Alt-A, `setSelection()`; only with `multiple`).
 | `value(): mixed` | Its value in a `Form`: the current key, or the marked keys with `multiple`. |
 | `isFiltering(): bool` | True while typing goes into the filter. |
 | `open(): bool`, `close()`, `isOpen(): bool`, `list(): ?Select` | A dropdown's list: open it, close it unchanged, whether it is open, the list. |
-| `setItems(array $items)` | New items; the current and marked items stay (by key) where they still are; when the current one is gone, the one at its place becomes current. |
+| `setItems(array $items)` | New items; the current and marked items stay (by key) where they still are; when the current one is gone, the one at its place becomes current. Items equal to the ones it has are no change (nothing is measured again). |
 | `selected(): int\|string\|null` | The current item's key. |
 | `selection(): array` / `setSelection(array $keys)` | The marked items in item order (without `multiple`: the current one). |
 | `filter(): string` / `setFilter(string $text)` | The filter typed so far. |
@@ -441,7 +441,7 @@ In a `Dialog`, see "A form in a dialog" above.
 
 | `Button` | |
 |---|---|
-| `new Button(string $label, ?Closure $onPress = null, ...attributes)` | Drawn `[ label ]`, one row as wide as that. `$onPress($button)` when pressed: Enter, Space, or a click released on it; also the event `press`. In a `Form`, a button without `$onPress` submits it. `press(): bool` from code (false when disabled). |
+| `new Button(string\|Closure $label, ?Closure $onPress = null, ...attributes)` | Drawn `[ label ]`; a closure label (`fn() => $s->saving ? 'Saving…' : 'Save'`) is drawn again by itself when a `State` it read changes, one row as wide as that. `$onPress($button)` when pressed: Enter, Space, or a click released on it; also the event `press`. In a `Form`, a button without `$onPress` submits it. `press(): bool` from code (false when disabled). |
 
 Button and Checkbox labels take markup (`<b>Save</b>`, see [styling.md](styling.md#markup-in-text)); the width is that of the visible text.
 
@@ -497,7 +497,7 @@ $tabs->setTabs([...$open, 'new' => ['label' => 'New', 'content' => new Editor()]
 | `bool $hints = false` | Show the number of each of the first nine tabs (what Alt-number selects). A prop. |
 | `bool $closable = false` | A `×` on every tab (a tab's own `closable` overrides). A prop. |
 | `?Closure $onChange` | `fn(string $key, Tabs $tabs)`: the current tab changed. Also the event `change`. |
-| `?Closure $onClose` | `fn(string $key, Tabs $tabs)`: a tab is asked to close (the `×`, a middle click, Delete). It decides: call `close($key)` or `setTabs()`. Without it the tab is removed and its component disposed. The event `close` is emitted either way. |
+| `?Closure $onClose` | `fn(string $key, Tabs $tabs)`: a tab is asked to close (the `×`, a middle click, Delete). It decides: call `setTabs()` without it. Without it the tab is removed and its component disposed, and **it stays closed** while the program goes on listing it (a `render()` that passes the same tabs every time): it comes back when `setTabs()` names it as `$current`, or once a `setTabs()` without it has listed it again. The event `close` is emitted either way. |
 
 **Hidden tabs keep their state.** A content that is a component is started when the tabs are
 and lives until its tab goes (it is a kept child, see [kept-alive children](components.md#kept-alive-children)):
@@ -571,8 +571,8 @@ new Spinner('saving')                                            // ⠹ saving, 
 
 | | |
 |---|---|
-| `new ProgressBar(float\|Closure\|null $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label (markup allowed) and the percentage after it, the percentage alone without a label. A label holding `{percent}` (`58%`) or `{value}` (`0.58`) is shown with them filled in, and no percentage after. The label takes at most half the width (cut with "…"); nothing is drawn past the bar's width. Null: indeterminate, a block moving to and fro (animated by the bar itself, ten steps a second, while it is indeterminate; a bar with a value has no coroutine and renders only when its value changes). A closure value (`fn() => $state->done / 100`) is read when the bar renders, and the bar renders by itself when a `State` the closure read changes (its parent does not). `$value` and `$label` are props; `setValue(float\|Closure\|null $value, ?string $label = null)` renders only when the bar then looks different (a change below a cell, the same percentage: nothing is drawn), so it may be called from a fast loop. Style: `ProgressBar`, part `ProgressBar::bar`. |
-| `new Spinner(string $label = '', array $frames = Spinner::DOTS, float $interval = 0.08, ...attributes)` | A sign cycling through `$frames` (`Spinner::DOTS`, `Spinner::LINE`, or yours) every `$interval` seconds while it is shown, then the label. No coroutine of yours: show it while something runs, take it out of the tree after. `frame(): int`. Style: `Spinner`, part `Spinner::sign`. |
+| `new ProgressBar(float\|Closure\|null $value = 0.0, string $label = '', ...attributes)` | Filled to `$value` (0 to 1, clamped); the label (markup allowed) and the percentage after it, the percentage alone without a label. A label holding `{percent}` (`58%`) or `{value}` (`0.58`) is shown with them filled in, and no percentage after. The label takes at most half the width (cut with "…"); nothing is drawn past the bar's width. Null: indeterminate, a block moving to and fro (animated by the bar itself, ten steps a second, while it is indeterminate; a bar with a value has no coroutine and renders only when its value changes). A closure value (`fn() => $state->done / 100`) is read when the bar renders, and the bar renders by itself when a `State` the closure read changes (its parent does not); it draws only when the bar then looks different, so a closure over a value that changes a thousand times a second costs its call, not a repaint. `$value` and `$label` are props; `setValue(float\|Closure\|null $value, ?string $label = null)` renders only when the bar then looks different (a change below a cell, the same percentage: nothing is drawn), so it may be called from a fast loop. Style: `ProgressBar`, part `ProgressBar::bar`. |
+| `new Spinner(string $label = '', array $frames = Spinner::DOTS, float $interval = 0.08, ...attributes)` | A sign cycling through `$frames` (`Spinner::DOTS`, `Spinner::LINE`, or yours) every `$interval` seconds while it is shown, then the label (markup allowed: `'<b>deploying</b> v2.4'`). No coroutine of yours: show it while something runs, take it out of the tree after. `frame(): int`. Style: `Spinner`, part `Spinner::sign`. |
 
 ## Markdown
 

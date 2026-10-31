@@ -4,6 +4,99 @@ A terminal UI library for PHP built on a real terminal emulator. Think tmux as a
 window is a terminal, so a shell, `vim`, `htop` or Claude Code runs in a pane of your PHP program
 exactly as in a terminal, next to widgets that are themselves programs writing to a terminal.
 
+This is a whole program, `examples/dashboard.php` (`php examples/dashboard.php`, with
+`--inline` for the three boxes in the shell's own scrollback, `--theme=light` or `mono`):
+
+```text
+ ⠇ deploying v2.4                                                                 staging · eu-west
+╭ build ────────────────────────╮ ╭ test ─────────────────────────╮ ╭ deploy ──────────────────────╮
+│ ██░░░░░░░░░░░░░░░░░░░░░░░░ 9% │ │ ████████████████░░░░░░░░░ 63% │ │ ███████░░░░░░░░░░░░░░░░░ 30% │
+│ run 3  ▁▇█▂▂█▅▁▃▅▄▃▅▃▅▆       │ │ run 1  ▇▂▅▅▅▅▇▂▇█▁▂▇▅▅▄       │ │ run 0  ▅▁▆▅▂▁                │
+╰───────────────────────────────╯ ╰───────────────────────────────╯ ╰──────────────────────────────╯
+╭ events ────────────────────────────────────────╮ ╭ release notes ────────────────────────────────╮
+│08:46:56 ✓ build #1 done                        │ │ Release 2.4                                   │
+│08:46:57 ✓ test #1 done                         │ │                                               │
+│08:46:57 ✓ build #2 done                        │ │ • Faster start-up, half the memory            │
+│08:46:58 ✓ build #3 done                        │ │ • --json output for every command             │
+│                                                │ │ • Wide characters line up: 日本語 ✓           │
+│                                                │ │                                               │
+│                                                │ │ │ Thanks to everyone who reported bugs!       │
+│                                                │ │                                               │
+│                                                │ │                                               │
+│                                                │ │                                               │
+│                                                │ │                                               │
+│                                                │ │                                               │
+│                                                │ │                                               │
+│                                                │ │                                               │
+╰────────────────────────────────────────────────╯ ╰───────────────────────────────────────────────╯
+ ctrl+q quit
+```
+
+```php
+use phasync\Tui\Component\{Log, Markdown, ProgressBar, Spinner};
+use phasync\Tui\Element\{Box, Column, Help, Row, Text};
+use phasync\Tui\{State, Tui};
+
+$jobs = ['build' => 0.07, 'test' => 0.15, 'deploy' => 0.4];          // seconds per step
+$s = new State(['done' => array_map(fn() => 0.0, $jobs), 'runs' => array_map(fn() => 0, $jobs), 'steps' => array_map(fn() => [], $jobs)]);
+$log = new Log();
+$notes = new Markdown(<<<'MD'
+    # Release 2.4
+    - **Faster** start-up, half the memory
+    - `--json` output for every command
+    - Wide characters line up: 日本語 ✓
+    > Thanks to everyone who reported bugs!
+    MD);
+$spark = fn(array $steps) => implode('', array_map(fn(float $v) => mb_substr(' ▁▂▃▄▅▆▇█', (int) min(8, $v * 9), 1), $steps));
+$box = fn(string $job) => new Box(new Column([
+    new ProgressBar(fn() => $s->done[$job], label: '{percent}'),
+    new Text(fn() => "<dim>run</dim> {$s->runs[$job]}  <span class=\"text-accent\">{$spark($s->steps[$job])}</span>"),
+]), "<b>$job</b>", class: 'grow px-1 hover:border-accent');
+$boxes = fn() => new Row(array_map($box, array_keys($jobs)), class: 'flex-col md:flex-row md:gap-1');
+$screen = fn() => new Column([
+    new Row([new Spinner('<b>deploying</b> v2.4'), new Text('staging · eu-west', class: 'grow text-right text-muted')], class: 'px-1'),
+    $boxes(),
+    new Row([new Box($log, 'events', class: 'grow'), new Box($notes, 'release notes', class: 'grow px-1')], class: 'grow flex-col md:flex-row md:gap-1'),
+    new Help(class: 'px-1'),
+]);
+
+$theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
+\fiber\run(function () use ($jobs, $s, $log, $screen, $boxes, $theme, $argv) {
+    $running = true;
+    foreach ($jobs as $job => $every) {
+        \fiber\go(function () use ($job, $every, $s, $log, &$running) {
+            while ($running) {
+                \fiber\sleep($every * (0.5 + mt_rand() / mt_getrandmax()));
+                $step = mt_rand(2, 12) / 100;
+                $s->steps = [...$s->steps, $job => [...array_slice($s->steps[$job], -15), $step * 8]];
+                $s->done = [...$s->done, $job => min(1.0, $s->done[$job] + $step)];
+                if ($s->done[$job] >= 1.0) {
+                    $s->runs = [...$s->runs, $job => $s->runs[$job] + 1];
+                    $log->append(date('H:i:s') . " <span class=\"text-success\">✓</span> $job #{$s->runs[$job]} done\n");
+                    $s->done = [...$s->done, $job => 0.0];
+                }
+            }
+        });
+    }
+    try {
+        in_array('--inline', $argv, true) ? Tui::inline($boxes, theme: $theme) : Tui::run($screen, theme: $theme);
+    } finally {
+        $running = false;       // the jobs end with the screen, so fiber\run() returns
+    }
+});
+```
+
+Three jobs run in coroutines and write their progress into a `State`; the screen is closures
+over that state, so each `ProgressBar` and `Text` is drawn again when what it read changes,
+and nothing else is. The look is utility classes (`grow`, `px-1`, `text-muted`,
+`flex-col md:flex-row`: stacked under 80 columns) on the default theme (rounded borders, one
+accent colour, the focused window in it). [docs/cookbook.md](docs/cookbook.md) has ten more
+screens like it: a log tail with a filter, a form in a dialog, a file list with a preview, a
+tabbed shell host, a table with a search box, a chat pane, settings, a live chart and a
+Markdown viewer with a table of contents.
+
+The smallest program:
+
 ```php
 use phasync\Tui\{State, Tui};
 use phasync\Tui\Component\ProgressBar;
@@ -114,8 +207,10 @@ One primitive, one structure:
    `Terminal`, `Log`, `TextInput`, `ListView`, `StatusBar`, `Box`. A closure is a component
    too: `Tui::run(fn() => ...)` renders it again when the state it read changes.
 7. **Styling** ([docs](docs/styling.md)): Tailwind's utility classes in `class:`, a stylesheet
-   with variables and states, symfony/console markup in text (`<b>`, `<fg=red>`); colours
-   drawn in what the terminal has.
+   with variables and states, symfony/console markup in text (`<b>`, `<fg=red>`); the themes
+   `dark`, `light` and `mono`, chosen by the terminal's background; colours drawn in what the
+   terminal has.
+9. **Cookbook** ([docs](docs/cookbook.md)): ten screens of under forty lines each, to copy from.
 8. **Widgets** ([docs](docs/widgets.md)): `Editor` (with history and completion), `Select`
    (a list, or a dropdown), `Table`, `Dialog` and `Confirm`, `Form` with `Button` and
    `Checkbox`, `ScrollView`, `ProgressBar`, `Spinner`, `Markdown`.
@@ -266,9 +361,11 @@ stays, with its message and the field marked `:invalid`; with one, `Confirm` ask
 answer arrives in the coroutine that awaits it. `examples/form.php` is a larger form.
 
 **Styling where it is used.** `class:` takes Tailwind's utility classes (padding, gap, borders,
-colours, grow, widths, `focus:`, `hover:` and the width variants `sm:` `md:` `lg:`), and text
-takes symfony/console's markup tags. Both resolve through the stylesheet, so a theme can set
-everything a class sets; the terminal draws truecolour in the nearest colours it has.
+colours, grow, widths, `focus:`, `hover:`, `selected:` and the width variants `sm:` `md:`
+`lg:` `xl:`, from 60, 80, 100 and 140 columns on), and text takes symfony/console's markup
+tags. Both resolve through the stylesheet, so a theme can set everything a class sets; the
+terminal draws truecolour in the nearest colours it has. Three themes ship, `dark`, `light`
+and `mono`, chosen by the terminal's background or `Tui::run($root, theme: 'light')`.
 ([docs](docs/styling.md))
 
 ```php
@@ -287,8 +384,8 @@ Tui::run(fn() => new Column([
 ], class: 'p-1'));
 ```
 
-On a terminal 100 columns or wider the two boxes stand side by side, on a narrower one on top
-of each other; resizing across that width lays the screen out again.
+On a terminal 100 columns or wider (`lg:`) the two boxes stand side by side, on a narrower one
+on top of each other; resizing across that width lays the screen out again.
 
 **Markdown, as it arrives.** A `Markdown` pane renders CommonMark (headings, lists, code with
 highlighting, tables, links) and takes text in chunks that end anywhere, as a model's answer
@@ -439,7 +536,10 @@ included.
 - `examples/host.php <command...>`: any command in a window, e.g. `php examples/host.php claude`.
 - `examples/coroutine-pane.php`: a shell next to a PHP coroutine printing progress bars and
   colours (with `echo` under ext-phasync).
-- `examples/dashboard.php`: graphs and boxes drawn with escape sequences from coroutines.
+- `examples/dashboard.php`: the dashboard at the top: three jobs, their events and release
+  notes in under sixty lines without a class; `--inline`, `--theme=light|mono`.
+- `examples/graphs.php`: bar charts drawn with escape sequences from coroutines, by components
+  that are classes.
 - `examples/inline-progress.php`: five progress bars and a total under the shell's output
   (inline mode), finished jobs printed above them; `--fullscreen` for the same full screen.
 - `examples/markdown.php [file.md]`: a Markdown document streamed in chunks, followed as it

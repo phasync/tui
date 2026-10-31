@@ -17,9 +17,18 @@ use phasync\Tui\Tui;
 use function fiber\run;
 use function fiber\sleep;
 
-it('runs the README\'s first code block, the one-file program, on an in-memory terminal', function () {
+it('opens with the dashboard, as examples/dashboard.php has it', function () {
     $readme = (string) file_get_contents(__DIR__ . '/../../README.md');
+    $dashboard = (string) file_get_contents(__DIR__ . '/../../examples/dashboard.php');
     preg_match('/```php\n(.*?)```/s', $readme, $m);
+    expect($m[1])->toBe(substr($dashboard, strpos($dashboard, 'use phasync')))
+        ->and($readme)->toContain('docs/cookbook.md')
+        ->and(strpos($readme, '╭ build'))->toBeLessThan(strpos($readme, '```php'));     // the screenshot first
+});
+
+it('runs the README\'s one-file program on an in-memory terminal', function () {
+    $readme = (string) file_get_contents(__DIR__ . '/../../README.md');
+    preg_match('/```php\n((?:(?!```).)*Working….*?)```/s', $readme, $m);
     expect($m[1])->toContain('Tui::inline(fn() => new Column([')->toContain('fiber\go(');
     // as written, but faster, and headless: the screen is read, then Ctrl-Q
     $code = str_replace(['fiber\sleep(0.05)', 'Tui::inline(', "]));\n});"], ['fiber\sleep(0.002)', '$t = Tui::headless(', "]), 60, 8, inline: true);\n    readmeWorking(\$t);\n});"], $m[1], $count);

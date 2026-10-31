@@ -221,19 +221,27 @@ protected function render(): Element
 
 | Element | What it is |
 |---|---|
-| `Column(array $children, int $gap = 0)` | Children on top of each other (as `Split::vertical()`); each as high as its `height`. |
-| `Row(array $children, int $gap = 0)` | Children side by side (as `Split::horizontal()`); each as wide as its `width`. |
+| `Column(array $children, int $gap = 0, padding: null, align: null)` | Children on top of each other (as `Split::vertical()`); each as high as its `height`. `padding:` (`1`, `'0 1'`) and `align:` (`start`, `center`, `end`, `stretch`: where the children go across it) are the `padding` and `align-items` styles. |
+| `Row(array $children, int $gap = 0, padding: null, align: null)` | Children side by side (as `Split::horizontal()`); each as wide as its `width`; `padding:` and `align:` as for a `Column`. |
 | `Layers(array $children)` | Children over each other, the first at the bottom (as `Stack`); each `width` x `height`, placed by its `align` style (`left` top-left, `center`, `right` top-right). |
-| `Box(Element $child, string\|Closure $title = '')` | A border with a title around one element; border line, colour, `padding` and `title-align` from the stylesheet or classes (`border-double title-center p-1`); the title takes markup, and may be a closure (drawn again by itself). |
-| `Text(string\|array\|Closure $content, bool $wrap = true)` | Text, wrapped between words (or cut with "…" when `wrap` or the `wrap` style is false: `truncate`), aligned by the `align` style; content is a string (markup and SGR sequences allowed), a list of strings and `Span`s, or a closure returning either (drawn again by itself when the state it read changes). `Text::raw($s)` shows `$s` without markup. |
+| `Box(Element $child, string\|Closure $title = '', padding: null)` | A border with a title around one element; border line, colour, `padding` and `title-align` from the stylesheet or classes (`border-double title-center p-1`); the title takes markup, and may be a closure (drawn again by itself). |
+| `Text(string\|array\|Closure $content, bool $wrap = true, align: null)` | Text, wrapped between words (or cut with "…" when `wrap` or the `wrap` style is false: `truncate`), aligned by `align:` (`left`, `center`, `right`: the `align` style); content is a string (markup and SGR sequences allowed), a list of strings and `Span`s, or a closure returning either (drawn again by itself when the state it read changes). `Text::raw($s)` shows `$s` without markup. |
 | `Span(string $text, $class, $style)` | A run of text in another style, inside a `Text`; takes markup. |
 | `Help(?Component $for = null)` | The keys in force for the focused component (or `$for`) and its parents, as "key action" pairs. |
 | any `Component` | Its surface, where it is placed: from `child()`, or `new` (see "Props"). |
 
 **Attributes.** Every element takes `key`, `id`, `class`, `style` (inline style properties),
-`width`, `height` and `disabled` as named arguments; a component takes them with `with()`
-(`$this->child('name', fn() => new Editor())->with(id: 'name', height: 1)`). Read them with
-`attribute('class')`.
+`width`, `height`, `disabled`, `selected`, `state` (states of its own for the stylesheet:
+`state: 'error'` matches `'Text:error'`), `onFocus` and `onBlur` as named arguments; a
+component takes them with `with()` (`$this->child('name', fn() => new Editor())->with(id:
+'name', height: 1)`). Read them with `attribute('class')`. A `style:` given beside
+`padding:`/`align:` wins over them. `onFocus` and `onBlur` are called with no arguments when
+the focus comes into the element (onto a component in it) or leaves it, after the render that
+moved it, blurs before focuses; a focus that passes through within one frame is not reported:
+
+```php
+new Column([$this->child('name', fn() => new Editor())], onFocus: fn() => $this->state->help = 'Your full name')
+```
 
 **Sizes.** In a `Column` a child's `height`, in a `Row` its `width`, in `Layers` both: cells,
 `'25%'`, `'1fr'` (a share of what is left after the others), or `'auto'` (what its content
@@ -284,7 +292,7 @@ from there); bind them for a group of its own: `'tab' => 'focusNext', 'shift+tab
 of the room left along its parent, at least what it needs), `flex-shrink: 0` (`shrink-0`: never
 less than it needs) and `display: none` (`hidden`: left out, as `null` would be); a `Column` or
 `Row` takes `padding`, `gap` (over its `gap:` argument), `flex-direction` (`flex-row`,
-`flex-col`: a `Row` laid out as a column and the other way round, for `flex-col lg:flex-row`),
+`flex-col`: a `Row` laid out as a column and the other way round, for `flex-col md:flex-row`),
 `align-items` (`items-center`: children as large as their content across, centred) and
 `justify-content` (`justify-between`: room left spread between the children).
 
@@ -444,17 +452,23 @@ $app->setStylesheet(Stylesheet::default()->with([
 ], vars: ['accent' => 'magenta']));
 ```
 
+A component that renders a `Box` takes its border from its own classes too: `$this->child('log',
+fn() => new Log())->with(class: 'border-accent')` inside a `Box` that sets no border colour of
+its own colours that box (a border colour on an element without a border passes down to the
+nearest `Box` in it).
+
 Or with **utility classes** and no stylesheet at all: `class: 'border-round border-sky-500 p-1
-grow text-slate-300'`, `focus:bg-sky-800`, `flex-col lg:flex-row`. The full vocabulary, the
+grow text-slate-300'`, `focus:bg-sky-800`, `flex-col md:flex-row`. The full vocabulary, the
 properties, markup in text (`<b>`, `<fg=red>`) and how colours reach terminals of 16 and 256
 colours are in [styling.md](styling.md).
 
 Selectors: a type (the element's or component's class name; parents' names match too) or `*`,
-`#id`, `.class`, states `:focused` (on the focus path), `:disabled`, `:hover` (components, under
-the mouse), `:selected` and a component's own, the screen's width class `:sm`/`:md`/`:lg`, and
+`#id`, `.class`, states `:focused` (on the focus path), `:disabled`, `:hover` (under the mouse), `:selected`,
+an element's `state:` and a component's own, the screen's breakpoints `:sm`/`:md`/`:lg`/`:xl`
+(from 60, 80, 100 and 140 columns), and
 widget parts `::part` with their own states. Properties: `color`, `background`, `bold`, `dim`,
 `italic`, `underline`, `inverse`, `strike`, `border` (kind `single`/`round`/`double`/`heavy`/
-`ascii` and/or colour, or `none`), `title-align`, `padding` (and its sides), `margin` (and its
+`ascii`, colour, `bold`/`dim`/`plain`, or `none`), `shadow`, `title-align`, `padding` (and its sides), `margin` (and its
 sides), `align`, `wrap`, `width`, `height`, `max-width`, `max-height` (cells: the most an
 `'auto'` size, and an overlay's measured size, may take), `flex-grow`, `flex-shrink`,
 `display`, and for containers `gap`, `flex-direction`, `align-items`, `justify-content`.
@@ -804,6 +818,7 @@ any other method.
 | `style(string\|array\|null $part = null, string ...$states): ComputedStyle` | Its look from the stylesheet in its current states, or that of a part, or of several parts composed (innermost last; see "Stylesheets"). |
 | `markup(string $text, string\|array\|null $part = null, string ...$states): string` (protected) | `$text` with its markup (`<b>`, `<fg=red>`, see [styling.md](styling.md#markup-in-text)) turned into escape sequences in the style of the component or of its part: how a widget draws a label that takes markup. |
 | `stylesheet(): Stylesheet` / `setStylesheet(Stylesheet $s)` | The stylesheet in force (its own, else its parent's, else the default); set one for the subtree. |
+| `theme(): string` / `setTheme(?string $name)` | The theme in force (`dark`, `light`, `mono`: its own, else its parent's, else the one `Tui::run(theme:)` or the terminal's background chose); set one for the subtree, null to follow the parent. A stylesheet built with `->with()` is replayed on the theme (see [styling.md](styling.md#themes)). |
 | `bind(array $bindings, ?string $for = null): static` | Change the keys of this component, or of every component of class `$for` below it (see "Key bindings"). `bindingsInForce()` lists the keys in force. |
 | `types(): array` | The type names it matches in a stylesheet (its class's short name and its parents'). |
 | `focusNext(bool $wrap = true): bool`, `focusPrevious(bool $wrap = true): bool` | Move the focus to the next (previous) field inside it, around; with `$wrap` false, false at the last (first) one so the key goes on. Bind them to Tab and Shift-Tab for a group of fields of its own (unbound, Tab walks every component that takes keys; see "Focus"). |
@@ -939,7 +954,9 @@ Your own components emit events with `emit()`; document which.
 
 An exception in a child's hooks, handlers or coroutines is contained to that child: it is
 disposed with its children (their programs hung up) and its rectangle shows the error
-(`✖ RuntimeException: ...`); the rest of the program keeps running. An exception in the root
+(`✖ RuntimeException: message`, wrapped to the rectangle and cut with "…" when it does not fit);
+the rest of the program keeps running. The same holds for a closure given as element content
+(`new Text(fn() => ...)`, a `Box` title): its exception shows in the element's place. An exception in the root
 component ends the program (see "How a program ends").
 
 ## Text components

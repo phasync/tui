@@ -46,7 +46,8 @@ stylesheet's rules (`.title`) and is otherwise ignored, never an error.
 | `border` | `border: true` | a border, of the kind the stylesheet sets for it (a `Box`: round), else single lines |
 | `border-single`, `border-round`, `border-double`, `border-heavy`, `border-ascii` | `border` | a border of that line |
 | `border-none` | `border: none` | no border |
-| `border-{color}` | `border` (its colour) | the border's colour (a border of single lines if it has none) |
+| `border-{color}` | `border` (its colour) | the border's colour; on an element without a border (a component), the colour of the nearest `Box` in it |
+| `shadow`, `shadow-none` | `shadow` | a shadow under and right of a window (a `Dialog` has one in every theme) |
 | `title-left`, `title-center`, `title-right` | `title-align` | where a border's title goes |
 | `text-{color}` | `color` | the text colour |
 | `bg-{color}` | `background` | the background (the whole rectangle of the element) |
@@ -72,24 +73,41 @@ stylesheet's rules (`.title`) and is otherwise ignored, never an error.
 the families slate, gray, zinc, neutral, stone, red, orange, amber, yellow, lime, green,
 emerald, teal, cyan, sky, blue, indigo, violet, purple, fuchsia, pink, rose; the shades 50, 100,
 200, ... 900, 950), one of the 16 terminal colours (`red`, `bright-blue`, `gray`, `white`), a
-palette index (`208`), or a hex value in brackets (`[#ff5500]`). The Tailwind colours are
-truecolour; the 16 names follow the user's terminal theme.
+palette index (`208`), or a hex value in brackets (`[#ff5500]`), or one of the theme's
+colours `accent`, `muted`, `panel`, `error`, `success`, `warning` (`text-accent`,
+`border-muted`, `bg-panel`), which follow the theme. The Tailwind colours are truecolour; the 16
+names follow the user's terminal theme.
 
 **Variants** are prefixes that apply a class only sometimes:
 
 | Variant | Applies when |
 |---|---|
 | `focus:` | the element is on the focus path (`:focused`): `focus:bg-sky-800` |
-| `hover:` | the mouse is over it (components; it then follows the mouse) |
+| `hover:` | the mouse is over it, on an element as on a component: `hover:border-accent` (the screen then follows the mouse) |
 | `disabled:` | it was made with `disabled: true` |
-| `selected:` | it is in the state `selected` (a component's `setStyleState('selected')`) |
-| `sm:` | the screen (the root surface) is under 60 columns wide |
-| `md:` | the screen is 60 to 99 columns wide |
-| `lg:` | the screen is 100 columns or wider |
+| `selected:` | it was made with `selected: true`, or a component is in the state (`setStyleState('selected')`) |
+| `sm:` | the screen (the root surface) is 60 columns wide or wider |
+| `md:` | 80 columns or wider |
+| `lg:` | 100 columns or wider |
+| `xl:` | 140 columns or wider |
 
-Variants combine (`lg:focus:bold`). The width variants name one range each, so a layout that
-puts boxes side by side on a wide terminal and stacks them otherwise is `class: 'flex-col
-lg:flex-row'`; at a resize across a breakpoint the screen is laid out again by itself.
+Variants combine (`lg:focus:bold`). The width variants are minimum widths, as in Tailwind: a
+class without one is the narrow layout, and each breakpoint overrides it from its width up, a
+wider one over a narrower one whatever order they are written in. A layout that puts boxes side
+by side from 80 columns and stacks them below is `class: 'flex-col md:flex-row'`; at a resize
+across a breakpoint the screen is laid out again by itself.
+
+`selected:` is how a screen built from elements marks a row as current without a component of
+its own; `state:` gives an element any other states, for the stylesheet's selectors
+(`state: 'error'` matches `'Text:error'`):
+
+```php
+new Column(array_map(fn($f) => new Text($f, selected: $f === $s->file,
+    class: 'px-1 selected:bg-accent selected:text-black'), $files));
+```
+
+`hover:` on an element applies to the element under the mouse and its parents; a screen with no
+`hover:` class anywhere does not follow the mouse at all.
 
 **Cascade.** The stylesheet's rules come first (by specificity), then the utility classes in the
 order they are written (a later one wins), then the element's inline `style:`.
@@ -117,14 +135,15 @@ $app->setStylesheet(Stylesheet::default()->with([
     'Box:focused' => ['border' => 'double $accent'],
     '#name' => ['width' => 30],
     'Select::row:current' => ['background' => '$accent', 'color' => 'black'],
-    'Row:sm' => ['flex-direction' => 'column'],        // the width classes are states too
+    'Row.panes:md' => ['flex-direction' => 'row'],    // the breakpoints are states too
 ], vars: ['accent' => 'magenta']));
 ```
 
 **Selectors**: a type (the element's or component's class name; parents' names match too) or
-`*`, then `#id`, `.class`, states (`:focused`, `:disabled`, `:hover`, `:selected` and a
-component's own, `:sm`, `:md`, `:lg`), and widget parts `::part` with their own states. There
-are no combinators: colours and attributes inherit down the tree instead.
+`*`, then `#id`, `.class`, states (`:focused`, `:disabled`, `:hover`, `:selected`, an
+element's `state:` and a component's own, the breakpoints `:sm`, `:md`, `:lg`, `:xl`), and
+widget parts `::part` with their own states. There are no combinators: colours and attributes
+inherit down the tree instead.
 
 **Properties**:
 
@@ -132,7 +151,8 @@ are no combinators: colours and attributes inherit down the tree instead.
 |---|---|
 | `color`, `background` | a colour (as above, without brackets: `'#ff5500'`), `default`, or a variable `'$accent'` |
 | `bold`, `dim`, `italic`, `underline`, `inverse`, `strike` | true or false |
-| `border` | `'none'`, true, a kind of line (`single`, `round`, `double`, `heavy`, `ascii`) and/or a colour: `'round $accent'` |
+| `border` | `'none'`, true, a kind of line (`single`, `round`, `double`, `heavy`, `ascii`), a colour, and `bold`, `dim` or `plain` for the lines: `'round $accent'`, `'single dim'`. A colour or attribute alone changes a border the element has (or passes to the `Box` of a component) and draws none |
+| `shadow` | a colour (the shade cast under and right of a window), or `'none'` |
 | `title-align` | `left`, `center`, `right` |
 | `padding`, `margin` | `1`, `'0 1'` (top/bottom, left/right), `'0 1 0 1'` (top, right, bottom, left); or one side: `padding-top`, `margin-left`, ... |
 | `align` | `left`, `center`, `right`: where text goes; where a layer of `Layers` goes |
@@ -144,9 +164,26 @@ are no combinators: colours and attributes inherit down the tree instead.
 | `gap`, `flex-direction`, `align-items`, `justify-content` | on a `Column` or `Row` (see the table of classes) |
 
 Colours and text attributes inherit (a `Box` with `color: green` makes its `Text` green unless
-a rule for the `Text` says otherwise); the others apply to the element itself. The default
-theme uses the 16 terminal colours and the variables `accent`, `muted`, `panel`, `error`,
-`success`, `warning`, so it follows the terminal's palette on dark and light backgrounds.
+a rule for the `Text` says otherwise); the others apply to the element itself.
+
+## Themes
+
+Three themes ship: `dark` (the default), `light` and `mono`. Each is a stylesheet,
+`Stylesheet::theme('light')`, with the variables `accent`, `muted`, `panel`, `error`,
+`success`, `warning` and `shadow` and the rules for every widget; `mono` draws no colour at all
+and marks focus, selection and errors with bold, dim and underline instead, for terminals
+without colour and for people who prefer none.
+
+A program picks one with `Tui::run($root, theme: 'light')` (also `Tui::inline()` and
+`Tui::headless()`); without it the terminal's background decides: at attach the device asks for
+it (OSC 11), and a light background gets `light`, a dark or silent one `dark`
+(`FakeTerminal` answers as its `background:` says, `'dark'`, `'light'` or `null` for silent).
+The theme can change while the program runs (`$component->setTheme('mono')`);
+`$component->theme()` tells which is in force.
+
+A program's own sheet is built on a theme with `->with()` and keeps its rules and variables
+whatever the theme is: `Stylesheet::default()->with([...])` set on the root is replayed on
+`light` or `mono` when that is the theme, so a program's rules always override the theme's.
 
 A component that draws itself asks for its look with `$this->style()` and `$this->style('part',
 'state')` (see [components.md](components.md#styles)).
