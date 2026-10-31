@@ -7,7 +7,10 @@
  */
 
 use phasync\Tui\Component;
+use phasync\Tui\Component\Checkbox;
 use phasync\Tui\Component\Editor;
+use phasync\Tui\Component\Log;
+use phasync\Tui\Component\Select;
 use phasync\Tui\Component\Table;
 use phasync\Tui\Element;
 use phasync\Tui\Element\Column;
@@ -66,4 +69,95 @@ it('shares the room between auto items that need more than their share and fr it
         ->and(Size::distribute([['auto', 50.0], ['fr', 2.0]], 30))->toBe([10, 20])
         ->and(Size::distribute([['auto', 2.0], ['auto', 3.0]], 24))->toBe([2, 3])
         ->and(Size::distribute([['cells', 30.0], ['auto', 5.0]], 24))->toBe([24, 0]);
+});
+
+it('sizes a container without a height by its children: a toolbar Row of one-line fields is one row', function () {
+    $app = new class () extends Component {
+        protected function render(): Element
+        {
+            return new Column([
+                new Row([
+                    $this->child('a', fn() => new Editor('first', maxLines: 1)),
+                    $this->child('b', fn() => new Editor('second', maxLines: 1)),
+                    $this->child('c', fn() => new Select(['x' => 'pick'], dropdown: true)),
+                ], gap: 1),
+                $this->log(),
+                new Text('status'),
+            ]);
+        }
+
+        public function log(): Log
+        {
+            return $this->child('log', fn() => new Log());
+        }
+    };
+    mountOn($app, 60, 20, function (FakeTerminal $t, Component $app) {
+        $app->log()->append("log line\n");
+        frame();
+        $lines = explode("\n", $t->text());
+        expect($lines[0])->toStartWith('first')->toContain('second')->toContain('pick')
+            ->and($lines[1])->toBe('log line')        // one row: the Log right under it takes the rest
+            ->and($lines[19])->toBe('status');
+    });
+});
+
+it('sizes a Column of one-row Texts and a Column of row components without explicit sizes', function () {
+    $app = new class () extends Component {
+        protected function render(): Element
+        {
+            return new Column([
+                new Column([new Text('one'), new Text('two')]),
+                new Column([
+                    $this->child('x', fn() => new Checkbox('first')),
+                    $this->child('y', fn() => new Checkbox('second')),
+                ]),
+                new Text('after'),
+                $this->child('rest', fn() => new Log()),
+            ]);
+        }
+    };
+    mountOn($app, 30, 12, function (FakeTerminal $t) {
+        frame();
+        $lines = explode("\n", $t->text());
+        expect($lines[0])->toBe('one')->and($lines[1])->toBe('two')
+            ->and($lines[2])->toContain('first')->and($lines[3])->toContain('second')
+            ->and($lines[4])->toBe('after');
+    });
+});
+
+it('gives a container a share of the room when a child takes any room', function () {
+    $app = new class () extends Component {
+        protected function render(): Element
+        {
+            return new Column([
+                new Row([new Text('left'), $this->child('log', fn() => new Log())]),
+                new Text('under'),
+            ]);
+        }
+    };
+    mountOn($app, 30, 10, function (FakeTerminal $t) {
+        frame();
+        expect(explode("\n", $t->text())[9])->toBe('under');
+    });
+});
+
+it('caps an auto size with max-height and max-width', function () {
+    $app = new class () extends Component {
+        protected function render(): Element
+        {
+            return new Column([
+                new Text("1\n2\n3\n4\n5", style: ['max-height' => 2]),
+                $this->child('log', fn() => (new Log())->with(style: ['max-height' => 3])),
+                new Row([new Text(str_repeat('w', 30), wrap: false, style: ['max-width' => 5]), new Text('|')]),
+                new Text('end'),
+            ]);
+        }
+    };
+    mountOn($app, 40, 12, function (FakeTerminal $t) {
+        frame();
+        $lines = explode("\n", $t->text());
+        expect($lines[0])->toBe('1')->and($lines[1])->toBe('2')->and($lines[2])->toBe('')
+            ->and($lines[5])->toStartWith('wwww…|')     // cut to 5 columns
+            ->and($lines[6])->toBe('end');
+    });
 });

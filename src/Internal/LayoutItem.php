@@ -22,6 +22,9 @@ final class LayoutItem
     public string $align = 'left';
     /** Something in it takes the focus (a component). */
     public bool $focusable = false;
+    /** The most cells its content size may take (`max-width`, `max-height`), null for no limit. */
+    public ?int $maxWidth = null;
+    public ?int $maxHeight = null;
 
     public function __construct(
         public readonly Surface $surface,
@@ -31,9 +34,17 @@ final class LayoutItem
     ) {
     }
 
-    /** The outer size the content needs within $cols x $rows, null when it takes any. */
+    /**
+     * The outer size the content needs within $cols x $rows, null when it takes any; capped by
+     * `max-width`/`max-height` (an item that takes any room takes up to them).
+     */
     public function natural(int $cols, int $rows): ?array
     {
-        return $this->measure === null ? null : ($this->measure)($cols, $rows);
+        $n = $this->measure === null ? null : ($this->measure)(min($cols, $this->maxWidth ?? $cols), min($rows, $this->maxHeight ?? $rows));
+        if ($this->maxWidth === null && $this->maxHeight === null) {
+            return $n;
+        }
+        [$w, $h] = $n ?? [$cols, $rows];
+        return [min($w, $this->maxWidth ?? $w), min($h, $this->maxHeight ?? $h)];
     }
 }

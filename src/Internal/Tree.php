@@ -142,7 +142,9 @@ final class Tree
             return $item;
         }
         if ($node instanceof Column || $node instanceof Row || $node instanceof Layers) {
-            $item = $this->frame(new LayoutItem($surface), $node, $style, '1fr', '1fr');
+            // as large as its children need ('auto'), so a toolbar Row is one row; a child that
+            // takes any room (null measure) makes it take a share ('1fr', see ElementLayout)
+            $item = $this->frame(new LayoutItem($surface), $node, $style, 'auto', 'auto');
             $item->layout = $this->container($node, $path, $sheet, $style);
             foreach ($item->layout->items as $child) {
                 $item->focusable = $item->focusable || $child->focusable;
@@ -176,6 +178,8 @@ final class Tree
     {
         $item->width = $node->attribute('width') ?? $style->width ?? $width;
         $item->height = $node->attribute('height') ?? $style->height ?? $height;
+        $item->maxWidth = $style->maxWidth;
+        $item->maxHeight = $style->maxHeight;
         $item->border = $style->border;
         $item->borderStyle = $style->borderStyle;
         $item->align = $style->align;

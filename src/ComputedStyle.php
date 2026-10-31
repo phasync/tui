@@ -22,6 +22,8 @@ final class ComputedStyle
      * @param int|string|null  $width       the width asked for (cells, `'50%'`, `'1fr'`, `'auto'`), null if none
      * @param int|string|null  $height      the height asked for, null if none
      * @param bool             $hoverAware  @internal a `:hover` rule was considered for it
+     * @param int|null         $maxWidth    the most columns its content size may take (`max-width`), null for no limit
+     * @param int|null         $maxHeight   the most rows its content size may take (`max-height`), null for no limit
      */
     public function __construct(
         public readonly Style $text,
@@ -32,6 +34,8 @@ final class ComputedStyle
         public readonly int|string|null $width = null,
         public readonly int|string|null $height = null,
         public readonly bool $hoverAware = false,
+        public readonly ?int $maxWidth = null,
+        public readonly ?int $maxHeight = null,
     ) {
     }
 

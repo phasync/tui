@@ -14,7 +14,10 @@ use phasync\Tui\Element;
  *
  * Each child is as wide as its `width` says (cells, `'25%'`, `'1fr'` for a share of the columns
  * left, `'auto'` for what its content needs); without one, text and boxes take what their
- * content needs, and components and containers share what is left. Every child is as high as
+ * content needs, components what their `measure()` says, and containers what their children
+ * need (so a toolbar `Row` of one-line fields and buttons in a `Column` is one row high); a
+ * component that takes any room, and a container with one in it, share what is left. Every
+ * child is as high as
  * the row. `$gap` blank columns go between the children. Null children are left out, for
  * `$open ? $panel : null`.
  */

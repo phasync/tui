@@ -30,7 +30,9 @@ namespace phasync\Tui;
  * what is left out stays as a less specific rule set it); `padding` (cells inside the border:
  * `1`, `'0 1'` for top/bottom and left/right, or `'0 1 0 1'` top, right, bottom, left); `align`
  * (`left`, `center`, `right`: where text goes in its box, and where a layer of `Layers` goes);
- * `width`, `height` (as `Column`/`Row` sizes take them: cells, `'25%'`, `'1fr'`, `'auto'`).
+ * `width`, `height` (as `Column`/`Row` sizes take them: cells, `'25%'`, `'1fr'`, `'auto'`);
+ * `max-width`, `max-height` (cells: the most an element sized by its content, `'auto'`, may
+ * take, and an overlay: a completion list of up to 8 rows, `['max-height' => 8]`).
  * Colours and text attributes inherit: a `Box` with `color: green` makes its `Text` green
  * unless a rule for the `Text` says otherwise. The others apply to the element itself.
  *
@@ -50,7 +52,7 @@ final class Stylesheet
     private const ATTRS = ['bold' => Style::BOLD, 'dim' => Style::DIM, 'italic' => Style::ITALIC,
         'underline' => Style::UNDERLINE, 'inverse' => Style::INVERSE, 'strike' => Style::STRIKE];
     private const PROPERTIES = ['color', 'background', 'bold', 'dim', 'italic', 'underline', 'inverse', 'strike',
-        'border', 'padding', 'align', 'width', 'height'];
+        'border', 'padding', 'align', 'width', 'height', 'max-width', 'max-height'];
 
     /** @var list<array{array<string, mixed>, list<array{list<string>, ?string, list<string>, list<string>, ?string, list<string>}>, array{int,int,int}, int}> rules: properties, selectors, specificity, order */
     private array $rules = [];
@@ -318,6 +320,8 @@ final class Stylesheet
             isset($set['width']) ? $this->value($set['width']) : null,
             isset($set['height']) ? $this->value($set['height']) : null,
             $hoverAware,
+            isset($set['max-width']) ? max(0, (int) $this->value($set['max-width'])) : null,
+            isset($set['max-height']) ? max(0, (int) $this->value($set['max-height'])) : null,
         );
     }
 
