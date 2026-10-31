@@ -173,3 +173,21 @@ it('runs tree: a folder loads its entries with a spinner, keys and type-to-find 
     @rmdir("$dir/alpha");
     @rmdir($dir);
 });
+
+it('runs tabs: switching, a shell that goes on in a hidden tab, adding and closing tabs', function () {
+    example('tabs.php', [], function (FakeTerminal $t, Terminal $app) {
+        expect($t->waitFor('1 Shell', 10))->toBeTrue()->and($t->text())->toContain('2 Log')->toContain('3 Help ×');
+        expect($t->waitFor(fn() => str_contains($t->text(), '$'), 10))->toBeTrue();
+        $t->type("echo before\n");
+        $t->press('alt+2');
+        expect($t->waitFor('tick', 5))->toBeTrue()->and($t->text())->not->toContain('echo before');
+        $t->press('alt+1');
+        expect($t->waitFor('echo before'))->toBeTrue();
+        $t->press('ctrl+n');
+        expect($t->waitFor('Note 1 ×'))->toBeTrue()->and($t->text())->toContain('Close me');
+        $t->press('escape', 'delete');
+        expect($t->waitFor(fn() => !str_contains($t->text(), 'Note 1'), 5))->toBeTrue();
+        $t->press('ctrl+q');
+        expect($app->pty()->wait(5))->toBe(0);
+    });
+});
