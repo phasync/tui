@@ -59,6 +59,23 @@ README.md and docs/.
       2.5-2.8 ms. A Tab is faster; the `keys` median is higher because the background bars
       frame (every 100 ms) went from 37 to 20 ms, so the governor keeps the clock lower
       between them (schedutil follows the load): the bench mode measures the CPU clock there.
+      Continuation 4 (2026-10-31), no code changed: the paced cost is the machine, measured
+      three ways. (1) getrusage() around each paced bars frame: CPU time 19.7 ms = wall time
+      19.7 ms (7.4 = 7.4 back to back), so the frame waits for nothing; it runs slower. (2) A
+      fixed pure-PHP loop with no library code costs 7.0 ms back to back, 7.3 after a 5 ms
+      sleep, 15.1 after 20 ms or 50 ms: the same 2.2x, with the same cliff the bars frame shows
+      (sleep 0: 7.5, 1 ms: 7.8, 5 ms: 8.5, 20 ms: 19.6, 50 ms: 19.7; pinned to one core the
+      same). A paced 8 ms is about 3.6 ms of work at full clock. (3) opcache.jit=tracing
+      (opcache.enable_cli is off by default here): bars 5.1 back to back, 12.9 paced; keys 4.0
+      (worse: compiling). Profile again (excimer, back to back): renderPasses 54% (Tree 11.7,
+      50 bar renders 23.4 of which their writes 17.4, show 5, the closure 6.5), compose 25
+      (damage 10, blits 14), device diff 8.8, FakeTerminal 8.6. A captured bar write (CUP, SGR
+      38;2, a cell, CUP, SGR, the label) is 13-14 us standalone, 23.6 in situ. Upper bound of
+      what is left to win, every layer above the emulator tuned to its ideal (Tree -0.5, render
+      passes -0.6, bar shape/caching -0.4, compose by column spans -1.1, device by spans
+      -0.35): 7.5 -> about 4.5 ms back to back, about 10 ms paced: still over 8. `keys` per key
+      (one run): two thirds 2.2-3.2 ms, a third 12-33 ms (the Tabs that meet the background
+      frame of all 50 bars, which the 50 coroutines' 10 Hz sleeps line up into one).
 - [x] 1e. docs/surface.md Performance, docs/hosting.md ("Compositing is blitting"), README
       model, CHANGELOG
 - [x] 2. Quit from a Tui::go() job under headless: the fatal came from the Tui::sleep(0.5) of
