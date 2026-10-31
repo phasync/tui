@@ -179,6 +179,8 @@ abstract class Component extends Element
     private bool $renderPending = false;
     /** @var array{array{int,int}, list<Component>}|null unshownChildren() and the versions it was found at */
     private ?array $unshown = null;
+    /** Its last layout waits for the parent to give it the size it asked for (see show()). */
+    private bool $deferred = false;
     /** The pending render only lays out again what the focus changed (see markRestyle()). */
     private bool $restyleOnly = false;
     private ?Deferred $stopped = null;
@@ -1680,30 +1682,41 @@ abstract class Component extends Element
         }
     }
 
-    /** Set the layout of a render (or a restyle) and tell the parent when the size it needs changed. */
+    /**
+     * Set the layout of a render (or a restyle) and tell the parent when the size it needs
+     * changed. Then the parent lays it out again in this frame, at another size: the layout is
+     * set after that, once, at the size it will have (a `Tabs` switched to a pane that fills,
+     * from one of a row, does not first lay the pane out in one row and then again).
+     */
     private function show(?Layout $layout): void
     {
+        // a size it gave a parent's layout is another now: the items around it measure again
+        // and the parent lays it out again (the rest of the parent's tree stands)
+        // (the answers stand as given until the parent asks again: one it keeps from an earlier
+        // frame is compared too; measureFor() notes the new answers)
+        $resized = false;
+        foreach ($this->measured as [$cols, $rows, $size]) {
+            $resized = $this->measureFor($cols, $rows) !== $size || $resized;
+        }
+        if ($resized || ($this->leastAsked !== null && $this->leastNow($this->leastAsked[0]) !== $this->leastAsked[1])) {
+            $this->leastAsked = null;
+            Tree::sizeMayChange($this);
+            $this->parent?->relayout();
+            if ($this->parent !== null && $layout !== null && !$this->deferred) {
+                // (arranged when the parent gives it its size, else when it renders again after
+                // the parent in this frame: the old layout is not arranged at the new size first)
+                $this->deferred = true;
+                $this->surface->deferLayout($layout);
+                $this->relayout();
+                return;
+            }
+        }
+        $this->deferred = false;
         if ($this->parent === null && ($this->floating !== [] || $this->overlayLayout !== null)) {
             $layout = $this->withOverlays($layout);
         }
         if ($layout !== null) {
             $this->surface->setLayout($layout);
-        }
-        // a size it gave a parent's layout is another now: the items around it measure again
-        // and the parent lays it out again (the rest of the parent's tree stands)
-        [$asked, $this->measured] = [$this->measured, []];
-        $resized = false;
-        foreach ($asked as [$cols, $rows, $size]) {
-            if ($this->measureFor($cols, $rows) !== $size) {
-                $resized = true;
-                break;
-            }
-        }
-        if ($resized || ($this->leastAsked !== null && $this->leastNow($this->leastAsked[0]) !== $this->leastAsked[1])) {
-            $this->measured = [];
-            $this->leastAsked = null;
-            Tree::sizeMayChange($this);
-            $this->parent?->relayout();
         }
     }
 

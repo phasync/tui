@@ -8,7 +8,10 @@ README.md and docs/.
 - [x] 1. Tab cost O(rows): restyle instead of render (Tree::restyle), interned ComputedStyle,
       component items keyed by their frame, Component::nextStop(), focus-request settle,
       unshownChildren(); tests/Release/KeyCostBeta6Test.php; the bench measures press+settle
-- [ ] 2. Markdown tab switch
+- [x] 2. Markdown tab switch: deferred layouts (Component::show(), Surface::deferLayout()),
+      measured answers kept until asked again, windows shown anew diffed against the host's
+      cells (Surface::cellsAt()), Markdown's part styles cached, Tabs does not hold what its
+      panes started; tests/Release/TabSwitchBeta6Test.php
 - [ ] 3. selected into view in a ScrollView; focusing elements from a program
 - [ ] 4. Help() follows the running instance (fresh Tree in a tab)
 - [ ] 5. small: Alt-n anywhere, 'quit' on elements doc, Tui::freeze()
@@ -46,6 +49,23 @@ README.md and docs/.
 - **Kept instances**: a new instance notes its first container (claim() calls placedUnder() for
   it too), so an instance kept by the program is recognised from its second render. It used to
   be recognised only because focus events caused an extra render.
+- **A size change is laid out once** (Component::show()): a render whose measure answers
+  changed (the parent will lay it out at another size in this frame) does not arrange its new
+  layout at the old size: Surface::deferLayout() stores it, the parent's resize arranges it,
+  and the component renders again after the parent (relayout()) in case the size did not
+  change after all; at most one deferral in a row. Before, a Tabs as tall as its content
+  switched to a pane that fills laid the pane out in one row, the Markdown in it was resized
+  to one row, drawn, resized back and drawn again; switching away shrank it the same way (its
+  rows were lost, so the next show repainted everything).
+- **Measured answers stand until asked again** (Component::$measured is no longer consumed by
+  a render): a parent whose items keep their naturals cached does not ask again, and a size
+  change after the first render went unnoticed.
+- **A window shown anew is diffed against the host's cells** (Viewport::paint() uses
+  Surface::cellsAt() as the last frame of a row it never painted): a pane shown again over the
+  same cells, or a blank window over a blank host, writes nothing.
+- **Tabs::owns()**: a content instance a pane started (the first render's own instance) is
+  the pane's, not another owner's; holding it made the next setTabs() with a fresh instance
+  stop it (it showed as a new Tree after a tab switch once layouts were deferred).
 - Measured (this machine): Tab + settle, 160x50 rows of Text+2 Buttons: 2 rows 1.2 ms, 200 rows
   1.8 ms (11.8 before); the bench's 50-row monitor 2.5 ms median (bars moving). What is left
   per frame when all 50 bars move is the emulator parse at each nesting level (bar, row, root,

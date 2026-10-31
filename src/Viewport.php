@@ -711,7 +711,9 @@ final class Viewport
                         }
                     }
                 }
-                $old = $this->frame[$ty] ?? null;
+                // (a row not painted before is compared with what the host shows there: a window
+                // shown again over the same cells, a tab switched back to, writes what differs)
+                $old = $this->frame[$ty] ?? $this->owner->surface->cellsAt($ty, $x0, \count($chars));
                 $this->frame[$ty] = [$chars, $styles];
                 $out .= self::diffAnsi($chars, $styles, $old, $visible, $x0, $ty);
             }

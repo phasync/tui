@@ -4,9 +4,11 @@ namespace phasync\Tui\Component;
 
 use phasync\Tui\Ansi;
 use phasync\Tui\Component;
+use phasync\Tui\ComputedStyle;
 use phasync\Tui\Markup;
 use phasync\Tui\Internal\MarkdownBlocks;
 use phasync\Tui\Mouse;
+use phasync\Tui\Stylesheet;
 use phasync\Tui\Text;
 
 /**
@@ -58,6 +60,9 @@ use phasync\Tui\Text;
 class Markdown extends Component
 {
     use Scrollable;
+
+    /** @var array{ComputedStyle, Stylesheet, string}|null the style and sheet the parts' signature was made from, and the signature */
+    private ?array $styledBy = null;
 
     private const PUNCT = '!"#$%&\'()*+,-./:;<=>?@[\]^_`{|}~';
 
@@ -218,8 +223,14 @@ class Markdown extends Component
     private function layoutIfStale(): void
     {
         $cols = max(1, $this->surface->cols() - ($this->scrollbar ? 1 : 0));
-        $plain = Ansi::style($this->style()->text);
-        $sig = md5($plain . implode('|', array_map(fn($part) => Ansi::style($this->style($part)->text), self::PARTS)));
+        // (the parts' styles follow from the component's own and the sheet: looked up when those changed)
+        $own = $this->style();
+        $sheet = $this->stylesheet();
+        if ($this->styledBy === null || $this->styledBy[0] !== $own || $this->styledBy[1] !== $sheet) {
+            $this->styledBy = [$own, $sheet, md5(Ansi::style($own->text) . implode('|', array_map(fn($part) => Ansi::style($this->style($part)->text), self::PARTS)))];
+        }
+        $plain = Ansi::style($own->text);
+        $sig = $this->styledBy[2];
         if (!$this->stale && $cols === $this->laidCols && $sig === $this->laidStyles) {
             return;
         }

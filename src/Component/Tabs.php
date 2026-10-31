@@ -255,12 +255,26 @@ class Tabs extends Component
         $out = [];
         foreach ($this->tabs as $key => $_) {
             foreach ($this->tabComponents((string) $key) as $c) {
-                if ($c->isMounted()) {
+                if ($c->isMounted() && !$this->owns($c)) {
                     $out['held:' . spl_object_id($c)] = true;
                 }
             }
         }
         return $out;
+    }
+
+    /**
+     * True if $c was started inside this Tabs (by a pane: the instance a render gave as content
+     * that the pane then started), not by another owner: its pane keeps it, nothing to hold.
+     */
+    private function owns(Component $c): bool
+    {
+        for ($p = $c->parent(); $p !== null; $p = $p->parent()) {
+            if ($p === $this) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -612,7 +626,7 @@ class Tabs extends Component
         foreach ($this->tabs as $key => $tab) {
             $key = (string) $key;
             foreach ($this->tabComponents($key) as $c) {
-                if ($c->isMounted()) {
+                if ($c->isMounted() && !$this->owns($c)) {
                     $this->keep('held:' . spl_object_id($c), fn() => $c);
                 }
             }

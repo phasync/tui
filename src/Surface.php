@@ -677,6 +677,16 @@ final class Surface implements \Stringable
         $this->changeTree(fn() => $this->host->arrange());
     }
 
+    /**
+     * @internal Set $layout without arranging it now: it is arranged at the next resize or
+     * `setLayout()`. For a component whose parent is about to give it another size (its tree's
+     * windows are placed once, at that size, not first at the old one).
+     */
+    public function deferLayout(Layout $layout): void
+    {
+        $this->hosting()->layout = $layout;
+    }
+
     /** The layout set with `setLayout()`, or null. */
     public function layout(): ?Layout
     {
@@ -1200,6 +1210,28 @@ final class Surface implements \Stringable
         $this->compose();
         $line = $this->row($y);
         return [$line->chars, $line->styles];
+    }
+
+    /**
+     * @internal The cells of row $y from column $x, $width of them (blank where the row has none),
+     * as [chars, styles], as they are now: nothing is composed first. What a host compares a
+     * window it shows anew with (its cells there may be the same already).
+     *
+     * @return array{list<string>, list<Style>}
+     */
+    public function cellsAt(int $y, int $x, int $width): array
+    {
+        $line = $this->vt->lines[$y] ?? null;
+        if ($line !== null && $x >= 0 && $x + $width <= \count($line->chars)) {
+            return [\array_slice($line->chars, $x, $width), \array_slice($line->styles, $x, $width)];
+        }
+        $chars = $styles = [];
+        $plain = Style::plain();
+        for ($i = $x; $i < $x + $width; $i++) {
+            $chars[] = $line?->chars[$i] ?? ' ';
+            $styles[] = $line?->styles[$i] ?? $plain;
+        }
+        return [$chars, $styles];
     }
 
     private function row(int $y): Line
