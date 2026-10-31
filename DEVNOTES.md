@@ -3,6 +3,88 @@
 Working notes for whoever continues this library (design decisions, what is left). Users read
 README.md and docs/.
 
+## Status (0.0.3-beta3; TODO-0.0.3-beta3.md, SPEC 9.1 as amended)
+
+- [x] 1. Input without a class (65c36a7): `keys:` on Tui::run()/inline()/headless() (bind(first:
+      true)), closures as binding actions, `onKey:`/`onMouse:` on elements, Mouse::over(),
+      Dialog::open()/Confirm::ask(), handlers that wait (TerminalDevice::deliver());
+      tests/Release/ClosureInputTest.php (the Kanban)
+- [x] 2. Kept instances keep their identity (425a169): Tree::claim()/$present, placedUnder(),
+      place() re-keys a kept child instead of handing it a new instance's props; a stopped
+      instance placed again is an error that says what to do; TerminalDevice::component(),
+      Component::of(); tests/Release/IdentityTest.php
+- [x] 3. Hidden components are not in the focus order (df5672f): waitsUnshown()/pendingRank();
+      tests/Component/FocusHiddenTest.php
+- [x] 4. Small (6205e53): --headless=/TUI_HEADLESS, overlays outside a bordered window's only
+      content (Component::framed()), Tui::go(), Table keeps its place, Dialog at most 80%,
+      Tabs docs, cookbook plural; tests/Release/SmallBeta3Test.php, FailureTest modes
+- [ ] docs (components.md "Without a class", cookbook dialog without a class, README), CHANGELOG
+
+## Design decisions (0.0.3-beta3)
+
+- **Input is dispatched in a coroutine of its own** (TerminalDevice::deliver()/dispatch()). A
+  handler that waits (`fiber\await(Confirm::ask(...))` in a key handler) parks only its
+  dispatcher: when the caller of deliver() runs while `dispatching` is set, that dispatcher is
+  waiting in a handler (single-threaded: it is not running), and a new dispatcher (a token,
+  not a task handle) takes the events after it. Order is kept: one dispatcher at a time takes
+  events, the parked one ends when it resumes. A dispatch from inside a dispatch (reentrant,
+  `fiber\current()` === the dispatcher's task) only queues. FakeTerminal sets `untilHandled`:
+  its input calls return when the handlers are done, or while a modal dialog is open
+  (Component::waitsForAnswer(): the handler waits for the answer the next input gives), or
+  after a second; an exception of the dispatch is thrown to the caller as before. So every
+  handler (bound methods, onKey, closures) may wait, with no second kind of handler.
+- **Bound closures take the key**, whatever they return: `fn() => $s->open = false` returns
+  false and did take it. Methods keep "false = not taken". An element's single `onKey`
+  closure returns true when it took the key (it sees every key, so Tab and Ctrl-Q must pass).
+- **Element handlers live in the Tree.** Every element surface is registered (static WeakMap
+  `Tree::$shows`: surface -> [tree, path]) with the element of the last build (`$nodes`), so
+  a handler always runs the closures of the latest render. Component::key() at the key end
+  runs the onKey of the elements of its tree on the focus path (innermost first) before its
+  own bindings; parents run theirs before their bindings in the bubbling walk. focusables()
+  returns Component|Surface: element surfaces with onKey are Tab stops. A press on an element
+  with onKey focuses it. Root containers ('r', the owner's surface) are not in the static map
+  (the owner's surface is the component's in the tree around it).
+- **onMouse**: presses/drags/releases are taken unless the handler returns false (else a
+  statement closure would let the host start a text selection and steal the release), the
+  wheel only on true (it scrolls as usual otherwise). Capture is the hosts' own (press taken
+  at every level). `Mouse::over()` is lazy (a finder closure carried by `at()` copies).
+- **Kept instances** (item 2): ambiguous by nature: a fresh-per-render `new Editor()` and a
+  kept `$bars[$i] ??= new ProgressBar()` look the same in the render that first shows them.
+  A started instance in a tree is placed as itself; a new instance does not take over a
+  child that the same tree shows as itself (`$present`) or that has been placed under another
+  container object than the one before (`placedUnder()`: the program kept it across renders).
+  The gap left: an instance shown in exactly one render, left out in the next, whose place a
+  new instance of its class takes, is handed that instance's props (as 8.1 matching does).
+  Documented: give kept instances a `key:` to be safe from the first frame.
+- **A hidden component keeps no keys** (item 3): Component::unshownFocus() considered every
+  unshown child, also one a Tabs shows (the owner then passed keys straight to the hidden
+  shell, past the Tabs) and one a render stopped showing. A held child routes through its
+  holder; a child hidden after its latest focus request (`hiddenRank`, set on `area` when the
+  viewport goes) is skipped until focused again.
+- **Overlays outside the frame**: Component::framed() extends an overlay's anchor to the
+  border of the window the opener fills alone (its host has one viewport and a border), so
+  Placement puts a list under the Box, or above it; a cursor anchor inside a multi-line
+  editor is not changed.
+- **A size in cells is the size it needs** (LayoutItem::measureNow()): a Box of height 8 in
+  a Row made the Row as high as the Box's content.
+- **Tabs props**: documented (the tabs are given once), not changed: a Tabs built anew per
+  render would need its contents matched by tab key and class to keep their state, which the
+  childKey by object id does not do. Left for a later version if wanted.
+
+## fiber\ finding (0.0.3-beta3)
+
+- **No way to learn that a task nobody awaits has failed.** TODO item 4 asks that an
+  exception in any coroutine the program started inside `fiber\run()` ends the program at
+  once, terminal restored. fiber-interop/api catches such an exception in the task wrapper
+  (Frame::start(): `$entry->error = $e`) and keeps it for the enclosing `run()`, which throws
+  it only when everything inside has finished; there is no hook. A plain `fiber\go()` that
+  fails therefore leaves the UI running until the user quits; then (terminal restored) the
+  message comes. The library does without, in the plain way: `Tui::go()` starts the program's
+  coroutines in a wrapper of its own, disposes the running root on an exception and rethrows
+  it out of `Tui::run()`. The smallest fiber\ addition: a per-run failure listener
+  (`fiber\run($f, onFailure: fn(\Throwable $e) => ...)`) or a `run()` option to fail fast
+  (stop waiting and rethrow at the first unawaited failure).
+
 ## Status (0.0.3-beta2; TODO-0.0.3-beta2.md, SPEC 9.4-9.6)
 
 All items of TODO-0.0.3-beta2.md done, in CHANGELOG.md. Tests green with and without
