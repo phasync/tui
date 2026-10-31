@@ -40,6 +40,25 @@ README.md and docs/.
       None of them reaches 3 ms. `keys`: median 2.9 ms (equal within noise); a Tab is 1.05 ms
       back to back: the dispatch and focus walk 0.25, the restyle of two rows 0.2, compose
       0.2, two Button renders 0.13, the fake terminal 0.07; no one part to cut.
+      Continuation 3 (2026-10-31), measured again with excimer (EXCIMER_CPU, 0.1 ms period, 300
+      bars frames back to back, 8.0 ms each): user closure and element constructors 7%, Tree
+      build (sameShape, reuse, receive) 11.5%, 50 bar renders 22.5% (their writes' parse 16%),
+      compose 25% (damage walk 9.4%, blits 15.9%), device diff 8%, FakeTerminal parse 8.6%, the
+      rest of the render passes (show, measureFor, setLayout, area()) about 15% spread over
+      twenty functions. A floor: the parts no design of this library can remove (the closure
+      0.55 ms, parsing 50 bar writes at their standalone 17.5 us 0.9 ms, a terminal parsing the
+      output 0.7 ms, a diff of 50 rows 0.4 ms) are 2.5-2.9 ms back to back, 6.5-7.5 ms paced,
+      which leaves well under 0.5 ms paced for reconciling 250 elements, 50 component renders
+      and composing 50 rows. So 8 ms paced is not reachable on this machine in PHP by any
+      change to the layers above the emulator; only a faster parser (charm/parsing's generated
+      code is already one preg_match and two calls per item) or a faster machine would. With
+      opcache.jit=tracing the bars frame is 13 ms paced (19.9-21.2 without, ext-phasync 19.6).
+      `keys` against beta7 in the same session (beta7 in a git worktree, the same vendor):
+      beta7 2.6-2.8 ms median, beta8 2.9; but a Tab back to back is 1.06-1.10 (beta7) against
+      0.99-1.01 ms (beta8), and paced without the 50 background coroutines 3.0-3.2 against
+      2.5-2.8 ms. A Tab is faster; the `keys` median is higher because the background bars
+      frame (every 100 ms) went from 37 to 20 ms, so the governor keeps the clock lower
+      between them (schedutil follows the load): the bench mode measures the CPU clock there.
 - [x] 1e. docs/surface.md Performance, docs/hosting.md ("Compositing is blitting"), README
       model, CHANGELOG
 - [x] 2. Quit from a Tui::go() job under headless: the fatal came from the Tui::sleep(0.5) of
@@ -60,6 +79,11 @@ README.md and docs/.
       the waits of dispose() short, and cancelling a job that failed made the adapter take its
       exception for the cancellation (exit 0 instead of the error). An adapter without
       cancellation (NotSupportedException): the Signal path of Tui::sleep() as before.
+- [ ] Left: the 50-bar frame under 8 ms paced (20 ms; see 1d' for why it is out of reach),
+      `keys` improving in its bench mode (a Tab is faster, the mode's median is not: see 1d'),
+      and so the tag 0.0.3-beta8. (Seen once under load, continuation 3: StateTest's "ends the
+      sleep of a component at a tick" woke 10 ms after a tick against its 6 ms; it passed in 5
+      runs of the file and the next full run with ext-phasync. A wall-clock bound, not a bug.)
 
 ## Design decisions (0.0.3-beta8, continuation 2)
 
