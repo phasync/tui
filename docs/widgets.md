@@ -630,7 +630,7 @@ its label, not the whole bar. Style: `ProgressBar`, part `ProgressBar::bar`. |
 ## Canvas
 
 Drawing with the browser's 2D canvas API: lines, shapes, fills, gradients, images and text,
-from a closure, in real pixels where the terminal shows images (Kitty graphics, iTerm2) and in
+from a closure, in real pixels where the terminal shows images (Kitty graphics, iTerm2, Sixel) and in
 Braille dots or block characters everywhere else, without the program changing.
 
 ```php
@@ -677,8 +677,9 @@ their dots, so a drawing covers the same cells on every marker.
 graph needs nothing else), or a new closure came with the parent's render. A drawing that comes
 out as the last one writes nothing, so a canvas that is drawn again every frame costs only the
 drawing when nothing moved. On `pixels` it writes one Kitty image through `write()` like any
-producer; the device sends it to the terminal once and places it, and a window over part of it
-costs placements only (see [terminal](terminal.md#images)).
+producer; the device shows it with the terminal's protocol: on Kitty it sends it once and places
+it, and a window over part of it costs placements only; on iTerm2 and Sixel it sends the cells
+that changed (see [terminal](terminal.md#images)).
 
 **Pointer**: with `onMouse:` it follows the mouse (motion without a button too) and each `Mouse`
 carries the position in the canvas's units in `canvasX`/`canvasY` (the middle of the cell, with

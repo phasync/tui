@@ -221,10 +221,10 @@ One primitive, one structure:
    `Checkbox`, `ScrollView`, `ProgressBar`, `Spinner`, `Canvas`, `Markdown`.
 9. **Graphics** ([surface](docs/surface.md), [terminal](docs/terminal.md#images),
    [Canvas](docs/widgets.md#canvas)): images are cells too. The emulator understands Kitty
-   graphics and iTerm2 inline images (a program in a pane can show pictures, and they move,
-   crop and get covered with its window); the device asks the terminal what it shows and draws
-   them in Kitty graphics, iTerm2 images or quarter blocks; `Canvas` is the browser's 2D context
-   on top of that.
+   graphics, iTerm2 inline images and Sixel (a program in a pane can show pictures, and they
+   move, crop and get covered with its window); the device asks the terminal what it shows and
+   draws them in Kitty graphics, iTerm2 images, Sixel or quarter blocks; `Canvas` is the
+   browser's 2D context on top of that.
 10. **Cookbook** ([docs](docs/cookbook.md)): ten screens of under forty lines each, to copy from.
 
 The surfaces form one tree, whatever is in it: every surface knows its `parent()` and its
@@ -577,10 +577,12 @@ The examples with a class start on a `Tty` themselves and need a terminal.
 
 `Canvas` draws with the browser's 2D canvas API (paths, fills, strokes, gradients, transforms,
 `drawImage`, text), in cells as units, from a closure that runs again when the `State` it read
-changes. In kitty, WezTerm, Ghostty and Konsole (Kitty graphics) and in iTerm2 and VS Code's
-terminal (iTerm2 inline images) it is real pixels; everywhere else, and in tmux and screen, it is
-Braille dots or block characters, with labels in real text, and nothing in the program changes.
-Hosted programs get the same: `kitten icat` or `imgcat` in a pane shows its picture in the pane.
+changes. In kitty, WezTerm, Ghostty and Konsole (Kitty graphics), in iTerm2 and VS Code's
+terminal (iTerm2 inline images) and in xterm, foot, mlterm, Windows Terminal and a tmux built with
+Sixel (Sixel) it is real pixels; everywhere else, and in screen, it is Braille dots or block
+characters, with labels in real text, and nothing in the program changes. The terminal is asked
+at start-up which of these it has. Hosted programs get the same: `kitten icat`, `imgcat` or
+`img2sixel` in a pane shows its picture in the pane.
 `examples/graphs.php` printed headless (`php examples/graphs.php --headless=88x20@2 --marker=braille`):
 
 ```text

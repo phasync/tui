@@ -11,8 +11,8 @@
  *     php examples/graphs.php --headless=100x30     # the Braille version, printed
  *
  * In kitty, WezTerm, Ghostty, Konsole (Kitty graphics), iTerm2 and VS Code's terminal (iTerm2
- * images) the canvases are real pixels; everywhere else they are Braille dots, and nothing in
- * the program changes. Two coroutines sample the series; the canvases draw from the `State`.
+ * images), xterm, foot, mlterm and Windows Terminal (Sixel) the canvases are real pixels;
+ * everywhere else they are Braille dots, and nothing in the program changes. Two coroutines sample the series; the canvases draw from the `State`.
  * Ctrl-Q quits.
  */
 

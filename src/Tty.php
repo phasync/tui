@@ -122,16 +122,21 @@ final class Tty extends TerminalDevice
 
     /**
      * @internal The image protocol the environment says the terminal has: 'iterm2' for iTerm2
-     * and VS Code's terminal (`TERM_PROGRAM`, `LC_TERMINAL`), 'none' inside tmux or screen (which
-     * do not pass images on) and on the Linux console, null when it does not say (the terminal's
-     * answer to Kitty's query, then its XTVERSION name, decide).
+     * and VS Code's terminal (`TERM_PROGRAM`, `LC_TERMINAL`), 'none' inside screen (which does
+     * not pass images on) and on the Linux console, null when it does not say: the terminal's
+     * answers decide (Kitty's query, then its XTVERSION name, then Sixel in its device
+     * attributes). Inside tmux the variables of the terminal tmux runs in are not believed:
+     * tmux answers itself, with Sixel when it was built with it.
      *
      * @param array<string, string> $env
      */
     public static function imagesFromEnvironment(array $env): ?string
     {
         $term = $env['TERM'] ?? '';
-        if (($env['TMUX'] ?? '') !== '' || ($env['STY'] ?? '') !== '' || str_starts_with($term, 'screen') || str_starts_with($term, 'tmux') || $term === 'linux' || $term === 'dumb') {
+        if (($env['TMUX'] ?? '') !== '' || str_starts_with($term, 'tmux')) {
+            return null;
+        }
+        if (($env['STY'] ?? '') !== '' || str_starts_with($term, 'screen') || $term === 'linux' || $term === 'dumb') {
             return 'none';
         }
         if (\in_array($env['TERM_PROGRAM'] ?? '', ['iTerm.app', 'vscode'], true) || ($env['LC_TERMINAL'] ?? '') === 'iTerm2') {

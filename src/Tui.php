@@ -283,7 +283,7 @@ final class Tui
      * @param string|null $background what the terminal says its background is: `'dark'`, `'light'`, null for nothing (see `FakeTerminal`)
      * @param array<string, \Closure|string|array<int|string, mixed>> $keys as for `run()`
      * @param int    $fps    as for `run()`
-     * @param string $images the image protocol the terminal has: `'none'`, `'kitty'`, `'iterm2'` (see `FakeTerminal`)
+     * @param string $images the image protocol the terminal has: `'none'`, `'kitty'`, `'iterm2'`, `'sixel'` (see `FakeTerminal`)
      */
     public static function headless(Element|\Closure $root, int $cols = 80, int $rows = 24, bool $inline = false, ?string $theme = null, ?string $background = 'dark', array $keys = [], int $fps = 60, string $images = 'none'): FakeTerminal
     {

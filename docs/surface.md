@@ -45,12 +45,16 @@ parser generated from the PEG grammar in `src/Surface/ansi.cpeg` (the compiled p
   designation (the DEC line drawing set is honoured).
 - OSC: window title (0, 2) stored, colour queries (10, 11, 12) answered, clipboard writes (52)
   passed up, hyperlinks (8) kept in the cells (see below), iTerm2 inline images (1337); other
-  OSC, DCS, PM and SOS strings are consumed and ignored.
+  OSC, PM and SOS strings are consumed and ignored.
+- DCS: Sixel images (`ESC P ... q ... ST`, see "Images" below); other DCS strings (DECRQSS,
+  XTGETTCAP, tmux pass-through) are consumed and ignored.
 - APC: Kitty graphics (`ESC _ G ... ST`, see "Images" below); other APC strings are consumed
   and ignored.
-- Queries answered on the input channel: DSR 5 and 6 (cursor position), DA1, DA2, XTVERSION,
-  DECRQM, kitty keyboard flags, OSC 10/11 colours, the window and cell size in pixels (`CSI 14
-  t`, `CSI 16 t`, from `cellSize()`), Kitty graphics queries and replies.
+- Queries answered on the input channel: DSR 5 and 6 (cursor position), DA1 (`CSI ? 62 ; 4 ;
+  22 c`: Sixel graphics), DA2, XTVERSION, DECRQM, kitty keyboard flags, OSC 10/11 colours, the
+  window and cell size in pixels (`CSI 14 t`, `CSI 16 t`, from `cellSize()`), XTSMGRAPHICS
+  (`CSI ? 1 ; 1 S` the Sixel colour registers, 1024; `CSI ? 2 ; 1 S` the largest Sixel image,
+  the screen in pixels), Kitty graphics queries and replies.
 
 Unknown sequences are consumed without corrupting the screen. A sequence or a UTF-8 character
 split across two `write()` calls is completed by the next call.
@@ -70,8 +74,9 @@ composites them, and a terminal device writes them to the real terminal when tha
 supports them (see [terminal](terminal.md)). Build them with `Ansi::link()` or
 `Ansi::hyperlink()`.
 
-**Images.** Two image protocols put pictures in the cells, so a program that shows images in
-kitty or iTerm2 (`kitty +kitten icat`, `imgcat`, a plotting tool) shows them in a window too:
+**Images.** Three image protocols put pictures in the cells, so a program that shows images in
+kitty, iTerm2 or xterm (`kitty +kitten icat`, `imgcat`, `img2sixel`, `chafa`, a plotting tool)
+shows them in a window too:
 
 - **Kitty graphics** (`ESC _ G <keys> ; <base64> ESC \`): transmit (`a=t`, in chunks with
   `m=1` ... `m=0`), PNG (`f=100`) or raw RGB/RGBA (`f=24`/`f=32` with `s=` and `v=`),
@@ -92,6 +97,17 @@ kitty or iTerm2 (`kitty +kitten icat`, `imgcat`, a plotting tool) shows them in 
   from the image's pixels and the cell size), the image's shape kept unless
   `preserveAspectRatio=0`, narrowed to fit the screen; the cursor moves as after a Kitty
   placement (imgcat prints a line feed after it). A file that is not inline is a download, ignored.
+- **Sixel** (`ESC P P1 ; P2 ; P3 q <data> ESC \`): the sixel data in bands of six pixel rows
+  (`?` to `~`, `!n` repeats, `$` back to the band's left, `-` the next band), colour registers
+  selected with `#c` and defined with `#c;2;r;g;b` (RGB in percent) or `#c;1;h;l;s` (DEC's
+  HLS), 1024 of them, the first 16 as a VT340 starts them; raster attributes (`"1;1;w;h`) give
+  the size; pixels nothing painted are transparent with `P2 = 1`, else the background colour.
+  Sixel draws a pixel to a pixel, so the image covers the cells its size takes at the cell size
+  (the rest of its last column and row transparent), at the cursor; the cursor then goes below
+  it, in the column it started (scrolling at the bottom), or right of its last row with
+  `CSI ? 8452 h` (never past the last column); with DECSDM (`CSI ? 80 h`) the image is drawn at
+  the top left of the screen and the cursor stays. The aspect ratio parameters are taken as 1:1,
+  as current terminals do.
 
 A cell an image covers keeps its colours and gets a blank character and, in its style, the
 part of the image it shows: `$surface->cell($x, $y)->style->image` is an `ImageFragment` (the
@@ -101,7 +117,8 @@ copying cells between surfaces (`copyArea()`, compositing) keeps them, and the c
 image placed again the same way compare `===` with the old ones (a frame that shows the same
 picture costs nothing to draw). A character written over an image cell replaces it (the
 character wins, as in kitty); erasing drops it; scrolling and inserting move it with its cell.
-An image lives as long as a cell or a Kitty id refers to it. Images are measured in the
+An image lives as long as a cell or a Kitty id refers to it (a Sixel image only as long as a
+cell shows it). Images are measured in the
 surface's cell size, `cellSize()` (8x16 pixels until a terminal device sets its root's from
 the real terminal; a hosted surface takes its host's). Write images yourself with
 `Ansi::image($png, $cols, $rows)`, or draw them with a `Canvas` (see [widgets](widgets.md#canvas));

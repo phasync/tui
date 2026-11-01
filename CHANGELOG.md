@@ -16,6 +16,14 @@ before, except where an entry says what changed.
   and sizes in cells, pixels, percent or auto, keeping the aspect ratio, the cursor moved after
   the image (or not, with `C=1`), the delete forms, `q=` and the replies (`OK`, `ENOENT`,
   `EINVAL`) work as in kitty for directly sent data (`t=d`); PNG, RGB, RGBA and (with GD) JPEG, GIF, WebP and BMP data.
+- `img2sixel`, `chafa -f sixel`, ImageMagick's `convert x.png sixel:-`, gnuplot's `sixelgd`
+  terminal or any program that draws with Sixel (`ESC P ... q ... ESC \`) left its picture out
+  of a pane (the data was dropped); now the picture shows in the cells it covers, a pixel to a
+  pixel at the cell size, with its colour registers (RGB and HLS, the VT340 palette at start),
+  repeats, transparency (`P2 = 1`) and raster size, the cursor below it, right of it with mode
+  8452, or kept with DECSDM (mode 80). The emulator now says it has Sixel when asked (DA1 answers
+  `CSI ? 62 ; 4 ; 22 c`) and answers XTSMGRAPHICS (`CSI ? 1 ; 1 S`, `CSI ? 2 ; 1 S`), so such
+  programs pick Sixel by themselves in a pane.
 - Programs that ask about the cell size (`CSI 14 t`, `CSI 16 t`, the Kitty query `a=q`) get an
   answer, so they size their pictures to the pane: `Surface::cellSize()` (8x16 unless the real
   terminal says otherwise; `setCellSize()` sets it, and a hosted surface takes its host's).
@@ -28,16 +36,22 @@ before, except where an entry says what changed.
 
 **Images on the real terminal**
 
-- The device asks the terminal at start (the Kitty graphics query and its cell size) and shows
-  image cells with what it has: `kitty` (kitty, WezTerm, Ghostty, Konsole: each image sent once,
-  placed as rectangles, moved and covered without being sent again), `iterm2` (iTerm2, VS Code:
-  the changed rectangles, cropped) or `none` (tmux, screen, the Linux console, anything that did
-  not answer: the picture as quarter-block characters). `TerminalDevice::images()` says which;
-  it is chosen from the environment first (`TERM_PROGRAM`, `TMUX`, `STY`, `TERM`) and asked
-  for only when that does not tell.
+- The device asks the terminal at start (the Kitty graphics query, its cell size and its device
+  attributes) and shows image cells with the best it has: `kitty` (kitty, WezTerm, Ghostty,
+  Konsole: each image sent once, placed as rectangles, moved and covered without being sent
+  again), `iterm2` (iTerm2, VS Code: the changed rectangles, cropped), `sixel` (xterm, foot,
+  mlterm, Windows Terminal, a tmux built with Sixel: any terminal whose device attributes say
+  Sixel; the changed rectangles scaled to their cells' pixels and reduced to 256 colours with
+  GD's dithering, encodings kept for when they are needed again; the cursor saved around each
+  image and mode 8452 set so a picture on the bottom row does not scroll the screen) or `none`
+  (screen, the Linux console, anything that did not answer: the picture as quarter-block
+  characters). `TerminalDevice::images()` says which; it is chosen from the environment first
+  (`TERM_PROGRAM`, `LC_TERMINAL`, `STY`, `TERM`) and asked for only when that does not tell.
+  Inside tmux it asks too (tmux answers for itself, with Sixel when it was built with it), so a
+  tmux with Sixel shows pictures; the variables of the terminal tmux runs in are not believed.
 - In inline mode the pictures in rows that scroll up into the shell's history stay there.
-- `FakeTerminal` takes `images:` (`'none'` by default; `'kitty'`, `'iterm2'`, or null to answer
-  as its surface does), and so does `Tui::headless()`, to test what a program shows.
+- `FakeTerminal` takes `images:` (`'none'` by default; `'kitty'`, `'iterm2'`, `'sixel'`, or null
+  to answer as its surface does), and so does `Tui::headless()`, to test what a program shows.
 
 **Canvas**
 
@@ -45,7 +59,7 @@ before, except where an entry says what changed.
   phasync/canvas (paths, arcs, curves, fills, strokes, gradients, transforms, clipping,
   `drawImage`, `globalAlpha`) in an element, with cells as units and `fillText()` as real
   characters. `marker:` is `braille`, `quarter`, `half`, `block`, `pixels` or `auto` (pixels
-  where the terminal shows images, Braille elsewhere). It draws again when a `State` it read
+  where the terminal shows images, Kitty, iTerm2 or Sixel alike, Braille elsewhere). It draws again when a `State` it read
   changes, and writes nothing when the drawing came out the same. `onMouse:` gets the pointer
   in the canvas's units (`Mouse::$canvasX`, `$canvasY`). Requires phasync/canvas (and ext-gd or
   ext-imagick). See docs/widgets.md.

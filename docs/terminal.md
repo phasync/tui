@@ -63,7 +63,7 @@ fiber\run(function () use ($tty) {
 | `terminalName(): string` | The name the terminal gave when asked (XTVERSION) at `attach()`, such as `kitty(0.36.4)`; `''` when it did not answer. |
 | `isInline(): bool` | True for a device made with `inline()` (see below). |
 | `background(): ?string` | `'light'` or `'dark'`: the terminal's background, as it answered when asked (OSC 11) at `attach()`; null when it did not answer (yet). A program that sets no theme is drawn in `light` on a light terminal, else in `dark` (see [styling.md](styling.md#themes)); the answer comes a moment after `attach()`, never holding start-up up, and the screen is drawn again when it says light. |
-| `images(): string` | The image protocol the terminal shows images with: `'kitty'`, `'iterm2'` or `'none'` (see "Images"). |
+| `images(): string` | The image protocol the terminal shows images with: `'kitty'`, `'iterm2'`, `'sixel'` or `'none'` (see "Images"). |
 | `setFrameRate(int $fps)`, `frameRate(): int` | Draw at most `$fps` frames a second (default 60): fewer for a slow link or to use less CPU (a dashboard at 10). Changes that come faster are drawn together in the next frame. `Tui::run(..., fps: 30)` sets it. |
 | `colors(): int`, `setColors(int $colors)` | The colours the terminal has: `Color::DEPTH_16`, `DEPTH_256` or `DEPTH_TRUECOLOR`. Cells in colours it lacks are drawn in the nearest it has (see below). |
 | `println(string\|Text $text = '')` | Plain output of the program: in inline mode above the live region, at the next frame; not attached, to the terminal at once; attached full screen, after `detach()` (the alternate screen would hide it). A string takes markup (`'<fg=green>✔</> built'`) and escape sequences; a `Text` prints its runs in their styles; `Text::raw($s)` prints `$s` exactly as written (a command's output, a file name). A line break ends each call. |
@@ -106,19 +106,31 @@ protocol the terminal has, which `images()` tells:
   cannot place part of an image, and replaces an image's cells with what is written over them,
   as this library's cells do. So only image cells that changed are sent, a rectangle at a time:
   cropped with GD, or (without GD) the whole image when the frame shows all of it.
+- **`sixel`** (xterm, foot, mlterm, Windows Terminal, tmux built with Sixel, and any terminal
+  whose device attributes say Sixel): as with iTerm2, only the image cells that changed are
+  sent, a rectangle at a time. Sixel draws a pixel to a pixel, so each rectangle is scaled
+  through GD to its cells' size in pixels (the cell size the terminal reported, `CSI 16 t`, else
+  8x16) and reduced to 256 colours with GD's dithering; the encoded rectangles are kept, so a
+  window moving over an image and away again costs no encoding the second time. The cursor is
+  saved around each image, and mode 8452 is set (and reset at detach) so an image on the bottom
+  row does not scroll the screen. Without GD, Sixel image cells stay blank.
 - **`none`**: image cells are drawn as quarter blocks of their pixels (`▚▞▙` in two colours a
   cell), through GD; without GD, as blank cells.
 
 `Tty` finds out at `attach()` without holding start-up up: it asks the terminal with Kitty's
-graphics query and for its cell size (`CSI 16 t`, which `Surface::cellSize()` of the root then
-holds), and decides from the answers, from `TERM_PROGRAM` and `LC_TERMINAL` (iTerm2, VS Code)
-and from the terminal's name (`terminalName()`: WezTerm, Konsole); never inside tmux or screen,
-which do not pass images on (`Tty::imagesFromEnvironment($env)`). Until the terminal has
-answered, `images()` is `'none'`; the screen is drawn again when the answer says more.
-`FakeTerminal` is told: `new FakeTerminal(80, 24, images: 'kitty')`; `'none'` by default, or
-`null` to ask its surface (which has Kitty graphics, so it answers `'kitty'`). Its surface
-understands both protocols, so its cells show the images as such a terminal would: the device's
-output replayed into a surface gives the same image cells as the root.
+graphics query, for its cell size (`CSI 16 t`, which `Surface::cellSize()` of the root then
+holds) and for its device attributes (DA1), and takes the best protocol the answers give, in
+this order: Kitty (the query answered `OK`), iTerm2 (`TERM_PROGRAM` or `LC_TERMINAL` say iTerm2
+or VS Code, or the terminal's name is WezTerm, Konsole or mintty: `terminalName()`), Sixel (a
+`4` in the device attributes), else none. Never inside screen, which does not pass images on;
+inside tmux only what tmux itself answers counts (Sixel when it was built with it), not the
+variables of the terminal it runs in (`Tty::imagesFromEnvironment($env)`). Until the terminal
+has answered, `images()` is `'none'`; the screen is drawn again when the answer says more.
+`FakeTerminal` is told: `new FakeTerminal(80, 24, images: 'kitty')` (or `'iterm2'`, `'sixel'`);
+`'none'` by default, or `null` to ask its surface (which has Kitty graphics, so it answers
+`'kitty'`). Its surface understands all three protocols, so its cells show the images as such a
+terminal would: the device's output replayed into a surface gives the same image cells as the
+root.
 
 ## Inline mode: a live region in the terminal's normal screen
 

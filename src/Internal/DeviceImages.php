@@ -21,6 +21,11 @@ use phasync\Tui\Style;
  *   written over them, as cells are. So only the image cells that changed are painted, a
  *   rectangle at a time: cropped through GD, or without GD the whole placement when the frame
  *   shows all of it.
+ * - `sixel`: as iTerm2, the changed image cells a rectangle at a time; each rectangle scaled
+ *   through GD to its cells' size in pixels (Sixel draws a pixel to a pixel) and encoded with
+ *   up to 256 colours, cached by placement and rectangle. The cursor is saved around each
+ *   image (DECSC, DECRC), and mode 8452 is set so an image on the bottom row does not scroll.
+ *   Without GD the cells stay blank.
  * - `none`: image cells are drawn as quarter blocks of their pixels (through GD; blank without).
  */
 final class DeviceImages
@@ -41,10 +46,19 @@ final class DeviceImages
     private array $pinned = [];
     /** @var \WeakMap<Image, array<string, list<list<array{string, int, int}>>>> none: quarter-block cells per placement */
     private \WeakMap $blocks;
+    /** @var \WeakMap<Image, array<string, string>> sixel: the encoded rectangles of an image, by placement, rectangle and cell size */
+    private \WeakMap $sixels;
+    /** Sixel: mode 8452 was set on the terminal. */
+    private bool $scrollsRight = false;
 
-    public function __construct(public string $protocol = 'none')
+    /**
+     * @param string $protocol 'kitty', 'iterm2', 'sixel' or 'none'
+     * @param \Closure(): array{int, int} $cellSize the terminal's cell size in pixels (Sixel draws to it)
+     */
+    public function __construct(public string $protocol = 'none', private ?\Closure $cellSize = null)
     {
         $this->blocks = new \WeakMap();
+        $this->sixels = new \WeakMap();
     }
 
     /**
@@ -83,7 +97,7 @@ final class DeviceImages
     }
 
     /**
-     * Kitty and iTerm2: what shows the frame's image cells, after its text. $move gives the
+     * Kitty, iTerm2 and Sixel: what shows the frame's image cells, after its text. $move gives the
      * sequence that moves the cursor to a cell; $at is told where an iTerm2 image left the
      * cursor (right of its last row; a column past the last when it ends at the right edge).
      *
@@ -102,7 +116,11 @@ final class DeviceImages
         }
         $cells = $this->cells;
         $this->cells = [];
-        return $this->protocol === 'iterm2' ? $this->iterm($frame, $cells, $move, $at) : '';
+        return match ($this->protocol) {
+            'iterm2' => $this->iterm($frame, $cells, $move, $at),
+            'sixel' => $this->sixel($frame, $cells, $move, $at),
+            default => '',
+        };
     }
 
     /** @param array<int, array{list<string>, list<Style>}> $frame */
@@ -209,6 +227,52 @@ final class DeviceImages
         return $out;
     }
 
+    /**
+     * @param array<int, array{list<string>, list<Style>}> $frame
+     * @param array<int, array<int, true>> $cells
+     */
+    private function sixel(array $frame, array $cells, \Closure $move, \Closure $at): string
+    {
+        $out = '';
+        [$cw, $ch] = $this->cellSize === null ? [8, 16] : ($this->cellSize)();
+        foreach (self::rectangles($frame, $cells) as [$x, $y, $w, $h, $f]) {
+            $key = "$f->x,$f->y,$f->width,$f->height,$f->cols,$f->rows,$f->col,$f->row,$w,$h,$cw,$ch";
+            $encoded = $this->sixels[$f->image] ?? [];
+            $sixel = $encoded[$key] ?? null;
+            if ($sixel === null) {
+                $gd = $f->image->gd();
+                if ($gd === null) {
+                    continue;
+                }
+                [$px, $py, $pw, $ph] = self::source($f, $w, $h);
+                $scaled = imagecreatetruecolor($w * $cw, $h * $ch);
+                imagealphablending($scaled, false);
+                imagesavealpha($scaled, true);
+                imagefill($scaled, 0, 0, imagecolorallocatealpha($scaled, 0, 0, 0, 127));
+                imagecopyresampled($scaled, $gd, 0, 0, $px, $py, $w * $cw, $h * $ch, $pw, $ph);
+                $sixel = Sixel::encode($scaled);
+                if (\count($encoded) >= 32) {
+                    array_shift($encoded);
+                }
+                $encoded[$key] = $sixel;
+                $this->sixels[$f->image] = $encoded;
+            }
+            if (!$this->scrollsRight) {
+                $out .= "\e[?8452h";
+                $this->scrollsRight = true;
+            }
+            $out .= $move($x, $y) . "\e7" . $sixel . "\e8";
+            $at($x, $y);
+        }
+        return $out;
+    }
+
+    /** What gives the terminal back as it was at detach: mode 8452 reset when Sixel set it. */
+    public function restore(): string
+    {
+        return $this->scrollsRight ? "\e[?8452l" : '';
+    }
+
     /** True if the frame shows every cell of $f's placement, its top-left cell at ($x, $y). */
     private static function whole(array $frame, int $x, int $y, ImageFragment $f): bool
     {
@@ -299,7 +363,7 @@ final class DeviceImages
      * the region's top as written) leave it and are frozen: their images stay on the terminal
      * for good. Kitty: the placements already there for them are kept (and their images never
      * deleted), the missing ones placed, the others on those rows deleted, and the region's
-     * placements below are renumbered; iTerm2: their changed image cells are painted.
+     * placements below are renumbered; iTerm2 and Sixel: their changed image cells are painted.
      *
      * @param array<int, array{list<string>, list<Style>}> $rows
      * @param \Closure(int, int): string $move
@@ -309,9 +373,9 @@ final class DeviceImages
     {
         $n = \count($rows);
         $out = '';
-        if ($this->protocol === 'iterm2') {
+        if ($this->protocol === 'iterm2' || $this->protocol === 'sixel') {
             $cells = array_filter($this->cells, fn(int $y) => $y < $n, ARRAY_FILTER_USE_KEY);
-            $out = $cells === [] ? '' : $this->iterm($rows, $cells, $move, $at);
+            $out = $cells === [] ? '' : ($this->protocol === 'sixel' ? $this->sixel($rows, $cells, $move, $at) : $this->iterm($rows, $cells, $move, $at));
             $this->cells = [];
         } elseif ($this->protocol === 'kitty') {
             $frozen = [];

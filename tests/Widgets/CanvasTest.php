@@ -160,7 +160,7 @@ it('covers the same cells on braille and on pixels (Kitty), and draws text in ch
 
 it('picks pixels where the terminal shows images, else braille (auto), and draws pixels as quarter blocks without images', function () {
     $markers = [];
-    foreach (['none', 'kitty', 'iterm2'] as $images) {
+    foreach (['none', 'kitty', 'iterm2', 'sixel'] as $images) {
         foreach (['auto', 'pixels', 'braille'] as $marker) {
             fiber\run(function () use ($images, $marker, &$markers) {
                 $canvas = new Canvas(draw: shapes(...), marker: $marker);
@@ -175,7 +175,45 @@ it('picks pixels where the terminal shows images, else braille (auto), and draws
         'none/auto' => 'braille', 'none/pixels' => 'quarter', 'none/braille' => 'braille',
         'kitty/auto' => 'pixels', 'kitty/pixels' => 'pixels', 'kitty/braille' => 'braille',
         'iterm2/auto' => 'pixels', 'iterm2/pixels' => 'pixels', 'iterm2/braille' => 'braille',
+        'sixel/auto' => 'pixels', 'sixel/pixels' => 'pixels', 'sixel/braille' => 'braille',
     ]);
+});
+
+it('draws pixels on a Sixel terminal over the cells it covers on Kitty', function () {
+    $opaque = function (FakeTerminal $t): array {
+        $cells = [];
+        for ($y = 0; $y < 7; $y++) {
+            for ($x = 0; $x < 32; $x++) {
+                $f = $t->surface->cell($x, $y)->style->image;
+                if ($f === null) {
+                    continue;
+                }
+                [$px, $py, $pw, $ph] = $f->pixels();
+                $gd = $f->image->gd();
+                for ($j = $py; $j < $py + $ph; $j++) {
+                    for ($i = $px; $i < $px + $pw; $i++) {
+                        if (((imagecolorat($gd, $i, $j) >> 24) & 127) < 64) {
+                            $cells["$x,$y"] = true;
+                            break 2;
+                        }
+                    }
+                }
+            }
+        }
+        return array_keys($cells);
+    };
+    $covered = [];
+    foreach (['kitty', 'sixel'] as $images) {
+        canvasOn(shapes(...), 'pixels', 32, 7, $images, function (FakeTerminal $t) use (&$covered, $images, $opaque) {
+            $covered[$images] = $opaque($t);
+            $covered["$images text"] = $t->surface->line(6);
+            if ($images === 'sixel') {
+                expect($t->output())->toContain("\eP0;1;0q")->and($t->output())->not->toContain("\e_G");
+            }
+        });
+    }
+    expect($covered['sixel'])->toBe($covered['kitty'])->and(count($covered['sixel']))->toBeGreaterThan(60)
+        ->and($covered['sixel text'])->toBe($covered['kitty text']);
 });
 
 it('draws again when a State its closure read changes, and writes nothing when the drawing comes out the same', function () {

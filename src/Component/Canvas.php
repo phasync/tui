@@ -43,9 +43,9 @@ use phasync\Tui\Text;
  *   share one colour (the one most of them have);
  * - `quarter` (2x2), `half` (1x2: a cell shows two colours, top and bottom) and `block` (1x1):
  *   block characters, coarser, with true colour per part;
- * - `pixels`: the drawing as an image in the real terminal's pixels (Kitty graphics or iTerm2
- *   inline images, see `TerminalDevice::images()`); on a terminal without images it is drawn
- *   as `quarter` instead;
+ * - `pixels`: the drawing as an image in the real terminal's pixels (Kitty graphics, iTerm2
+ *   inline images or Sixel, see `TerminalDevice::images()`); on a terminal without images it
+ *   is drawn as `quarter` instead;
  * - `auto` (the default): `pixels` where the terminal shows images, else `braille`.
  *
  * It draws on a raster of the canvas's cells times the cell size in pixels (`Surface::cellSize()`,

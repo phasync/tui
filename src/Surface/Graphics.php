@@ -260,8 +260,9 @@ final class Graphics
     /**
      * Mark the cells of a placement at the cursor, row by row, then put the cursor $after it:
      * `'right'` of its last row as kitty does (at the right edge, column 0 of the next line),
-     * moving down a line between rows and scrolling at the bottom margin; `'below'` it, in the
-     * column it started (Sixel), scrolling the same way; or `'stay'` where it was, the rows
+     * moving down a line between rows and scrolling at the bottom margin; `'beside'` it, right
+     * of its last row but never past the last column (Sixel with mode 8452); `'below'` it, in
+     * the column it started (Sixel), scrolling the same way; or `'stay'` where it was, the rows
      * below the screen cut.
      */
     private function cells(Image $image, int $sx, int $sy, int $sw, int $sh, int $cols, int $rows, int $placement, string $after): void
@@ -304,6 +305,8 @@ final class Graphics
         } elseif ($after === 'below') {
             $vt->x = $x0;
             $vt->lineFeed();
+        } elseif ($after === 'beside') {
+            $vt->x = min($vt->cols - 1, $x0 + $cols);
         } else {
             $vt->x = $x0 + $cols;
             if ($vt->x >= $vt->cols) {
@@ -552,7 +555,8 @@ final class Graphics
      * pixel: over the cells its size covers at the cell size, the part of the last column and
      * row it leaves transparent. At the cursor, scrolling as needed, the cursor then below it
      * in the column it started, or right of its last row with mode 8452 (xterm's "Sixel
-     * scrolling leaves the cursor to the right"); with DECSDM (mode 80) at the top left of the
+     * scrolling leaves the cursor to the right"; at most in the last column, so an image at
+     * the bottom right does not scroll); with DECSDM (mode 80) at the top left of the
      * screen without scrolling, the cursor kept.
      */
     public function sixel(string $params, string $data): void
@@ -581,7 +585,7 @@ final class Graphics
             [$vt->x, $vt->y] = [$x, $y];
             return;
         }
-        $this->cells($image, 0, 0, $w, $h, $cols, $rows, 0, ($vt->modes[8452] ?? false) ? 'right' : 'below');
+        $this->cells($image, 0, 0, $w, $h, $cols, $rows, 0, ($vt->modes[8452] ?? false) ? 'beside' : 'below');
     }
 
     /** RGBA pixels of $w x $h placed at the top left of $width x $height, the rest transparent. */

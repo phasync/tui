@@ -10,7 +10,8 @@ namespace phasync\Tui\Internal;
  * its value minus 63 being the six pixels of a column, the lowest bit on top) paints in the
  * current colour and moves right; `!n` repeats the next sixel n times; `$` returns to the left
  * of the band; `-` moves to the next band; `#c` selects colour register c, `#c;u;a;b;d` defines
- * it (u = 1 HLS, 2 RGB, both in percent and degrees as DEC defined them) and selects it;
+ * it (u = 1 HLS, 2 RGB, both in percent and degrees as DEC defined them) and selects it (a
+ * pixel keeps the colour its register had when it was painted);
  * `"pan;pad;w;h` gives the raster attributes (the image's size; the aspect ratio is taken as
  * 1:1, as current terminals do). Pixels nothing painted are transparent when P2 is 1, else the
  * background colour.
@@ -38,14 +39,19 @@ final class Sixel
     public static function decode(string $params, string $data, array $background): ?array
     {
         $p = explode(';', $params);
-        $transparent = (int) ($p[1] ?? 0) === 1;
-        $palette = self::DEFAULT_PALETTE;
-        $colour = 0;
+        $blank = (int) ($p[1] ?? 0) === 1 ? "\0\0\0\0" : \chr($background[0]) . \chr($background[1]) . \chr($background[2]) . "\xff";
+        $palette = [];
+        foreach (self::DEFAULT_PALETTE as $k => [$r, $g, $b]) {
+            $palette[$k] = \chr($r) . \chr($g) . \chr($b) . "\xff";
+        }
+        $pen = $palette[0];        // (a pixel takes its register's colour when it is painted)
         $x = $y = 0;
         $width = $height = 0;      // what the raster attributes say
         $right = $bottom = 0;      // what was painted reaches
-        /** @var array<int, array<int, int>> $rows the painted pixels: colour register by x, by y */
+        /** @var array<int, array<int, string>> $rows the painted pixels of the band, RGBA by x, by y */
         $rows = [];
+        /** @var array<int, string> $lines the rows of the bands above, RGBA, as wide as they were painted */
+        $lines = [];
         $n = \strlen($data);
         $i = 0;
         while ($i < $n) {
@@ -55,8 +61,7 @@ final class Sixel
                 $repeat = 1;
             } elseif ($c === '!') {
                 $j = $i + 1;
-                $repeat = (int) self::digits($data, $j);
-                $repeat = max(1, $repeat);
+                $repeat = max(1, (int) self::digits($data, $j));
                 if ($j >= $n || \ord($data[$j]) < 63 || \ord($data[$j]) > 126) {
                     $i = $j;        // (a repeat of something else: dropped)
                     continue;
@@ -68,14 +73,20 @@ final class Sixel
                 if ($c === '$') {
                     $x = 0;
                 } elseif ($c === '-') {
+                    // the band is done: its rows become strings (a band is never painted again)
+                    self::flush($rows, $lines, $blank);
                     $x = 0;
                     $y += 6;
                 } elseif ($c === '#') {
                     $args = self::numbers($data, $i);
-                    $colour = ($args[0] ?? 0) % self::REGISTERS;
+                    $register = $args[0] % self::REGISTERS;
                     if (\count($args) >= 5) {
-                        $palette[$colour] = self::colour($args[1], $args[2], $args[3], $args[4]) ?? ($palette[$colour] ?? [0, 0, 0]);
+                        $rgb = self::colour($args[1], $args[2], $args[3], $args[4]);
+                        if ($rgb !== null) {
+                            $palette[$register] = \chr($rgb[0]) . \chr($rgb[1]) . \chr($rgb[2]) . "\xff";
+                        }
                     }
+                    $pen = $palette[$register] ?? "\0\0\0\xff";
                 } elseif ($c === '"') {
                     $args = self::numbers($data, $i);
                     if (($args[2] ?? 0) > 0 && ($args[3] ?? 0) > 0) {
@@ -94,7 +105,7 @@ final class Sixel
                     if ($bits & (1 << $b)) {
                         $row = &$rows[$y + $b];
                         for ($k = $x; $k < $to; $k++) {
-                            $row[$k] = $colour;
+                            $row[$k] = $pen;
                         }
                         unset($row);
                         $bottom = max($bottom, $y + $b + 1);
@@ -104,32 +115,37 @@ final class Sixel
             }
             $x += $repeat;
         }
+        self::flush($rows, $lines, $blank);
         $width = max($width, $right);
         $height = min(self::MAX, max($height, $bottom));
         if ($width === 0 || $height === 0) {
             return null;
         }
-        $blank = $transparent ? "\0\0\0\0" : \chr($background[0]) . \chr($background[1]) . \chr($background[2]) . "\xff";
-        $packed = [];
-        foreach ($palette as $k => [$r, $g, $b]) {
-            $packed[$k] = \chr($r) . \chr($g) . \chr($b) . "\xff";
-        }
-        $empty = array_fill(0, $width, $blank);
         $out = '';
         for ($j = 0; $j < $height; $j++) {
-            if (!isset($rows[$j])) {
-                $out .= str_repeat($blank, $width);
-                continue;
-            }
-            $line = $empty;
-            foreach ($rows[$j] as $k => $register) {
-                if ($k < $width) {
-                    $line[$k] = $packed[$register] ?? "\0\0\0\xff";
-                }
-            }
-            $out .= implode('', $line);
+            $line = $lines[$j] ?? '';
+            $out .= $line . str_repeat($blank, $width - \intdiv(\strlen($line), 4));
         }
         return [$width, $height, $out];
+    }
+
+    /**
+     * The painted rows of a band as RGBA strings into $lines, each as wide as it was painted
+     * (the blanks to its right are added at the end, when the image's width is known).
+     *
+     * @param array<int, array<int, string>> $rows
+     * @param array<int, string> $lines
+     */
+    private static function flush(array &$rows, array &$lines, string $blank): void
+    {
+        foreach ($rows as $j => $row) {
+            $line = array_fill(0, max(array_keys($row)) + 1, $blank);
+            foreach ($row as $k => $rgba) {
+                $line[$k] = $rgba;
+            }
+            $lines[$j] = implode('', $line);
+        }
+        $rows = [];
     }
 
     /** The decimal number at $i (moving $i past it); '' when there is none. */

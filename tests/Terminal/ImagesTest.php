@@ -46,7 +46,9 @@ it('asks the terminal for Kitty graphics and its cell size at attach, and says w
     expect(Tty::imagesFromEnvironment(['TERM_PROGRAM' => 'iTerm.app']))->toBe('iterm2')
         ->and(Tty::imagesFromEnvironment(['LC_TERMINAL' => 'iTerm2', 'TERM' => 'xterm-256color']))->toBe('iterm2')
         ->and(Tty::imagesFromEnvironment(['TERM_PROGRAM' => 'vscode']))->toBe('iterm2')
-        ->and(Tty::imagesFromEnvironment(['TMUX' => '/tmp/x', 'TERM_PROGRAM' => 'iTerm.app']))->toBe('none')
+        ->and(Tty::imagesFromEnvironment(['TMUX' => '/tmp/x', 'TERM' => 'screen-256color', 'LC_TERMINAL' => 'iTerm2']))->toBeNull()
+        ->and(Tty::imagesFromEnvironment(['STY' => '1.pts', 'TERM_PROGRAM' => 'iTerm.app']))->toBe('none')
+        ->and(Tty::imagesFromEnvironment(['TERM' => 'linux']))->toBe('none')
         ->and(Tty::imagesFromEnvironment(['TERM' => 'xterm-kitty']))->toBeNull();
 });
 
@@ -214,4 +216,173 @@ it('round-trips the icat and imgcat streams of a hosted program on Kitty, and sh
             }, 44, 12);
         }
     }
+});
+
+it('finds Sixel in the device attributes of a terminal without Kitty graphics or an iTerm2 name, and prefers Kitty, then iTerm2', function () {
+    $probe = function (string $answers): array {
+        return \fiber\run(function () use ($answers) {
+            $device = new class extends \phasync\Tui\TerminalDevice {
+                protected function open(string $restore): void {}
+                protected function close(): void {}
+                protected function send(string $bytes): void {}
+                protected function read(float $timeout): string
+                {
+                    \fiber\sleep(min($timeout, 0.01));
+                    return '';
+                }
+                public function size(): array
+                {
+                    return [20, 5];
+                }
+                public function answer(string $bytes): void
+                {
+                    $this->receive($bytes);
+                }
+            };
+            $root = new Surface(20, 5);
+            $device->attach($root);
+            $device->answer($answers);
+            $found = [$device->images(), $root->cellSize()];
+            $device->detach();
+            return $found;
+        });
+    };
+    expect($probe("\e[6;20;10t\e[?65;1;4;22c"))->toBe(['sixel', [10, 20]])
+        ->and($probe("\e[?62;22c"))->toBe(['none', [8, 16]])
+        ->and($probe("\e_Gi=31;OK\e\\\e[?62;4;22c"))->toBe(['kitty', [8, 16]])
+        ->and($probe("\eP>|WezTerm 20240203\e\\\e[?62;4;22c"))->toBe(['iterm2', [8, 16]]);
+});
+
+it('on Sixel, draws an image scaled to its cells in pixels, the same cells on the terminal, and nothing for text changes or the same frame', function () {
+    if (!function_exists('imagecreatefromstring')) {
+        $this->markTestSkipped('Sixel output needs GD');
+    }
+    onImages('sixel', function (FakeTerminal $t, Surface $root) {
+        $root->write("\e[2;3H" . Ansi::image(twoColours(64, 48), 8, 3));
+        $t->refresh();
+        $out = $t->takeOutput();
+        // 8x3 cells of 8x16 pixels: 64x48, drawn with the cursor saved around it, mode 8452 set once
+        expect(substr_count($out, "\eP0;1;0q"))->toBe(1)->and($out)->toContain("\"1;1;64;48")
+            ->and($out)->toContain("\e[?8452h")->and($out)->toMatch('/\e7\eP0;1;0q[^\e]*\e\\\\\e8/');
+        $f = $t->surface->cell(2, 1)->style->image;
+        expect($f?->cols)->toBe(8)->and($f->rows)->toBe(3)->and($t->surface->cell(9, 3)->style->image?->col)->toBe(7)
+            ->and($t->surface->cell(10, 1)->style->image)->toBeNull();
+        // left half red, right half blue, on the terminal too
+        $px = $f->image->rgba();
+        expect(bin2hex(substr($px, 4 * (10 * 64 + 5), 4)))->toBe('ff0000ff')->and(bin2hex(substr($px, 4 * (40 * 64 + 60), 4)))->toBe('0000ffff');
+        $root->write("\e[8;1Hsome text");
+        $t->refresh();
+        expect($t->takeOutput())->not->toContain("\eP");
+        $t->refresh();
+        expect($t->takeOutput())->toBe('');
+    });
+});
+
+it('on Sixel, draws again only the cells a window covered, scaled to them, and uses the cell size the terminal reports', function () {
+    if (!function_exists('imagecreatefromstring')) {
+        $this->markTestSkipped('Sixel output needs GD');
+    }
+    onImages('sixel', function (FakeTerminal $t, Surface $root) {
+        $root->write("\e[2;3H" . Ansi::image(twoColours(64, 48), 8, 3));
+        $t->refresh();
+        $t->takeOutput();
+        $cover = new Surface(3, 1);
+        $cover->write('XYZ');
+        $root->host($cover, 4, 2);
+        $t->refresh();
+        expect($t->takeOutput())->not->toContain("\eP")->and($t->surface->line(2))->toContain('XYZ');
+        $root->unhost($cover);
+        $t->refresh();
+        $out = $t->takeOutput();
+        expect(substr_count($out, "\eP0;1;0q"))->toBe(1)->and($out)->toContain("\"1;1;24;16")
+            ->and($t->surface->cell(4, 2)->style->image)->not->toBeNull();
+    });
+    \fiber\run(function () {
+        $t = new FakeTerminal(30, 10, images: 'sixel');
+        $t->surface->setCellSize(10, 20);
+        $root = new Surface(30, 10);
+        $t->attach($root);
+        $t->settle();
+        $root->write(Ansi::image(twoColours(64, 48), 4, 2));
+        $t->refresh();
+        expect($t->output())->toContain("\"1;1;40;40")->and($t->surface->cell(3, 1)->style->image?->col)->toBe(3);
+        $t->takeOutput();
+        $t->detach();
+        expect($t->takeOutput())->toContain("\e[?8452l");
+    });
+});
+
+it('round-trips a hosted program\'s Sixel image to a Sixel terminal, and shows it as quarter blocks without a protocol', function () {
+    if (!function_exists('imagecreatefromstring')) {
+        $this->markTestSkipped('Sixel output needs GD');
+    }
+    onImages('sixel', function (FakeTerminal $t, Surface $root) {
+        $pane = new Surface(40, 10);
+        $root->host($pane, 2, 1);
+        $pane->write(file_get_contents(__DIR__ . '/../fixtures/images/sixel.bytes'));
+        $t->refresh();
+        // 120x90 pixels in 15x6 cells, at (2, 1) of the root and of the terminal
+        expect($t->surface->cell(2, 1)->style->image?->cols)->toBe(15)->and($t->surface->cell(16, 6)->style->image?->row)->toBe(5)
+            ->and($t->surface->cell(17, 1)->style->image)->toBeNull()->and($t->surface->cell(1, 1)->style->image)->toBeNull();
+    }, 44, 12);
+    onImages('none', function (FakeTerminal $t, Surface $root) {
+        $root->write(file_get_contents(__DIR__ . '/../fixtures/images/sixel.bytes'));
+        $t->refresh();
+        expect($t->surface->cell(3, 3)->style->fg)->toBeGreaterThan(0xffffff)->and($t->output())->not->toContain("\eP0;");
+    }, 44, 12);
+});
+
+it('encodes Sixel that decodes to the same picture, here and in ImageMagick', function () {
+    if (!function_exists('imagecreatetruecolor')) {
+        $this->markTestSkipped('the Sixel encoder works on GD images');
+    }
+    // four colours in blocks, a transparent corner, 13x11 pixels (not whole bands)
+    $gd = imagecreatetruecolor(13, 11);
+    imagealphablending($gd, false);
+    imagesavealpha($gd, true);
+    $colours = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255]];
+    for ($y = 0; $y < 11; $y++) {
+        for ($x = 0; $x < 13; $x++) {
+            [$r, $g, $b] = $colours[($x >= 6 ? 1 : 0) + ($y >= 5 ? 2 : 0)];
+            imagesetpixel($gd, $x, $y, $x < 2 && $y < 2 ? imagecolorallocatealpha($gd, 0, 0, 0, 127) : imagecolorallocate($gd, $r, $g, $b));
+        }
+    }
+    $sixel = \phasync\Tui\Internal\Sixel::encode($gd);
+    expect($sixel)->toStartWith("\eP0;1;0q\"1;1;13;11")->and($sixel)->toEndWith("\e\\");
+    preg_match('/^\eP([0-9;]*)q(.*)\e\\\\$/s', $sixel, $m);
+    [$w, $h, $rgba] = \phasync\Tui\Internal\Sixel::decode($m[1], $m[2], [0, 0, 0]);
+    expect([$w, $h])->toBe([13, 11]);
+    $at = fn(string $px, int $width, int $x, int $y) => bin2hex(substr($px, 4 * ($y * $width + $x), 4));
+    expect($at($rgba, 13, 0, 0))->toBe('00000000')->and($at($rgba, 13, 3, 0))->toBe('ff0000ff')->and($at($rgba, 13, 12, 0))->toBe('00ff00ff')
+        ->and($at($rgba, 13, 0, 10))->toBe('0000ffff')->and($at($rgba, 13, 12, 10))->toBe('ffffffff');
+    $convert = trim((string) shell_exec('command -v convert 2>/dev/null'));
+    if ($convert !== '') {
+        $file = sys_get_temp_dir() . '/phasync-tui-' . getmypid() . '.sixel';
+        file_put_contents($file, $sixel);
+        $ppm = (string) shell_exec(escapeshellarg($convert) . ' ' . escapeshellarg("sixel:$file") . ' -depth 8 rgb:-');
+        unlink($file);
+        expect(strlen($ppm))->toBe(13 * 11 * 3)
+            ->and(bin2hex(substr($ppm, 3 * 3, 3)))->toBe('ff0000')->and(bin2hex(substr($ppm, 3 * 12, 3)))->toBe('00ff00')
+            ->and(bin2hex(substr($ppm, 3 * (10 * 13), 3)))->toBe('0000ff')->and(bin2hex(substr($ppm, 3 * (10 * 13 + 12), 3)))->toBe('ffffff');
+    }
+});
+
+it('in inline mode on Sixel, leaves the image of a row that scrolled above the region standing', function () {
+    if (!function_exists('imagecreatefromstring')) {
+        $this->markTestSkipped('Sixel output needs GD');
+    }
+    onImages('sixel', function (FakeTerminal $t, Surface $root) {
+        $root->write(Ansi::image(twoColours(16, 16), 2, 1) . "\e[3Gfirst\r\n");
+        $t->refresh();
+        for ($i = 0; $i < 6; $i++) {
+            $root->write("line $i\r\n");
+            $t->refresh();
+        }
+        expect($t->frozen())->toContain('first');
+        $found = false;
+        for ($y = -$t->surface->scrollbackSize(); $y < $t->surface->rows(); $y++) {
+            $found = $found || ($y < 0 ? $t->surface->scrollbackLine($y)?->styles[0]->image : $t->surface->cell(0, $y)->style->image) !== null;
+        }
+        expect($found)->toBeTrue();
+    }, 20, 5, true);
 });

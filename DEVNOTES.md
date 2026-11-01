@@ -18,6 +18,15 @@ README.md and docs/.
 - [x] 3. Canvas element (src/Component/Canvas.php, CanvasContext.php); tests/Widgets/CanvasTest.php
 - [x] 4. graphs.php, README Graphics paragraph. It runs, but shows no axes, no cpu line and a
       tiny photo until phasync/canvas fixes the gaps below; nothing in the example changes then.
+- [x] Sixel (SPEC 10.4's third protocol; asked for by Frode in continuation 3: "build the rest
+      into tui for rendering to the protocols we support and are able to detect", the canvas
+      fixes coming separately): emulator (DCS q, src/Internal/Sixel.php decode), device
+      (DA1 `4` detection, `sixel` painting through GD, encode), FakeTerminal/Tui::headless
+      `images: 'sixel'`, tmux probed instead of forced to none; tests in
+      tests/Surface/ImagesTest.php (describe Sixel), tests/Terminal/ImagesTest.php,
+      tests/Widgets/CanvasTest.php; fixture tests/fixtures/images/sixel.bytes (ImageMagick).
+- Left, outside tui: the push (`git push origin --delete widget/Markdown widget/Tabs
+  widget/Tree`, and the tag) and the phasync/canvas gaps below. Nothing else.
 
 ### phasync/canvas gaps (at 7643f60, 2026-10-31; tests skip through canvasGap() and run once fixed)
 
@@ -58,6 +67,45 @@ Found by tests/Widgets/CanvasTest.php; not worked around in tui (no 2D context o
   equal the last drawing's.
 - `auto` is resolved on every render (`markerInUse()`), and the element asks to render again
   after the device's probe answers (`whenProbed`), because images() is only known then.
+
+## Design decisions (Sixel, 0.0.4-beta1 continuation 3)
+
+- **Decoding** (src/Internal/Sixel.php) is a loop over the DCS body in PHP (a payload format
+  like Kitty's base64, not a terminal sequence, so not in the grammar; the grammar only hands
+  the DCS text to `Emulator::dcs()`, which takes `^[0-9;]*q`). A pixel takes its register's
+  colour when it is painted; each band becomes RGBA strings when `-` ends it (a 1000x750
+  picture: 0.26 s, 10 MB peak; holding every pixel in arrays was 38 MB). Image size =
+  max(raster attributes, what was painted), capped at 10000 each way; aspect ratio 1:1.
+- **Placement**: the decoded image is padded with transparent pixels to whole cells at the
+  emulator's cell size, so a fragment shows exactly the pixels a terminal would draw there.
+  Cursor after: below in the start column (default), right of the last row clamped to the last
+  column (8452: no wrap, so an image at the bottom right never scrolls), unchanged with DECSDM
+  (drawn at 0,0). These are the forms I could pin down without xterm here; the device never
+  depends on them (it saves the cursor around its own images).
+- **DA1** is now `CSI ? 62 ; 4 ; 22 c` (Sixel) and XTSMGRAPHICS is answered (1024 registers,
+  the screen in pixels), so a hosted program picks Sixel by itself. A nested tui still picks
+  Kitty: its probe gets Kitty's OK first, and Kitty is preferred.
+- **Device order**: kitty (query OK) > iterm2 (env/name) > sixel (DA1 has 4) > none. Sixel is
+  painted like iTerm2 (changed cells, rectangle by rectangle) but scaled through GD to the
+  cells' pixels (Sixel cannot scale) and quantised by `imagetruecolortopalette` (dithered, 256);
+  encodings cached per image by (placement, rectangle, cell size), 32 per image. Each image is
+  wrapped in DECSC/DECRC so the tracked cursor stays right, and `CSI ? 8452 h` is sent before
+  the first (reset at detach) because xterm's default moves the cursor below the image, which
+  scrolls the screen for an image on the bottom row. Assumption, as for iTerm2: text written
+  over a sixel image's cells replaces it there (as terminals that keep images in their cells
+  do; a terminal that keeps graphics on a layer until erased would show the old picture under
+  text: not verifiable here, no Sixel terminal on this machine).
+- No pure-PHP quantiser: Sixel output needs GD, like the quarter fallback and iTerm2 crops; a
+  canvas needs GD or Imagick anyway. Without GD, Sixel image cells stay blank (documented).
+- No XTSMGRAPHICS probe by the device: `CSI ? 1 ; 1 S` to a terminal that ignores the `?` would
+  scroll it (SU). 256 colours is what every Sixel terminal of today has at least.
+- `Tty::imagesFromEnvironment()`: inside tmux it returns null (probe) instead of 'none': tmux
+  answers DA1 itself, with 4 when it was built with Sixel; the outer terminal's TERM_PROGRAM /
+  LC_TERMINAL are not believed there.
+- The parser is regenerated with charm-compile from charm/parsing dev-master at 3d9d757 (the
+  commit composer.lock had before charm/parsing left composer.json): `composer require
+  charm/parsing:dev-master#3d9d75747310832f5dab96670633bb0623c840b4` in a scratch directory with
+  minimum-stability dev, its vendor/bin on the PATH, then `composer grammar`; GrammarTest checks it.
 
 ## Design decisions (0.0.4-beta1)
 

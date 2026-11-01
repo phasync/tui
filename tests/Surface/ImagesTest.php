@@ -374,12 +374,20 @@ describe('Sixel', function () {
             ->and($colour('#5;1;0;100;0'))->toBe('ffffffff')
             ->and($colour('#2'))->toBe('cc2121ff')                  // the VT340's register 2
             ->and($colour(''))->toBe('000000ff');                   // register 0 at the start
+        // a pixel keeps the colour its register had when it was painted
+        $s = imaging(2, 2, $replies);
+        $s->write("\eP0;1q#1;2;100;0;0~-#1;2;0;0;100~\e\\");
+        expect($pixel($s, 0, 0, 0, 0))->toBe('ff0000ff')->and($pixel($s, 0, 0, 0, 6))->toBe('0000ffff');
     });
 
     it('leaves the cursor right of the image with mode 8452, and draws at the top left without moving it with DECSDM', function () {
         $s = imaging(10, 4, $replies);
         $s->write("\e[?8452h\e[2;3H\ePq\"1;1;16;32!16~-!16~-!16~-!16~-!16~-!16B\e\\");
         expect(cursorAt($s))->toBe([4, 2])->and($s->cell(2, 1)->style->image?->col)->toBe(0);
+        // (at the right edge: the cursor stays in the last column, and nothing scrolls)
+        $s = imaging(4, 2, $replies);
+        $s->write("\e[?8452h\e[2;1H\ePq\"1;1;32;16!32~-!32~-!32F\e\\");
+        expect(cursorAt($s))->toBe([3, 1])->and($s->cell(0, 1)->style->image?->col)->toBe(0);
         $s = imaging(10, 4, $replies);
         $s->write("\e[?80h\e[3;5H\ePq!8~\e\\");
         expect(cursorAt($s))->toBe([4, 2])->and($s->cell(0, 0)->style->image?->col)->toBe(0)->and($s->cell(4, 2)->style->image)->toBeNull();

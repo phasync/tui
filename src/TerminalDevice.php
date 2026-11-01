@@ -136,12 +136,15 @@ abstract class TerminalDevice
      */
     protected ?bool $hyperlinks = null;
     /**
-     * The image protocol the terminal has: 'kitty', 'iterm2' or 'none' as the device (or its
-     * environment) knows it, null to decide from the terminal's answers at attach (see `images()`).
+     * The image protocol the terminal has: 'kitty', 'iterm2', 'sixel' or 'none' as the device
+     * (or its environment) knows it, null to decide from the terminal's answers at attach (see
+     * `images()`).
      */
     protected ?string $images = null;
     /** The terminal answered Kitty's graphics query at attach. */
     private bool $kittyGraphics = false;
+    /** The terminal's device attributes (DA1) at attach included Sixel graphics (4). */
+    private bool $sixelGraphics = false;
     private Internal\DeviceImages $painter;
 
     /** How many colours the terminal shows (`Color::DEPTH_16`, `DEPTH_256`, `DEPTH_TRUECOLOR`); set by subclasses. */
@@ -254,8 +257,8 @@ abstract class TerminalDevice
         $this->pen = null;
         $this->shown = null;
         $this->kitty = false;
-        $this->kittyGraphics = false;
-        $this->painter = new Internal\DeviceImages($this->images());
+        $this->kittyGraphics = $this->sixelGraphics = false;
+        $this->painter = new Internal\DeviceImages($this->images(), $this->cellSize(...));
         $this->background = null;
         $this->motion = false;
         $this->mouse = false;
@@ -330,6 +333,7 @@ abstract class TerminalDevice
         } elseif ($this->painter->protocol === 'kitty') {
             $this->send($this->painter->clear(true));     // (the images leave the terminal's memory with the program)
         }
+        $this->send($this->painter->restore());
         $this->root = null;
         unset(self::$devices[$root]);
         $this->wake?->notify();
@@ -509,14 +513,21 @@ abstract class TerminalDevice
     }
 
     /**
-     * The image protocol the terminal shows images with: `'kitty'` (Kitty graphics: kitty,
-     * WezTerm, Ghostty, Konsole; it answers Kitty's query at `attach()`), `'iterm2'` (iTerm2
-     * inline images: iTerm2, WezTerm, Konsole, VS Code's terminal and xterm.js, known from
-     * `TERM_PROGRAM`, `LC_TERMINAL` or the terminal's name), or `'none'`. The cells of images
-     * (a `Canvas` drawing in pixels, a hosted program's pictures) are drawn with it, or as
-     * quarter blocks with `none`. The probe never holds start-up up: until the terminal has
-     * answered this is `'none'`, and the screen is drawn again when the answer says more.
-     * `FakeTerminal` is told (`images:`, default `'none'`).
+     * The image protocol the terminal shows images with, the best one it has: `'kitty'` (Kitty
+     * graphics: kitty, WezTerm, Ghostty, Konsole; it answers Kitty's query at `attach()`),
+     * `'iterm2'` (iTerm2 inline images: iTerm2, WezTerm, Konsole, VS Code's terminal and
+     * xterm.js, known from `TERM_PROGRAM`, `LC_TERMINAL` or the terminal's name), `'sixel'`
+     * (DEC Sixel: xterm, foot, mlterm, Windows Terminal, tmux built with it, and others whose
+     * device attributes say Sixel), or `'none'`. The cells of images (a `Canvas` drawing in
+     * pixels, a hosted program's pictures) are drawn with it, or as quarter blocks with `none`.
+     * The probe never holds start-up up: until the terminal has answered this is `'none'`, and
+     * the screen is drawn again when the answer says more. `FakeTerminal` is told (`images:`,
+     * default `'none'`).
+     *
+     * Sixel draws a pixel to a pixel, so its images are scaled to the cell size the terminal
+     * reports (`CSI 16 t`; 8x16 when it does not) and reduced to 256 colours; Kitty and iTerm2
+     * scale the image themselves. Sixel and iTerm2 need GD for the parts of an image a window
+     * covers; Sixel needs it for any image (without it, its cells stay blank).
      */
     public function images(): string
     {
@@ -526,7 +537,16 @@ abstract class TerminalDevice
         if ($this->kittyGraphics) {
             return 'kitty';
         }
-        return preg_match(self::ITERM_TERMINALS, $this->terminalName) === 1 ? 'iterm2' : 'none';
+        if (preg_match(self::ITERM_TERMINALS, $this->terminalName) === 1) {
+            return 'iterm2';
+        }
+        return $this->sixelGraphics ? 'sixel' : 'none';
+    }
+
+    /** @return array{int, int} the root's cell size in pixels (8x16 when not attached) */
+    private function cellSize(): array
+    {
+        return $this->root?->cellSize() ?? [8, 16];
     }
 
     /** Where an iTerm2 image left the terminal's cursor: right of its last row (the column unknown past the right edge). */
@@ -978,13 +998,14 @@ abstract class TerminalDevice
             $this->root->setCellSize((int) $m[2], (int) $m[1]);
         }
         $this->kittyGraphics = preg_match('/\e_Gi=31;OK(?:\e\\\\|\x07)/', $this->probe) === 1;
+        $this->sixelGraphics = preg_match('/\e\[\?([\d;]*)c/', $this->probe, $m) === 1 && \in_array('4', explode(';', $m[1]), true);
         $bytes = (string) preg_replace(['/\e\[\?[\d;]*[uc]/', '/\eP>\|[^\e\x07]*(?:\e\\\\|\x07)/', '/\e\]11;[^\e\x07]*(?:\e\\\\|\x07)/',
             '/\e_G[^\e\x07]*(?:\e\\\\|\x07)/', '/\e\[[46];\d+;\d+t/'], '', $this->probe);
         $this->probing = null;
         $this->probe = '';
         if ($this->root !== null && $this->images() !== $this->painter->protocol) {
             // (the terminal has images: what was drawn of image cells meanwhile is drawn again)
-            $this->painter = new Internal\DeviceImages($this->images());
+            $this->painter = new Internal\DeviceImages($this->images(), $this->cellSize(...));
             $this->redraw = true;
             $this->damage();
         }
