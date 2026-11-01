@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "44c1653d5c9cc1bc6816ca290ef95ec2",
+    "content-hash": "fca0a62c4e275a35edb2edaf9b34e773",
     "packages": [
         {
             "name": "fiber-interop/api",
@@ -116,11 +116,17 @@
         },
         {
             "name": "phasync/canvas",
-            "version": "dev-main",
-            "dist": {
-                "type": "path",
-                "url": "../canvas",
+            "version": "v0.1.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/phasync/canvas.git",
                 "reference": "7643f605e5ceb476db78e4a093d69414952e6d5a"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/phasync/canvas/zipball/7643f605e5ceb476db78e4a093d69414952e6d5a",
+                "reference": "7643f605e5ceb476db78e4a093d69414952e6d5a",
+                "shasum": ""
             },
             "require": {
                 "php": ">=8.2"
@@ -134,11 +140,7 @@
                     "phasync\\Canvas\\": "src/"
                 }
             },
-            "autoload-dev": {
-                "psr-4": {
-                    "phasync\\Canvas\\Tests\\": "tests/"
-                }
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
@@ -149,10 +151,11 @@
                 }
             ],
             "description": "The browser's 2D canvas API for PHP, over GD or Imagick",
-            "transport-options": {
-                "symlink": true,
-                "relative": true
-            }
+            "support": {
+                "issues": "https://github.com/phasync/canvas/issues",
+                "source": "https://github.com/phasync/canvas/tree/v0.1.0"
+            },
+            "time": "2026-10-31T23:19:05+00:00"
         }
     ],
     "packages-dev": [
