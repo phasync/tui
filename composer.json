@@ -21,7 +21,7 @@
     "require": {
         "php": ">=8.3",
         "fiber-interop/api": "^0.3.2",
-        "phasync/canvas": "^0.1"
+        "phasync/canvas": "^0.1.1"
     },
     "require-dev": {
         "fiber-interop/phasync": "^0.4.2",

@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "fca0a62c4e275a35edb2edaf9b34e773",
+    "content-hash": "cca2d78421eeb99e0464e3044375c475",
     "packages": [
         {
             "name": "fiber-interop/api",
@@ -116,16 +116,16 @@
         },
         {
             "name": "phasync/canvas",
-            "version": "v0.1.0",
+            "version": "v0.1.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/phasync/canvas.git",
-                "reference": "7643f605e5ceb476db78e4a093d69414952e6d5a"
+                "reference": "2b4452c96eecea0fb28aa675f55c524dbad5e250"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phasync/canvas/zipball/7643f605e5ceb476db78e4a093d69414952e6d5a",
-                "reference": "7643f605e5ceb476db78e4a093d69414952e6d5a",
+                "url": "https://api.github.com/repos/phasync/canvas/zipball/2b4452c96eecea0fb28aa675f55c524dbad5e250",
+                "reference": "2b4452c96eecea0fb28aa675f55c524dbad5e250",
                 "shasum": ""
             },
             "require": {
@@ -153,9 +153,9 @@
             "description": "The browser's 2D canvas API for PHP, over GD or Imagick",
             "support": {
                 "issues": "https://github.com/phasync/canvas/issues",
-                "source": "https://github.com/phasync/canvas/tree/v0.1.0"
+                "source": "https://github.com/phasync/canvas/tree/v0.1.1"
             },
-            "time": "2026-10-31T23:19:05+00:00"
+            "time": "2026-11-01T00:26:11+00:00"
         }
     ],
     "packages-dev": [

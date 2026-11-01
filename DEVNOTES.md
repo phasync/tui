@@ -26,34 +26,16 @@ README.md and docs/.
       tests/Surface/ImagesTest.php (describe Sixel), tests/Terminal/ImagesTest.php,
       tests/Widgets/CanvasTest.php; fixture tests/fixtures/images/sixel.bytes (ImageMagick).
 - Left, outside tui: the push (`git push origin --delete widget/Markdown widget/Tabs
-  widget/Tree`, and the tag) and the phasync/canvas gaps below. Nothing else.
+  widget/Tree`). Nothing else.
 
-### phasync/canvas gaps (at 7643f60, 2026-10-31; tests skip through canvasGap() and run once fixed)
+### phasync/canvas gaps
 
-Found by tests/Widgets/CanvasTest.php; not worked around in tui (no 2D context of our own):
-
-1. `toDots(w, h)` at the backend's own size segfaults (GD 2.3.3, `imagescale` with
-   IMG_BILINEAR_FIXED). The element always rasterises at cells x cell size in pixels, so toDots
-   only ever scales down; that is a design choice that also makes markers agree, not a
-   workaround, but the segfault is upstream's.
-2. `stroke()` with `lineWidth <= 1` (in user units) draws with `imageline` on the untransformed
-   points: a line of a dot or two lands at pixel coordinates (top-left, tiny). `lineWidth > 1`
-   is transformed (as a polygon) and is in user units as in a browser. `strokeRect()` ignores
-   the transform at every width. (graphs.php: the axes and the cpu line are missing.)
-3. `clearRect()` does not clear (GD alpha blending is on, so a transparent fill blends to
-   nothing) and ignores the transform.
-4. `drawImage()` of a path or of bytes calls `imagecreatefromfile()`, which does not exist in
-   ext-gd; `drawImage()` of a `GdImage` ignores the transform for the destination rectangle
-   (graphs.php: the photo comes out a few pixels in the corner).
-5. `fillText()` ignores the transform and uses GD's built-in font 1. Not needed: the element
-   puts text in cells as characters (CanvasContext::fillText), which is the TUI's job.
-6. `toDots()` scales bilinearly, so an edge bleeds into the next dot (about one dot); tests
-   compare braille against pixels with that tolerance. A box filter (or nearest at integer
-   ratios) would be exact.
-7. There is no way to make a `Canvas` with a `Context` subclass (the context is created inside),
-   so the element constructs the backend itself (`Canvas::$backendClass`, else Gd, else Imagick)
-   and `CanvasContext extends Context` with it. A factory or a `Context` that takes a backend in
-   a public constructor (it does) is enough; a `Canvas::fromBackend()` would make it clean.
+Fixed in phasync/canvas 0.1.1 (required since): transformed thin strokes and strokeRect, a
+fractional lineWidth scaled to pixels, clearRect, drawImage of paths/bytes and through the
+transform, the toDots segfault, and exact coverage in toDots (the dot fixtures were recorded again).
+Still open, by choice: fillText draws text as characters in cells (the TUI's job), and the element
+still builds the backend itself; `Canvas::fromBackend($backend, CanvasContext::class)` now exists
+and can replace that when the element is next touched.
 
 ### Design decisions (Canvas)
 
