@@ -20,7 +20,7 @@ use phasync\Tui\Tui;
 function canvasGap(string $operation): ?string
 {
     static $gaps = [];
-    return $gaps[$operation] ??= (function () use ($operation): string {
+    $gaps[$operation] ??= (function () use ($operation): string {
         $canvas = new \phasync\Canvas\Canvas(40, 40);
         $c = $canvas->getContext();
         $c->setTransform(10, 0, 0, 10, 0, 0);
