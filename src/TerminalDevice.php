@@ -332,6 +332,11 @@ abstract class TerminalDevice
             $this->send($this->link() . "\e[0m" . ($this->keep ? $this->move(0, $this->region) : $this->painter->clear() . $this->move(0, 0) . "\e[J"));
         } elseif ($this->painter->protocol === 'kitty') {
             $this->send($this->painter->clear(true));     // (the images leave the terminal's memory with the program)
+        } elseif ($this->painter->protocol === 'sixel') {
+            // erase the alternate screen before leaving it: a Sixel image lives in its cells, and
+            // a terminal that keeps images apart from the text (Windows Terminal) would otherwise
+            // show them over the shell after the switch back
+            $this->send("\e[2J");
         }
         $this->send($this->painter->restore());
         $this->root = null;
