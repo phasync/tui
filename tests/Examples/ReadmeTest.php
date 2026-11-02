@@ -233,3 +233,41 @@ it('runs the README\'s tree of 100,000 nodes: it opens fast, moves to the end, c
         expect($app->isMounted())->toBeFalse();
     });
 });
+
+/** The kitchen sink on an in-memory terminal: all of it on screen, the keys at work, the Confirm quitting. */
+function readmeKitchenSink(FakeTerminal $t): void
+{
+    $t->settle();
+    foreach (['working', 'Apple', 'progress', 'type and press Enter', '[ ] Loud', '[ Quit… ]', 'canvas', 'started', 'ctrl+l log a line'] as $text) {
+        expect($t->text())->toContain($text);
+    }
+    $t->press('ctrl+l');
+    $t->press('down');                                   // the Select: Pear
+    $t->press('tab');                                     // the Editor
+    $t->type('hello');
+    $t->press('enter');
+    $t->press('tab');                                     // the Checkbox
+    $t->press('space');
+    $t->settle();
+    expect($t->text())->toContain('widgets · pear · loud')->toContain('you typed: hello')->toContain(' hello');
+    $t->press('tab');                                     // the Button
+    $t->press('enter');
+    $t->settle();
+    expect($t->text())->toContain('Quit the kitchen sink?');
+    $t->press('n');
+    $t->settle();
+    expect($t->text())->toContain('stayed')->not->toContain('Quit the kitchen sink?');
+    $t->press('enter');
+    $t->settle();
+    $t->press('y');                                       // quits: fiber\run() returns
+}
+
+it('runs the README\'s kitchen sink, which is examples/kitchen-sink.php, on an in-memory terminal', function () {
+    $readme = (string) file_get_contents(__DIR__ . '/../../README.md');
+    $program = (string) file_get_contents(__DIR__ . '/../../examples/kitchen-sink.php');
+    preg_match('/```php\n((?:(?!```).)*kitchen sink.*?)```/s', $readme, $m);
+    expect($m[1])->toBe(substr($program, strpos($program, 'use phasync')));
+    $code = str_replace(['Tui::run(fn() => new Column([', "'log a line']]);\n});"], ['$t = Tui::headless(fn() => new Column([', "'log a line']], cols: 80, rows: 24);\n    readmeKitchenSink(\$t);\n});"], $m[1], $count);
+    expect($count)->toBe(2);
+    eval($code);
+});

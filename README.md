@@ -175,13 +175,95 @@ runtime: phasync, Revolt/AMPHP, ReactPHP.
 ## Install
 
 ```bash
-composer require phasync/tui fiber-interop/phasync     # or fiber-interop/revolt, /amp, /react
+composer require fiber-interop/phasync phasync/tui
 ```
 
-`fiber-interop/api` (0.3.2 or later) is the only runtime dependency; install one adapter to
-choose the event loop (on phasync, fiber-interop/phasync 0.4.2 or later: the library conflicts
-with older ones, which cannot end a program whose starting code threw). Optional: ext-phasync 2.0.7+ (bundled with `phasync/phasync`) captures `echo` of a PHP coroutine
-into a window; ext-pcntl gives immediate resizes and terminal restore on SIGTERM.
+The first package is the event loop. phasync/tui runs on any loop through `fiber-interop/api`:
+if your application already runs on Revolt, Amp or ReactPHP, install `fiber-interop/revolt`,
+`fiber-interop/amp` or `fiber-interop/react` instead of `fiber-interop/phasync`, and the
+library uses the loop you have. (Without an adapter the first `Tui::run()` throws
+`fiber\NotConfiguredException` naming the four.) Optional: ext-phasync 2.0.7+ (bundled with
+`phasync/phasync`) captures `echo` of a PHP coroutine into a window; ext-pcntl gives immediate
+resizes and terminal restore on SIGTERM. PHP 8.3 or later, ext-gd for `Canvas`.
+
+**A first program**, `examples/kitchen-sink.php`: a little of everything on one screen, no
+class of its own. Tab moves the focus, Ctrl-Q quits; `TUI_HEADLESS=80x22 php
+examples/kitchen-sink.php` prints the screen as text without a terminal:
+
+```text
+ ⠹ working                                                                  10%
+╭ select ──────────╮╭ widgets · apple ─────────────────────────────────────────╮
+│Apple             ││█████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ progress 11%│
+│Pear              ││                                                          │
+│Plum              ││type and press Enter                                      │
+│                  ││                                                          │
+│                  ││[ ] Loud                                                  │
+│                  ││                                                          │
+│                  ││[ Quit… ]                                                 │
+│                  ││                                                          │
+╰──────────────────╯╰──────────────────────────────────────────────────────────╯
+╭ canvas ──────────────────────────────╮╭ log ─────────────────────────────────╮
+│    ⣀⣀                                ││started                               │
+│  ⡠⠊                                  ││                                      │
+│ ⡈                                    ││                                      │
+│⠐                                     ││                                      │
+│                                      ││                                      │
+│                                      ││                                      │
+│                                      ││                                      │
+│                                      ││                                      │
+╰──────────────────────────────────────╯╰──────────────────────────────────────╯
+ctrl+l log a line  ctrl+q quit
+```
+
+```php
+use phasync\Tui\Component\{Button, Canvas, CanvasContext, Checkbox, Confirm, Dialog, Editor, Log, ProgressBar, Select, Spinner};
+use phasync\Tui\Element\{Box, Column, Help, Row, Text};
+use phasync\Tui\{State, Tui};
+
+$s = new State(['progress' => 0.0, 'samples' => [], 'fruit' => 'apple', 'loud' => false]);
+$log = new Log();
+$log->append("started\n");
+\fiber\run(function () use ($s, $log) {
+    Tui::go(function () use ($s) {            // a coroutine feeds the bar and the graph
+        while (true) {
+            $s->progress = $s->progress >= 1 ? 0.0 : $s->progress + 0.01;
+            $s->samples = [...array_slice($s->samples, -59), 50 + 40 * sin(count($s->samples) / 5)];
+            Tui::sleep(0.1);
+        }
+    });
+    $graph = function (CanvasContext $c) use ($s) {
+        $c->lineWidth = 0.25;                 // one Braille dot
+        $c->beginPath();
+        foreach ($s->samples as $i => $v) {
+            $c->lineTo($i * $c->width() / 60, $c->height() * (1 - $v / 100));
+        }
+        $c->stroke();
+    };
+    Tui::run(fn() => new Column([
+        new Row([new Spinner('working'), new Text(fn() => sprintf('%d%%', $s->progress * 100), class: 'grow text-right text-muted')], class: 'px-1'),
+        new Row([
+            new Box(new Select(items: ['apple' => 'Apple', 'pear' => 'Pear', 'plum' => 'Plum'], onSelect: fn(string $key) => $s->fruit = $key), 'select', class: 'w-20'),
+            new Box(new Column([
+                new ProgressBar(fn() => $s->progress, label: 'progress {percent}'),
+                new Editor(placeholder: 'type and press Enter', maxLines: 1, onSubmit: fn(string $text, Editor $e) => [$log->append("you typed: $text\n"), $e->setValue('')]),
+                new Checkbox('Loud', onChange: fn(bool $on) => $s->loud = $on),
+                new Button('Quit…', function () use ($log) {
+                    \fiber\await(Dialog::open(new Confirm('Quit the kitchen sink?'))) ? Tui::quit() : $log->append("stayed\n");
+                }),
+            ], gap: 1), fn() => "widgets · {$s->fruit}" . ($s->loud ? ' · <b>loud</b>' : ''), class: 'grow'),
+        ], class: 'h-10'),
+        new Row([
+            new Box(new Canvas(draw: $graph, marker: 'braille'), 'canvas', class: 'w-1/2'),
+            new Box($log, 'log', class: 'grow'),
+        ], class: 'grow'),
+        new Help(),
+    ]), keys: ['ctrl+l' => [fn() => $log->append(date('H:i:s') . " hello\n"), 'log a line']]);
+});
+```
+
+The pattern is the one every program here follows: a `State` holds what changes, coroutines
+and handlers change it, and a closure builds the screen from it; what read a value that changed
+is drawn again, nothing else. The [cookbook](docs/cookbook.md) has ten more screens like it.
 
 ## The model
 
