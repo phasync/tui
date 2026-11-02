@@ -888,3 +888,11 @@ last, so a `Form` collects it); `directories: true` lists directories only and E
 ratatui's `Gauge` is a `ProgressBar` (a filled bar with a centred or trailing percentage and label), and
 its `LineGauge` is the same bar with thin glyphs, so there is no separate widget: `new ProgressBar($v, fill: '━', empty: '─')`
 draws `━━━━━━━━──────── 50%`. `fill` and `empty` (props) are any one-column characters.
+
+## Scrollbar
+
+The widgets that scroll (`Log`, `Markdown`, `Tree`, `Table`, ...) draw their own. `new Scrollbar(total: 500, view: 20, position: $top, horizontal: false, onScroll: fn(int $to) => ...)`
+is for a view you scroll yourself: a column (row) with a thumb as large as the part in view. The three
+numbers are props; the owner passes the current ones. A click on the track puts the thumb there, a drag
+moves it, the wheel scrolls three; `onScroll($position)` gets the new first row. Nothing is drawn when
+everything shows. It takes no keys. Style: `Scrollbar`, `Scrollbar::thumb`.

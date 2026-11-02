@@ -17,6 +17,7 @@ Widget parity with ratatui, Textual and Bubbles (branch `widgets/parity`):
 - New: `Stopwatch` and `Timer` (self-ticking clock and countdown with play/pause/reset, `onFinish`).
 - New: `DirectoryTree` (lazy file-system `Tree`, extension filter) and `FilePicker`.
 - New: `ProgressBar` `fill:` and `empty:` characters (a thin line gauge is `fill: '━', empty: '─'`); no separate `Gauge`/`LineGauge`.
+- New: `Scrollbar` (standalone, for a view you scroll yourself).
 
 ## 0.0.5 (2026-11-02)
 

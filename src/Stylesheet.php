@@ -282,6 +282,8 @@ final class Stylesheet
             'Stopwatch:focused' => ['bold' => true],
             'Stopwatch:disabled' => ['dim' => true],
             'Timer:finished' => ['color' => '$error'],
+            'Scrollbar' => ['color' => '$muted'],
+            'Scrollbar::thumb' => ['color' => '$accent'],
             'Form::error' => ['color' => '$error'],
             '*:invalid' => ['color' => '$error'],
             '*::scrollbar' => ['color' => '$muted'],
