@@ -275,6 +275,7 @@ final class Stylesheet
             'MenuBar::title:open' => ['inverse' => true],
             'MenuBar' => ['background' => '$panel'],
             'MenuBar:disabled' => ['dim' => true],
+            'LineChart::axis' => ['color' => '$muted'],
             'Form::error' => ['color' => '$error'],
             '*:invalid' => ['color' => '$error'],
             '*::scrollbar' => ['color' => '$muted'],

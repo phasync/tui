@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, and `Menu` with `MenuBar`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, and `LineChart` with `ScatterChart`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -834,3 +834,13 @@ Left/Right change title (also inside an open menu), Enter/Space/Down/click open;
 `openTitle()`. Keep item keys unique across menus. Styles: `Menu` (rounded border), `Menu::item`
 (`current`, `disabled`), `Menu::shortcut`, `Menu::separator`; `MenuBar`, `MenuBar::title`
 (`current`, `open`, `focused`).
+
+## LineChart, ScatterChart
+
+`new LineChart(['cpu' => [12, 30, 22], 'mem' => [[0, 40], [1, 42], [2, 50]]], yMin: 0, yMax: 100, points: false, legend: true, colors: [...], marker: 'auto')`:
+series on axes, drawn on a `Canvas` (braille dots or pixels; needs `ext-gd`). A series is y values
+(x = position) or `[x, y]` pairs, `null` leaves a gap. Axes fit the data or are fixed with
+`xMin/xMax/yMin/yMax`; the y axis has labels at the bottom, top and middle, the x axis at its ends;
+axes and labels are characters, the legend (top right) names the series in their colours.
+`lines` joins points, `points` marks them. `new ScatterChart(['s' => [[1, 2], [3, 5]]])` is the same
+with points only. Takes the room it is given. Style: `LineChart::axis` (also for `ScatterChart`).
