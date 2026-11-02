@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, and `Markdown`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -783,3 +783,14 @@ arrows move the day, Page Up/Down the month (the day is kept, clamped to the mon
 Home/End first/last day, `t` today, Enter/Space/click picks (`'Y-m-d'`); `‹ ›` in the title
 change month. Styles: `Calendar::title`, `::weekday`, `::day` with the states `today`, `marked`,
 `current`, `chosen`, `outside`.
+
+## Collapsible, Accordion
+
+`new Collapsible('Advanced', $element_or_string, collapsed: true, onToggle: fn(bool $collapsed) => ...)`:
+a `▸`/`▾` header row over content that is laid out only while open. Enter, Space or a click on the
+header toggle; Right opens and Left closes (the key goes on when it cannot). `collapsed` is the
+first instance's only; `setCollapsed()`, `isCollapsed()`, event `toggle`.
+`new Accordion(['a' => ['title' => 'One', 'content' => $el], ...], open: 'a', exclusive: true, onChange: fn(array $open) => ...)`:
+Collapsibles in a column, one open at a time (or independent with `exclusive: false`); sections
+are given once; `open()`, `setOpen($key, $open)`. Styles: `Collapsible::header` (states
+`collapsed`, `focused`), `Collapsible::mark`.

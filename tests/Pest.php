@@ -67,3 +67,21 @@ function drawn(\phasync\Tui\FakeTerminal $t): string
     $t->refresh();
     return $t->root()->dump();
 }
+
+/** A root component for widget tests: renders what $build returns; `make()` reaches children by key. */
+final class WidgetScreen extends \phasync\Tui\Component
+{
+    public function __construct(private Closure $build)
+    {
+    }
+
+    protected function render(): \phasync\Tui\Element
+    {
+        return ($this->build)($this);
+    }
+
+    public function make(string $key, Closure $create): \phasync\Tui\Component
+    {
+        return $this->child($key, $create);
+    }
+}
