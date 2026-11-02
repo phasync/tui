@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "cca2d78421eeb99e0464e3044375c475",
+    "content-hash": "e8bb170a16725747c584beec6a098809",
     "packages": [
         {
             "name": "fiber-interop/api",
@@ -116,23 +116,27 @@
         },
         {
             "name": "phasync/canvas",
-            "version": "v0.1.1",
+            "version": "v0.2.4",
             "source": {
                 "type": "git",
                 "url": "https://github.com/phasync/canvas.git",
-                "reference": "2b4452c96eecea0fb28aa675f55c524dbad5e250"
+                "reference": "19b28e14653a5e9076762387d96525e995bada26"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phasync/canvas/zipball/2b4452c96eecea0fb28aa675f55c524dbad5e250",
-                "reference": "2b4452c96eecea0fb28aa675f55c524dbad5e250",
+                "url": "https://api.github.com/repos/phasync/canvas/zipball/19b28e14653a5e9076762387d96525e995bada26",
+                "reference": "19b28e14653a5e9076762387d96525e995bada26",
                 "shasum": ""
             },
             "require": {
+                "ext-gd": "*",
                 "php": ">=8.2"
             },
             "require-dev": {
                 "phpunit/phpunit": "^11.0"
+            },
+            "suggest": {
+                "ext-imagick": "Decodes more formats and enables toImagick() and fromImagick()"
             },
             "type": "library",
             "autoload": {
@@ -153,9 +157,9 @@
             "description": "The browser's 2D canvas API for PHP, over GD or Imagick",
             "support": {
                 "issues": "https://github.com/phasync/canvas/issues",
-                "source": "https://github.com/phasync/canvas/tree/v0.1.1"
+                "source": "https://github.com/phasync/canvas/tree/v0.2.4"
             },
-            "time": "2026-11-01T00:26:11+00:00"
+            "time": "2026-11-02T11:15:03+00:00"
         }
     ],
     "packages-dev": [

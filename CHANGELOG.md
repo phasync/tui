@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.4-beta2 (2026-11-02)
+
+- `Canvas` draws with phasync/canvas 0.2.4 (was 0.1.1): `clip()`, transforms on thin strokes,
+  `strokeRect()`, `clearRect()`, `drawImage()`, caps, joins and dashes now behave as in a browser,
+  and edges are antialiased by coverage. In `examples/graphs.php` the axes, the area and the photo
+  draw as intended. Braille and block output can differ by a dot at curved edges from beta1.
+- `Canvas` on the glyph markers rasterises at the dot grid (2x4 per cell for `braille`) instead
+  of the cell size in pixels and scaling down: the same dots (a dot is on where its pixel is at
+  least half covered), about a third of the work per frame.
+- Hairlines on the glyph markers: a stroke of lines thinner than a dot (`lineWidth: 0.25` on
+  `braille`) is snapped to the dot grid and shows as exactly one dot wide, where a browser would
+  draw it as two faint dots; axes and grid lines come out crisp. Curves and rotated transforms
+  are stroked as they are.
+
 ## 0.0.4-beta1 (2026-11-01)
 
 Pictures in the terminal: a program in a pane can show images, a program can draw with the

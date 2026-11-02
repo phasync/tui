@@ -2,8 +2,6 @@
 
 namespace phasync\Tui\Component;
 
-use phasync\Canvas\Backend\Gd;
-use phasync\Canvas\Backend\Imagick;
 use phasync\Tui\Ansi;
 use phasync\Tui\Color;
 use phasync\Tui\Component;
@@ -48,9 +46,10 @@ use phasync\Tui\Text;
  *   is drawn as `quarter` instead;
  * - `auto` (the default): `pixels` where the terminal shows images, else `braille`.
  *
- * It draws on a raster of the canvas's cells times the cell size in pixels (`Surface::cellSize()`,
- * 8x16 unless the terminal says otherwise), the same for every marker, which the glyph markers
- * scale down to their dots: so a drawing covers the same cells on every marker.
+ * It draws on a raster of the output grid: the canvas's cells times the cell size in pixels
+ * (`Surface::cellSize()`, 8x16 unless the terminal says otherwise) for `pixels`, times the dots
+ * per cell for the glyph markers (2x4 for `braille`). The units are cells in both, and a dot is
+ * on where its pixel is at least half covered: so a drawing covers the same cells on every marker.
  *
  * **Pointer**: with `onMouse:`, the mouse over the canvas is followed (motion without a button
  * too, mode 1003) and each `Mouse` carries its position in the canvas's units in `canvasX` and
@@ -143,9 +142,13 @@ final class Canvas extends Component
         [$cw, $ch] = $this->surface->cellSize();
         $resolution = $marker === 'pixels' ? [$cw, $ch] : Dots::RESOLUTION[$marker];
         $base = $this->style()->text;
-        $backend = \phasync\Canvas\Canvas::$backendClass ?? (\extension_loaded('gd') ? Gd::class : Imagick::class);
-        $raster = new $backend($cols * $cw, $rows * $ch);
-        $context = new CanvasContext($raster, $cols, $rows, [$cw, $ch], $resolution, $marker, $base->fg);
+        // The raster is the output grid itself: the cell size in pixels for `pixels`, the dots per
+        // cell for the other markers (a pixel at least half covered is a dot: the same rule as
+        // downsampling a finer raster, at a fraction of the work). The library picks the renderer:
+        // its PHP one, or Imagick when phasync\Canvas\Canvas::$renderer asks.
+        [$rx, $ry] = $resolution;
+        $raster = new \phasync\Canvas\Canvas($cols * $rx, $rows * $ry);
+        $context = new CanvasContext($raster->surface(), $cols, $rows, $resolution, $resolution, $marker, $base->fg);
         if ($this->draw !== null) {
             ($this->draw)($context, $this);
         }

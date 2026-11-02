@@ -2,10 +2,10 @@
 
 namespace phasync\Tui\Component;
 
-use phasync\Canvas\Backend\BackendInterface;
 use phasync\Canvas\ColorParser;
 use phasync\Canvas\Context;
 use phasync\Canvas\Gradient;
+use phasync\Canvas\RendererInterface;
 use phasync\Tui\Color;
 use phasync\Tui\Text;
 
@@ -41,11 +41,11 @@ final class CanvasContext extends Context
     /**
      * @internal Made by `Canvas` for each drawing.
      *
-     * @param array{int, int} $pixels    pixels of the backend per cell
+     * @param array{int, int} $pixels    pixels of the renderer per cell
      * @param array{int, int} $resolution dots (or pixels) per cell of the marker
      */
     public function __construct(
-        BackendInterface $backend,
+        RendererInterface $surface,
         private readonly int $cols,
         private readonly int $rows,
         private readonly array $pixels,
@@ -53,7 +53,7 @@ final class CanvasContext extends Context
         private readonly string $marker,
         private readonly int $color,
     ) {
-        parent::__construct($backend);
+        parent::__construct($surface);
         parent::setTransform($pixels[0], 0, 0, $pixels[1], 0, 0);
         [$r, $g, $b] = $color === Color::DEFAULT ? [229, 229, 229] : Color::toRgb($color);
         $this->fillStyle = $this->strokeStyle = sprintf('#%02x%02x%02x', $r, $g, $b);
@@ -138,6 +138,134 @@ final class CanvasContext extends Context
     public function resetTransform(): void
     {
         $this->setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    /**
+     * A hairline: a stroke thinner than a dot in some direction. A browser draws it faint
+     * (a half-dot line is two dots at 25%), which a terminal cannot show. So a path of lines
+     * (no curves, no rotation in the transform) is stroked snapped to the dot grid: a point is
+     * moved to a dot's centre across each line it belongs to (a horizontal line keeps its x
+     * extent and sits on one dot row), and the stroke is at least half a dot wide, which lights
+     * exactly one dot. The path is kept as it was for a `fill()` after.
+     */
+    private function hairline(): bool
+    {
+        [$a, $b, $c, $d] = $this->matrix;
+        [$rx, $ry] = $this->pixels;
+        return $b == 0.0 && $c == 0.0 && $this->lineWidth * min(abs($a) * $rx, abs($d) * $ry) < 1.0;
+    }
+
+    /** @var list<array{string, float, float}> the path's commands since beginPath (M, L, Z) while it has only lines */
+    private array $lines = [];
+    private bool $onlyLines = true;
+
+    public function beginPath(): void
+    {
+        parent::beginPath();
+        $this->lines = [];
+        $this->onlyLines = true;
+    }
+
+    public function moveTo(float $x, float $y): void
+    {
+        parent::moveTo($x, $y);
+        $this->lines[] = ['M', $x, $y];
+    }
+
+    public function lineTo(float $x, float $y): void
+    {
+        parent::lineTo($x, $y);
+        $this->lines[] = ['L', $x, $y];
+    }
+
+    public function closePath(): void
+    {
+        parent::closePath();
+        $this->lines[] = ['Z', 0.0, 0.0];
+    }
+
+    public function arc(float $x, float $y, float $radius, float $startAngle, float $endAngle, bool $counterclockwise = false): void
+    {
+        parent::arc($x, $y, $radius, $startAngle, $endAngle, $counterclockwise);
+        $this->onlyLines = false;
+    }
+
+    public function arcTo(float $x1, float $y1, float $x2, float $y2, float $radius): void
+    {
+        parent::arcTo($x1, $y1, $x2, $y2, $radius);
+        $this->onlyLines = false;
+    }
+
+    public function bezierCurveTo(float $cp1x, float $cp1y, float $cp2x, float $cp2y, float $x, float $y): void
+    {
+        parent::bezierCurveTo($cp1x, $cp1y, $cp2x, $cp2y, $x, $y);
+        $this->onlyLines = false;
+    }
+
+    public function quadraticCurveTo(float $cpx, float $cpy, float $x, float $y): void
+    {
+        parent::quadraticCurveTo($cpx, $cpy, $x, $y);
+        $this->onlyLines = false;
+    }
+
+    public function ellipse(float $x, float $y, float $radiusX, float $radiusY, float $rotation, float $startAngle, float $endAngle, bool $counterclockwise = false): void
+    {
+        parent::ellipse($x, $y, $radiusX, $radiusY, $rotation, $startAngle, $endAngle, $counterclockwise);
+        $this->onlyLines = false;
+    }
+
+    public function rect(float $x, float $y, float $w, float $h): void
+    {
+        parent::rect($x, $y, $w, $h);
+        $this->onlyLines = false;
+    }
+
+    public function stroke(): void
+    {
+        if (!$this->hairline() || !$this->onlyLines || $this->lines === []) {
+            parent::stroke();
+            return;
+        }
+        [$a, , , $d, $e, $f] = $this->matrix;
+        [$rx, $ry] = $this->pixels;
+        // Which axis each point snaps on: x across a vertical line, y across a horizontal one,
+        // both on a diagonal.
+        $n = \count($this->lines);
+        $snapX = $snapY = array_fill(0, $n, false);
+        $prev = null;
+        foreach ($this->lines as $i => [$op, $x, $y]) {
+            if ($op === 'L' && $prev !== null) {
+                [$j, $px, $py] = $prev;
+                $vertical = abs($x - $px) < 1e-9;
+                $horizontal = abs($y - $py) < 1e-9;
+                $snapX[$i] = $snapX[$j] = $snapX[$i] || $snapX[$j] || !$horizontal;
+                $snapY[$i] = $snapY[$j] = $snapY[$i] || $snapY[$j] || !$vertical;
+            }
+            $prev = $op === 'Z' ? null : [$i, $x, $y];
+        }
+        $width = $this->lineWidth;
+        parent::beginPath();
+        foreach ($this->lines as $i => [$op, $x, $y]) {
+            if ($op === 'Z') {
+                parent::closePath();
+                continue;
+            }
+            if ($snapX[$i]) {
+                $x = ((floor(($a * $x + $e) * $rx) + 0.5) / $rx - $e) / $a;
+            }
+            if ($snapY[$i]) {
+                $y = ((floor(($d * $y + $f) * $ry) + 0.5) / $ry - $f) / $d;
+            }
+            $op === 'M' ? parent::moveTo($x, $y) : parent::lineTo($x, $y);
+        }
+        $this->lineWidth = max($width, 0.5 / (abs($a) * $rx), 0.5 / (abs($d) * $ry));
+        parent::stroke();
+        $this->lineWidth = $width;
+        // the path as the drawing built it, for a fill() after
+        parent::beginPath();
+        foreach ($this->lines as [$op, $x, $y]) {
+            match ($op) { 'M' => parent::moveTo($x, $y), 'L' => parent::lineTo($x, $y), 'Z' => parent::closePath() };
+        }
     }
 
     /** Put $text in the cells nearest ($x, $y), in the fill colour (see the class description); `$maxWidth` cuts it, in cells. */

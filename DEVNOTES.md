@@ -30,12 +30,15 @@ README.md and docs/.
 
 ### phasync/canvas gaps
 
-Fixed in phasync/canvas 0.1.1 (required since): transformed thin strokes and strokeRect, a
-fractional lineWidth scaled to pixels, clearRect, drawImage of paths/bytes and through the
-transform, the toDots segfault, and exact coverage in toDots (the dot fixtures were recorded again).
-Still open, by choice: fillText draws text as characters in cells (the TUI's job), and the element
-still builds the backend itself; `Canvas::fromBackend($backend, CanvasContext::class)` now exists
-and can replace that when the element is next touched.
+None since phasync/canvas 0.2.4 (required). 0.2 is a rewrite: the drawing is done in PHP on a
+pixel array (GD only reads and writes files), measured against headless Chrome (335 of 336
+conformance cases), with clip, transforms, stroke caps and joins, gradients and compositing
+correct; Imagick is an opt-in renderer there (`\phasync\Canvas\Canvas::$renderer`), slower than
+the PHP one on this kind of drawing. The element makes a `\phasync\Canvas\Canvas` and gives its
+`surface()` to `CanvasContext` (which extends the library's `Context`), so whichever renderer the
+library picks is used. `toDots()` lights a dot when at least half of it is covered (0.2.4), which
+keeps a quarter-cell line one Braille dot wide; the dot fixtures were recorded again with it.
+By choice: fillText draws text as characters in cells (the TUI's job).
 
 ### Design decisions (Canvas)
 
