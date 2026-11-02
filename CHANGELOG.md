@@ -1,8 +1,17 @@
 # Changelog
 
-## 0.0.4-beta2 (2026-11-02)
+## 0.0.4 (2026-11-02)
 
-- `Canvas` draws with phasync/canvas 0.2.4 (was 0.1.1): `clip()`, transforms on thin strokes,
+Pictures in the terminal, finished: beta1 (below) brought images in a pane, the `Canvas` on
+the browser's 2D context, and Kitty, iTerm2 and Sixel output; this release makes the canvas
+correct (phasync/canvas 0.2.5), fast (the dot-grid raster, hairlines, only the changed cells
+sent on `pixels`) and clean on Windows Terminal's Sixel, and fixes what the first real
+programs on it found (black holes, a button's hit area, a click on a dialog, the exit with a
+frame in flight). The README opens with the install and a kitchen-sink first program
+(`examples/kitchen-sink.php`). Everything from 0.0.3 works as before, except where an entry
+says what changed. Requires phasync/canvas ^0.2.5.
+
+- `Canvas` draws with phasync/canvas 0.2.5 (was 0.1.1): `clip()`, transforms on thin strokes,
   `strokeRect()`, `clearRect()`, `drawImage()`, caps, joins and dashes now behave as in a browser,
   and edges are antialiased by coverage. In `examples/graphs.php` the axes, the area and the photo
   draw as intended. Braille and block output can differ by a dot at curved edges from beta1.
