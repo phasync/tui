@@ -9,6 +9,7 @@ Widget parity with ratatui, Textual and Bubbles (branch `widgets/parity`):
 - New: `Collapsible` (header row that toggles its content) and `Accordion` (several, one open at a time).
 - New: `Toast::show()`: transient notifications in a screen corner, stacked, auto-dismissed.
 - New: `Paginator` (page N of M as numbers, dots or text).
+- New: `MaskedInput` (password field with a mask character and a reveal toggle).
 
 ## 0.0.5 (2026-11-02)
 

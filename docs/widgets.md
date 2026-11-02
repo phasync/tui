@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast` and `Paginator`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator` and `MaskedInput`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -811,3 +811,12 @@ removes all. Styles: `Toast::message`, `Toast::mark`, with the severity as state
 Page Up/Down step, Home/End go to the ends (at an end the key goes on); a click on a number or dot
 goes there, on `‹ ›` steps. `page()`, `setPage()`; a `Field` (value = the page). Styles:
 `Paginator::page` (state `current`), `Paginator::arrow` (state `disabled`).
+
+## MaskedInput
+
+`new MaskedInput(placeholder: 'password', mask: '•', maxLength: 0, revealable: true, onSubmit: fn(string $v) => ..., onChange: ...)`:
+a one-line password/token field, a mask per typed character (grapheme cluster). Left/Right, Home/End,
+Backspace/Delete, Ctrl-U/Ctrl-K edit; no word motions or copy. Enter calls `onSubmit` (without one the
+key goes on, so a `Form` submits). Alt-R or a click on the sign at the right (`◎`/`◉`) reveals the
+text. A standalone field (not an `Editor`). `value()`, `setValue()`, `cursor()`, `setRevealed()`; a
+`Field`. Styles: `MaskedInput` (focused: `$panel` background), `MaskedInput::placeholder`, `MaskedInput::reveal`.
