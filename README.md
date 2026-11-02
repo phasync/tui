@@ -203,14 +203,14 @@ examples/kitchen-sink.php` prints the screen as text without a terminal:
 │                  ││                                                          │
 ╰──────────────────╯╰──────────────────────────────────────────────────────────╯
 ╭ canvas ──────────────────────────────╮╭ log ─────────────────────────────────╮
-│    ⣀⣀                                ││started                               │
-│  ⡠⠊                                  ││                                      │
-│ ⡈                                    ││                                      │
-│⠐                                     ││                                      │
-│                                      ││                                      │
-│                                      ││                                      │
-│                                      ││                                      │
-│                                      ││                                      │
+│                                      ││started                               │
+│  ⡠⠊⠉⢂                                ││                                      │
+│ ⠌  ⣀⣤⠂                               ││                                      │
+│⣐⣠⣴⣾⣿⣿                                ││                                      │
+│⣿⣿⣿⣿⣿⣿                                ││                                      │
+│⣿⣿⣿⣿⣿⣿                                ││                                      │
+│⣿⣿⣿⣿⣿⣿                                ││                                      │
+│⣿⣿⣿⣿⣿⣿                                ││                                      │
 ╰──────────────────────────────────────╯╰──────────────────────────────────────╯
 ctrl+l log a line  ctrl+q quit
 ```
@@ -225,17 +225,26 @@ $log = new Log();
 $log->append("started\n");
 \fiber\run(function () use ($s, $log) {
     Tui::go(function () use ($s) {            // a coroutine feeds the bar and the graph
-        while (true) {
+        for ($t = 0; ; $t++) {
             $s->progress = $s->progress >= 1 ? 0.0 : $s->progress + 0.01;
-            $s->samples = [...array_slice($s->samples, -59), 50 + 40 * sin(count($s->samples) / 5)];
+            $s->samples = [...array_slice($s->samples, -59), [50 + 35 * sin($t / 4), 50 + 30 * sin($t / 11) * cos($t / 29)]];
             Tui::sleep(0.1);
         }
     });
     $graph = function (CanvasContext $c) use ($s) {
-        $c->lineWidth = 0.25;                 // one Braille dot, or a few pixels
+        [$w, $h] = [$c->width(), $c->height()];
+        $c->fillStyle = 'rgba(52, 211, 153, 0.5)';     // the slow wave, as an area
         $c->beginPath();
-        foreach ($s->samples as $i => $v) {
-            $c->lineTo($i * $c->width() / 60, $c->height() * (1 - $v / 100));
+        $c->moveTo(0, $h);
+        foreach ($s->samples as $i => [, $v]) {
+            $c->lineTo($i * $w / 59, $h * (1 - $v / 100));
+        }
+        $c->lineTo((count($s->samples) - 1) * $w / 59, $h);
+        $c->fill();
+        $c->lineWidth = 0.25;                           // the fast one, a line one Braille dot (or a few pixels) wide
+        $c->beginPath();
+        foreach ($s->samples as $i => [$v]) {
+            $c->lineTo($i * $w / 59, $h * (1 - $v / 100));
         }
         $c->stroke();
     };
