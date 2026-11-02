@@ -277,6 +277,7 @@ final class Stylesheet
             'MenuBar:disabled' => ['dim' => true],
             'LineChart::axis' => ['color' => '$muted'],
             'Heatmap::label' => ['color' => '$muted'],
+            'BigText' => ['color' => '$accent'],
             'Form::error' => ['color' => '$error'],
             '*:invalid' => ['color' => '$error'],
             '*::scrollbar' => ['color' => '$muted'],

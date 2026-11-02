@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, `LineChart` with `ScatterChart`, and `Heatmap`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, `LineChart` with `ScatterChart`, `Heatmap`, and `BigText`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -852,3 +852,11 @@ a grid of background-coloured cells; the lowest value gets the first colour, the
 the rest a blend (64 steps). `values: true` writes the number in each cell (black or white by
 contrast). A click on a cell with a value calls `onSelect`. `null` leaves a cell empty. Style:
 `Heatmap::label`.
+
+## BigText
+
+`new BigText('12:45', compact: false)`: large block-glyph text from a 3x5 font (digits, A-Z, space
+`: . , - + ! ? / % _`; lower case shows as upper case, unknown characters as `?`), five rows high, or
+three with `compact: true` (half blocks). A clock or counter is `new BigText((string) $n)`; there is no
+separate `Digits` widget. `BigText::rows($text, $compact)` gives the rows as strings. Style: `BigText`
+(the colour of the glyphs, the accent by default).

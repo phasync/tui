@@ -13,6 +13,7 @@ Widget parity with ratatui, Textual and Bubbles (branch `widgets/parity`):
 - New: `Menu` (context menu with shortcuts, separators, submenus; `Menu::popup()`) and `MenuBar`.
 - New: `LineChart` and `ScatterChart` (series on axes with labels and legend, drawn on a `Canvas`).
 - New: `Heatmap` (cells coloured by value, optional labels and numbers).
+- New: `BigText` (large block-glyph numbers and text, also compact).
 
 ## 0.0.5 (2026-11-02)
 
