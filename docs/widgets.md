@@ -882,3 +882,9 @@ directories). Keys and values are paths: `path()` is the current node's, `setExt
 `new FilePicker('/path', extensions: [...], directories: false, onPick: fn(string $path) => ...)`: the
 tree over a line with the highlighted path; Enter on a file picks it (`value()` is the path picked
 last, so a `Form` collects it); `directories: true` lists directories only and Enter on one picks it.
+
+## Gauge and LineGauge
+
+ratatui's `Gauge` is a `ProgressBar` (a filled bar with a centred or trailing percentage and label), and
+its `LineGauge` is the same bar with thin glyphs, so there is no separate widget: `new ProgressBar($v, fill: '━', empty: '─')`
+draws `━━━━━━━━──────── 50%`. `fill` and `empty` (props) are any one-column characters.

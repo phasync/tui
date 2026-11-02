@@ -33,6 +33,10 @@ use phasync\Tui\Text;
  * it drew before drawing anything, so neither `setValue()` from a fast coroutine nor a closure
  * needs rounding of its own. One row; it takes the width it is given.
  *
+ * `$fill` and `$empty` (props) are the characters of the filled and the empty part: `new
+ * ProgressBar($v, fill: '━', empty: '─')` is a thin line gauge, `'#'` and `'-'` a plain one. Each must
+ * be one column wide.
+ *
  * **Style**: `ProgressBar` (the label and the empty part), the part `ProgressBar::bar` (the
  * filled part; the default theme: the accent colour).
  */
@@ -40,18 +44,21 @@ class ProgressBar extends Component
 {
     private int $tick = 0;
     private bool $animating = false;
-    /** @var array{int, int, int, int, string, string, string}|null what was drawn last (see shape()) */
+    /** @var array{int, int, int, int, string, string, string, string, string}|null what was drawn last (see shape()) */
     private ?array $cells = null;
 
     /**
      * @param float|(\Closure(): ?float)|null $value from 0 to 1 (clamped), null for indeterminate, or a closure giving it
      * @param string     $label after the bar, followed by the percentage unless it holds `{percent}` or `{value}`
+     * @param string     $fill  the one-column character of the filled part, `$empty` of the rest (`'━'`, `'─'`: a line gauge)
      * @param string|list<string>|null $class
      * @param array<string, mixed>|null $style
      */
     public function __construct(
         public float|\Closure|null $value = 0.0,
         public string $label = '',
+        public string $fill = '█',
+        public string $empty = '░',
         ?string $key = null,
         ?string $id = null,
         string|array|null $class = null,
@@ -124,7 +131,7 @@ class ProgressBar extends Component
      * escape sequences of its style and its `bar` part's. Equal for two values that draw the
      * same, so a value that draws the same costs this and no drawing.
      *
-     * @return array{int, int, int, int, string, string, string}
+     * @return array{int, int, int, int, string, string, string, string, string}
      */
     private function shape(float|\Closure|null $value): array
     {
@@ -146,20 +153,20 @@ class ProgressBar extends Component
             $from = 0;
             $n = (int) round(max(0, min(1, $value)) * $width);
         }
-        return [$cols, $width, $from, min($n, $width - $from), $label, Ansi::style($this->style()->text), Ansi::style($this->style('bar')->text)];
+        return [$cols, $width, $from, min($n, $width - $from), $label, Ansi::style($this->style()->text), Ansi::style($this->style('bar')->text), $this->fill, $this->empty];
     }
 
     /**
      * What the bar writes to turn drawing $was (null: none) into $now (see shape()):
      * everything, or only the cells and the label that changed.
      *
-     * @param array{int, int, int, int, string, string, string}|null $was
-     * @param array{int, int, int, int, string, string, string}      $now
+     * @param array{int, int, int, int, string, string, string, string, string}|null $was
+     * @param array{int, int, int, int, string, string, string, string, string}      $now
      */
     private function drawing(?array $was, array $now): string
     {
-        [$cols, $width, $from, $n, $label, $base, $bar] = $now;
-        if ($was !== null && $was[0] === $cols && $was[1] === $width && $was[5] === $base && $was[6] === $bar) {
+        [$cols, $width, $from, $n, $label, $base, $bar, $fill, $empty] = $now;
+        if ($was !== null && $was[0] === $cols && $was[1] === $width && $was[5] === $base && $was[6] === $bar && $was[7] === $fill && $was[8] === $empty) {
             // the same bar at the same size: only the cells whose fill changed, and the label
             // (a bar that moves by a cell writes a cell, not the whole row)
             $out = '';
@@ -172,7 +179,7 @@ class ProgressBar extends Component
                 [$x, $end] = [$edges[$i], $edges[$i + 1]];
                 $filled = $x >= $from && $x < $from + $n;
                 if ($filled !== ($x >= $oldFrom && $x < $oldFrom + $oldN)) {
-                    $out .= "\e[1;" . ($x + 1) . 'H' . ($filled ? $bar . str_repeat('█', $end - $x) : $base . str_repeat('░', $end - $x));
+                    $out .= "\e[1;" . ($x + 1) . 'H' . ($filled ? $bar . str_repeat($fill, $end - $x) : $base . str_repeat($empty, $end - $x));
                 }
             }
             if ($label !== $oldLabel) {
@@ -182,7 +189,7 @@ class ProgressBar extends Component
             return $out;        // (on the cells of the drawing before: no autowrap, no cursor)
         }
         // (no autowrap: nothing goes past the last column, whatever the label holds)
-        return "\e[?7;25l" . $base . "\e[2J\e[H" . str_repeat('░', $from) . $bar . str_repeat('█', $n) . $base . str_repeat('░', max(0, $width - $from - $n))
+        return "\e[?7;25l" . $base . "\e[2J\e[H" . str_repeat($empty, $from) . $bar . str_repeat($fill, $n) . $base . str_repeat($empty, max(0, $width - $from - $n))
             . ($label === '' ? '' : ' ' . $label);
     }
 
