@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, `LineChart` with `ScatterChart`, `Heatmap`, `BigText`, `Stopwatch` and `Timer`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, `LineChart` with `ScatterChart`, `Heatmap`, `BigText`, `Stopwatch`, `Timer`, `DirectoryTree` and `FilePicker`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -871,3 +871,14 @@ the component's), `reset()`, `elapsed()`, `isRunning()`, `Stopwatch::format($sec
 means over), stops at zero, calls `onFinish` once and sets the state `finished` until reset;
 `remaining()`, `isFinished()`; playing a finished timer starts over. Styles: `Stopwatch` (states
 `running`, `focused`), `Timer:finished`.
+
+## DirectoryTree, FilePicker
+
+`new DirectoryTree('/path', extensions: ['php', 'md'], showHidden: false, directoriesOnly: false, onFile: fn(string $path) => ..., onSelect: ...)`:
+a `Tree` of the file system, the root open, directories listed when first opened (directories before
+files, sorted ignoring case; unreadable ones show empty). `extensions` limits the files (never the
+directories). Keys and values are paths: `path()` is the current node's, `setExtensions()` and
+`setShowHidden()` load again. Enter on a file calls `onFile`; everything else is `Tree`'s.
+`new FilePicker('/path', extensions: [...], directories: false, onPick: fn(string $path) => ...)`: the
+tree over a line with the highlighted path; Enter on a file picks it (`value()` is the path picked
+last, so a `Form` collects it); `directories: true` lists directories only and Enter on one picks it.

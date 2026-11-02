@@ -15,6 +15,7 @@ Widget parity with ratatui, Textual and Bubbles (branch `widgets/parity`):
 - New: `Heatmap` (cells coloured by value, optional labels and numbers).
 - New: `BigText` (large block-glyph numbers and text, also compact).
 - New: `Stopwatch` and `Timer` (self-ticking clock and countdown with play/pause/reset, `onFinish`).
+- New: `DirectoryTree` (lazy file-system `Tree`, extension filter) and `FilePicker`.
 
 ## 0.0.5 (2026-11-02)
 
