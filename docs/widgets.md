@@ -903,3 +903,12 @@ everything shows. It takes no keys. Style: `Scrollbar`, `Scrollbar::thumb`.
 `success`, `warning`, `error` (the state `Badge:success` etc. in the stylesheet). `closable: true` makes a
 removable tag (`php ×`): a click on the `×`, or Delete/Backspace on the focused tag, calls
 `onClose($badge)`; the owner stops rendering it. A plain badge takes no focus. Style: `Badge`, `Badge::close`.
+
+## Link
+
+`new Link('https://example.com', 'the docs', onActivate: fn(string $url) => ...)`: the label (the URL by
+default; markup allowed) drawn as an OSC 8 hyperlink, so a terminal that supports them opens it with a
+Ctrl-click, and shown as plain text on the others. It takes the focus; Enter or a click calls
+`onActivate($url)`, which is how a program opens it itself (a terminal that is sent mouse reports does
+not follow links on its own). Style: `Link` (accent, underlined), `:focused`, `:hover`, `:disabled`. In a
+`Text` or `Markdown` a link is `<href=https://...>text</>` (see [styling](styling.md#markup-in-text)).

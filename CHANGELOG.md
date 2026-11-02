@@ -19,6 +19,7 @@ Widget parity with ratatui, Textual and Bubbles (branch `widgets/parity`):
 - New: `ProgressBar` `fill:` and `empty:` characters (a thin line gauge is `fill: '━', empty: '─'`); no separate `Gauge`/`LineGauge`.
 - New: `Scrollbar` (standalone, for a view you scroll yourself).
 - New: `Badge` (status label with variants; `closable: true` for a removable tag).
+- New: `Link` (focusable OSC 8 hyperlink with `onActivate`).
 
 ## 0.0.5 (2026-11-02)
 
