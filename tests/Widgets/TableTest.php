@@ -233,3 +233,10 @@ it('opens a dropdown at the bottom upward', function () {
         expect($app->dropdown()->selected())->toBe('c')->and($app->activated)->toBe(['c']);
     });
 });
+
+it('cuts a cell with markup on its visible text, never in the markup', function () {
+    $table = new Table(columns: ['Name' => ['width' => 6]], rows: [1 => ['x'], 2 => ['<fg=red>a long value</fg>']]);
+    mountOn($table, 8, 3, function (FakeTerminal $t) {
+        expect($t->text())->toBe("Name\nx\na lon…")->and($t->dump())->toContain('[fg=1]a lon…[/]');
+    });
+});

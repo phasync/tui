@@ -1081,7 +1081,7 @@ abstract class TerminalDevice
         return $this->background;
     }
 
-    /** @internal Call $listener when the terminal has answered what attach() asked (at once when it has). */
+    /** Call $listener once the terminal has answered what attach() asked (at once when it has): what images() and terminalName() say is final then. */
     public function whenProbed(\Closure $listener): void
     {
         if ($this->probing === null) {

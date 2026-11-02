@@ -2,6 +2,9 @@
 
 use phasync\Tui\Surface;
 
+// timing-bounded: CI runs them apart from the rest, where a noisy runner may fail them
+pest()->group('benchmark')->in('Benchmark');
+
 /** A surface of the given size after writing $bytes into it. */
 function vt(string $bytes, int $cols = 20, int $rows = 5): Surface
 {

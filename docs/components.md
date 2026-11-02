@@ -172,7 +172,7 @@ rectangle"), and it ends with the component.
 ProgressBar(...)`) keeps its identity wherever the next render places it: its state, its
 surface and its value go with it when rows above it leave or the rows are reordered. When a
 render leaves it out, it is stopped; placing it again throws a `LogicException` (make a new
-instance, or keep it shown with the class `hidden`). Give such instances a `key:`: it is what
+instance, or keep it shown with the class `hidden`; see "Which instance is which"). Give such instances a `key:`: it is what
 keeps an instance shown in only one frame apart from the new instances at its place, and it is
 how they are reached from outside. `$device->component()` is the root component of what a
 terminal device shows (`Tui::headless()` returns the device), and `children()` lists its
@@ -478,6 +478,38 @@ itself. Two remedies: pass the changing value as a prop (`new Counter(label: $th
 a new value is new props, and the child renders), or give both the same `State` object (a
 write renders every component that has it as its `$state`).
 
+### Which instance is which: `new`, `child()`, `keep()`
+
+Three rules say how long a component lives and who owns it. They are the same whether the
+component is a built-in widget or one of yours.
+
+1. **`new` in a render: the place owns it.** Make it with `new` where the render places it and
+   do not hold on to it. The first render starts it; later renders make a new instance that is
+   thrown away, and the one at that place **takes its props** (see above) and keeps its state.
+   Only the props and attributes of the new instance count: anything else its constructor
+   sets (state, a callback after the first) is dropped. It lives while renders place it.
+2. **`child($key, $create)`: the parent owns it.** The factory runs once, the parent holds
+   what `child()` returns and changes it through its methods, and `child($key)` finds it again.
+   It lives while some render asks for it (`child()` again) or shows it; the first render that
+   does neither disposes it, and `child($key)` is then null (or, with a factory, a new one).
+3. **`keep($key, $create)`: it lives until you `stop()` it.** For what must outlive the renders
+   that show it: the pane of a hidden tab, a background `Terminal` (see "Kept-alive children").
+
+**The disposal trap.** An instance of your own that a render places (`$bars[$name] ??= new
+ProgressBar()`, or a pane held in a property and placed only while its tab is current) is
+disposed when the next render does not place it. It cannot be placed again; the render that
+tries throws a `LogicException`:
+
+> ProgressBar was placed in the tree again after it left the tree, which stopped it (an
+> instance that leaves the tree is stopped): place a new instance instead (forget the old one
+> when its row goes: unset($bars[$i])), or keep it in the tree with the class 'hidden' while it
+> should not show
+
+The cure follows from the rules. Place a new instance (rule 1) and let the place keep the
+state; or make it with `keep()` (rule 3); or keep placing the instance and hide it with the
+class `hidden`. A factory that returns a component disposed already throws `child('key'):
+Pane was disposed`.
+
 ### The conventions of a widget's constructor
 
 The library's widgets, and a component of yours that others place with `new`, follow these:
@@ -589,6 +621,21 @@ same way. That is how a closure
 component works, and how a component shows a state another one owns. A plain state with values
 is `new State(['done' => 0])`; a subclass with typed properties needs no constructor (one that
 has its own calls `parent::__construct()`, so that reads subscribe before a component holds it).
+
+**A closure that reads no `State` renders once.** Nothing tells it to run again: a header
+`fn() => new Text(date('H:i:s'))` shows the time it was first drawn and never moves. Make the
+change visible to the render. Read a `State` that something writes on a tick (the usual fix),
+with a coroutine of the program for the tick:
+
+```php
+$s = new State(['now' => date('H:i:s')]);
+Tui::go(function () use ($s) { while (true) { Tui::sleep(1); $s->now = date('H:i:s'); } });
+Tui::run(fn() => new Text($s->now));            // reads $s->now: renders when it is written
+```
+
+Or, in a component of a class, call `requestRender()` from its `run()` loop (see the `Clock`
+at the top). `Tui::go()` is the program's coroutine (it ends with the program); a plain
+`fiber\go()` is not.
 
 `$state->set(count: 0, label: 'x')` assigns several properties at once. A write of the value a
 property has already renders nothing; a write of a wrong type is a `TypeError` as for any typed
@@ -850,6 +897,25 @@ Both coroutines get the one answer, so act on it in a way that is fine twice (`d
 render that asks and on renders asked for with `requestRender()`, not on the renders the
 library makes by itself (after a key, a state write, a coroutine step), so a render does not
 take back the focus the user moved.
+
+**When `focus()` takes effect.** In `mount()` it is the first focus and it sticks: the
+component is started when `mount()` runs, so the request is made at once (a component not
+started yet, made with `new` and focused before it is placed, gets it when it starts). A
+`focus()` anywhere else is a request like any other and the latest wins; so a `focus()` in
+`mount()` of a component that is created later, in a pane the user is not in, takes the keys
+from where they are. In `render()` it is honoured only on the first render that asks and on
+renders asked for with `requestRender()` (above): a render that repeats it after the user moved
+on does nothing, which is why a `focus()` there seems not to stick. For "when this appears,
+focus it", call it in `mount()`, or in the handler that creates the component.
+
+**Which component receives it.** `focus()` on a component with keys of its own (bindings,
+`onKey()`) focuses it; on a container without keys of its own (a pane, a `Box`, a `Form`) it
+focuses what the container focused inside, else its first component that takes keys. So
+`$pane->focus()` is "the first widget in the pane" when the pane itself takes no keys. The
+same rule is used by `Tabs::focusContent()`: its first component that takes keys, else the
+first component, else the pane; it returns false when the focus is in the content already.
+A program that focuses nothing needs no call: the root gives the focus to its first component
+that takes keys (see "The first focus and Tab, by default").
 
 One component has the keyboard: the one focused last (`focus()`), or the descendant it passes
 the keys on to. **A component with keys of its own takes them itself** when it is focused:

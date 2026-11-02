@@ -1,5 +1,7 @@
 # phasync/tui
 
+[![CI](https://github.com/phasync/tui/actions/workflows/ci.yml/badge.svg)](https://github.com/phasync/tui/actions/workflows/ci.yml)
+
 A terminal UI library for PHP built on a real terminal emulator. Think tmux as a library: every
 window is a terminal, so a shell, `vim`, `htop` or Claude Code runs in a pane of your PHP program
 exactly as in a terminal, next to widgets that are themselves programs writing to a terminal.
@@ -115,7 +117,9 @@ changes, here from a coroutine. Ctrl-Q quits; `Tui::run()` shows the same screen
 `Tui::headless()` on an in-memory terminal for tests (`examples/working.php` runs both ways).
 `Tui::go()` is `fiber\go()` for a coroutine of the program: its exception ends the program, and
 it stops with the program when it waits with `Tui::sleep()`; both must be called inside
-`fiber\run()`, which is why the program is wrapped in one.
+`fiber\run()`, which is why the program is wrapped in one. A loop that should run once per frame
+the terminal really gets (a game) waits with `Tui::nextFrame()` instead of `Tui::sleep()`: it
+returns after the frame was drawn and sent, with the seconds since the one before.
 
 Such a program takes input without a class too: `keys:` on the runner binds keys to closures
 (`Tui::run($screen, keys: ['ctrl+n' => [fn() => add($s), 'new card']])`), every element takes

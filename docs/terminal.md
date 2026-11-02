@@ -56,6 +56,7 @@ fiber\run(function () use ($tty) {
 | `component(): ?Component` | The root component shown on it (`Tui::run()`'s, `Tui::headless()`'s, or one given to `start()`), null when none is: `$terminal->component()->children()['progress']` reaches a component a closure program placed with `key: 'progress'`. |
 | `wait()` | Wait until `detach()` (returns at once when not attached). |
 | `refresh()` | Draw what changed now instead of at the next frame: the renders that are pending run first. |
+| `nextFrame(): float` | Wait for the next frame, and return once it has been drawn and sent to the terminal, with the seconds since the frame before it (`Tui::nextFrame()` is the one for a program's coroutine). |
 | `TerminalDevice::of(Surface $root): ?TerminalDevice` | The device a root is attached to, or null. A component reaches its own with `$this->device()`. |
 | `size(): array` | The terminal's size as `[cols, rows]`. |
 | `hasKittyKeyboard(): bool` | True once the terminal answered the kitty keyboard query. |
@@ -131,6 +132,16 @@ has answered, `images()` is `'none'`; the screen is drawn again when the answer 
 `'kitty'`). Its surface understands all three protocols, so its cells show the images as such a
 terminal would: the device's output replayed into a surface gives the same image cells as the
 root.
+
+**`Canvas` on `pixels`** sends the picture whole the first time and after a size change; after
+that it sends only the runs of cells whose pixels changed since its last render, each run as
+one small raw RGBA image, and the other cells keep the image they show. A scrolling graph
+changes the cells along its curve, not the space around it, so on Kitty and Sixel the bytes
+per frame follow the area that changed.
+
+`whenProbed(Closure $listener)` calls `$listener` once the terminal has answered what
+`attach()` asked (the image protocol, the background, the cell size), at once if it has: the
+way to draw again when `images()` or `background()` has just changed.
 
 ## Inline mode: a live region in the terminal's normal screen
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.6 (unreleased)
+
+- GitHub Actions: the suite on PHP 8.3, 8.4 and 8.5 (with GD, pcntl and tmux); the timing-bounded
+  tests of `tests/Benchmark` (group `benchmark`) run in a job of their own that may fail.
+- Tests: a `Table` cell with markup is cut on its visible text, never in the markup.
+- Docs: one place for the identity rules (`new`, `child()`, `keep()`) and the disposal trap, when
+  `focus()` takes effect and what `focusContent()` focuses, that a closure reading no `State`
+  renders once, `Canvas` on `pixels` sending only changed runs, `whenProbed()`, `nextFrame()`.
+
 ## 0.0.5 (2026-11-02)
 
 - `Tui::nextFrame()`: waits for the next frame and returns once it has been drawn and sent to

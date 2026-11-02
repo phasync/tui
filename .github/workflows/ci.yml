@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # (the library runs on 8.3; its test suite, Pest 5, needs 8.4)
+        php: ['8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: gd, pcntl, mbstring
+          coverage: none
+      # the reference tests compare the Surface with tmux; without it they are skipped
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ matrix.php }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ matrix.php }}-
+      - run: composer install --no-interaction --no-progress --prefer-dist
+      # the timing-bounded tests (tests/Benchmark, group "benchmark") run in their own job
+      - run: vendor/bin/pest --colors=never --exclude-group=benchmark
+
+  benchmark:
+    # timing limits are tight and a shared runner is noisy: informational, not a required check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: gd, pcntl, mbstring
+          coverage: none
+      - run: composer install --no-interaction --no-progress --prefer-dist
+      - run: vendor/bin/pest --colors=never --group=benchmark
