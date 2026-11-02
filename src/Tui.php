@@ -183,6 +183,48 @@ final class Tui
         }
     }
 
+    /**
+     * Wait for the next frame of the running program: returns once the frame has been drawn
+     * and sent to the terminal, with the seconds since the frame before it (the `dt` of a game
+     * loop). A frame comes at the frame rate (`fps:` of `Tui::run()`) also when nothing changed,
+     * so a loop paced by it runs once per frame the terminal really gets: as fast as a fast
+     * terminal takes frames, and no faster than a slow one (a Sixel terminal decoding a large
+     * picture), where sleeping a fixed time would run ahead of what is shown.
+     *
+     *     Tui::go(function () use ($game, $s) {
+     *         while (true) {
+     *             $game->update(Tui::nextFrame());    // one step per frame, by the real time between them
+     *             $s->tick++;                         // (what the canvas reads: it draws in the next frame)
+     *         }
+     *     });
+     *
+     * Ends as `Tui::sleep()` does: in a `Tui::go()` coroutine it throws `Quit` once the program
+     * has ended; elsewhere it returns early then. Without a running program it sleeps a sixtieth
+     * of a second and returns that.
+     *
+     * @throws Quit in a `Tui::go()` coroutine, when its program has ended
+     */
+    public static function nextFrame(): float
+    {
+        $me = \fiber\current();
+        $job = $me === null ? null : (self::$jobs[$me] ?? null);
+        if ($job?->ended) {
+            throw new Quit();
+        }
+        $root = $job?->program?->get() ?? Component::runningRoot();
+        $device = $root?->device();
+        if ($device === null) {
+            $t = microtime(true);
+            \fiber\sleep(1 / 60);
+            return microtime(true) - $t;
+        }
+        $dt = $device->nextFrame();
+        if ($job?->ended) {
+            throw new Quit();
+        }
+        return $dt;
+    }
+
     /** True if the code running now is the coroutine of $job. */
     private static function isCurrent(Internal\Job $job): bool
     {

@@ -144,7 +144,11 @@ it to clean up first), so `fiber\run()` returns when the screen is gone. (The co
 quit goes on until its next `Tui::sleep()`.)
 Outside a `Tui::go()` coroutine (the code that started a headless program, a handler, a
 `fiber\go()` coroutine) `Tui::sleep()` returns early when the program ends instead, since
-nothing there would take the exception:
+nothing there would take the exception. A loop that animates is paced by the frames the
+terminal gets with `Tui::nextFrame()`: it returns once the next frame has been drawn and sent,
+with the seconds since the frame before (the `dt` of a game loop), so the loop runs once per
+frame on a fast terminal and no faster than a slow one takes them (a frame comes at the frame
+rate also when nothing changed); it ends with the program as `Tui::sleep()` does:
 
 ```php
 Tui::go(function () use ($s) {

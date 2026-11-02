@@ -100,6 +100,10 @@ abstract class TerminalDevice
     private InputDecoder $decoder;
     private ?Signal $wake = null;
     private ?Signal $detached = null;
+    /** Wakes the coroutines waiting for a frame (`nextFrame()`) once one was drawn and sent. */
+    private ?Signal $frameDone = null;
+    /** Seconds between the last two frames: what `nextFrame()` returns. */
+    private float $frameInterval = 0.0;
     private bool $damaged = false;
     /** A render was asked for while a frame was being drawn (see drawsFrames()). */
     private bool $frameAgain = false;
@@ -349,6 +353,7 @@ abstract class TerminalDevice
         $this->root = null;
         unset(self::$devices[$root]);
         $this->wake?->notify();
+        $this->frameDone?->notify();        // (a nextFrame() wait ends with the program)
         $this->close();
         foreach ($this->held as $line) {
             $this->send($line);
@@ -690,12 +695,34 @@ abstract class TerminalDevice
         } finally {
             $this->drawing = false;
             $this->damaged = false;
-            $this->lastFrame = microtime(true);
+            $now = microtime(true);
+            $this->frameInterval = $this->lastFrame > 0.0 ? $now - $this->lastFrame : 0.0;
+            $this->lastFrame = $now;
             if ($this->frameAgain) {
                 $this->frameAgain = false;
                 $this->damage();
             }
+            $this->frameDone?->notify();
         }
+    }
+
+    /**
+     * Wait for the next frame: returns once it has been drawn and sent to the terminal, with the
+     * seconds since the frame before it. A frame comes at the frame rate (`fps:`) also when
+     * nothing changed, so a loop paced by it runs once per frame the terminal really gets, as
+     * fast as the terminal takes frames and no faster: `Tui::nextFrame()` is the way to call it
+     * from a program (it also ends the wait when the program ends). Returns at once, with 0,
+     * when nothing is attached.
+     */
+    public function nextFrame(): float
+    {
+        if ($this->root === null) {
+            return 0.0;
+        }
+        $this->frameDone ??= new Signal();
+        $this->damage();
+        $this->frameDone->wait();
+        return $this->frameInterval;
     }
 
     /** Full screen: the damaged rows of the root, against the previous frame (all of them after a resize). */

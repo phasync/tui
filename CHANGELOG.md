@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.5 (2026-11-02)
+
+- `Tui::nextFrame()`: waits for the next frame and returns once it has been drawn and sent to
+  the terminal, with the seconds since the frame before it. A game loop paced by it runs once
+  per frame the terminal really gets (`$game->update(Tui::nextFrame())`), as fast as a fast
+  terminal takes frames and no faster than a slow one, where `Tui::sleep()` of a fixed time ran
+  ahead of what was shown. A frame comes at the frame rate also when nothing changed; it ends
+  with the program as `Tui::sleep()` does (`Quit` in a `Tui::go()` coroutine). Also on the
+  device: `TerminalDevice::nextFrame()`.
+
 ## 0.0.4 (2026-11-02)
 
 Pictures in the terminal, finished: beta1 (below) brought images in a pane, the `Canvas` on
