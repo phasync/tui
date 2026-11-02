@@ -5,6 +5,7 @@ namespace phasync\Tui\Component;
 use phasync\Tui\Ansi;
 use phasync\Tui\Color;
 use phasync\Tui\Component;
+use phasync\Tui\Image;
 use phasync\Tui\Internal\Dots;
 use phasync\Tui\Mouse;
 use phasync\Tui\Style;
@@ -66,6 +67,8 @@ final class Canvas extends Component
 {
     /** What the last render wrote, to write nothing when a drawing comes out the same. */
     private string $drawn = '';
+    /** The pixel rows of the last render on `pixels`, to draw again only the cells that changed. @var list<list<int>>|null */
+    private ?array $lastRows = null;
     private bool $listening = false;
 
     /**
@@ -155,8 +158,9 @@ final class Canvas extends Component
         $blank = Style::of(Color::DEFAULT, $base->bg);
         $out = Ansi::style($blank);
         if ($marker === 'pixels') {
-            $out .= "\e[2J\e[H" . Ansi::image($raster->toPng(), $cols, $rows);
+            $out .= $this->pixels($raster, $cols, $rows, $cw, $ch);
         } else {
+            $this->lastRows = null;
             [$rx, $ry] = $resolution;
             foreach (Dots::cells($marker, $raster->toDots($cols * $rx, $rows * $ry)) as $y => $cells) {
                 $out .= Ansi::moveTo(0, $y);
@@ -187,5 +191,62 @@ final class Canvas extends Component
             $this->drawn = $out;
         }
         return null;
+    }
+
+    /**
+     * The picture in pixels: the whole image the first time and after a size change, else one
+     * small image (raw pixels) over each run of cells whose pixels changed since the last
+     * render, while the other cells keep showing what they do. A scrolling graph changes the
+     * cells along its curve and not the space around it, and the terminal decodes only those.
+     */
+    private function pixels(\phasync\Canvas\Canvas $raster, int $cols, int $rows, int $cw, int $ch): string
+    {
+        $surface = $raster->surface();
+        $w = $cols * $cw;
+        $h = $rows * $ch;
+        $px = $surface->clonePixels();
+        $now = [];
+        for ($y = 0; $y < $h; $y++) {
+            $now[] = \array_slice($px, $y * $w, $w);
+        }
+        $last = $this->lastRows;
+        $this->lastRows = $now;
+        if ($last === null || \count($last) !== $h || \count($last[0]) !== $w) {
+            return "\e[2J\e[H" . Ansi::image($raster->toPng(), $cols, $rows);
+        }
+        $dirty = [];
+        foreach ($now as $y => $row) {
+            if ($row === $last[$y]) {
+                continue;       // (compared as a whole: most rows of a graph)
+            }
+            $old = $last[$y];
+            $cy = intdiv($y, $ch);
+            for ($x = 0; $x < $w; $x++) {
+                if ($row[$x] !== $old[$x]) {
+                    $cx = intdiv($x, $cw);
+                    $dirty[$cy][$cx] = true;
+                    $x = ($cx + 1) * $cw - 1;
+                }
+            }
+        }
+        $out = '';
+        foreach ($dirty as $cy => $cells) {
+            $xs = array_keys($cells);
+            sort($xs);
+            $start = $prev = $xs[0];
+            foreach ([...\array_slice($xs, 1), -2] as $cx) {      // (-2 ends the last run)
+                if ($cx === $prev + 1) {
+                    $prev = $cx;
+                    continue;
+                }
+                $n = $prev - $start + 1;
+                $image = Image::of($surface->readRect($start * $cw, $cy * $ch, $n * $cw, $ch)->toRgbaString(), 'rgba', $n * $cw, $ch);
+                if ($image !== null) {
+                    $out .= Ansi::moveTo($start, $cy) . Ansi::image($image, $n, 1);
+                }
+                $start = $prev = $cx;
+            }
+        }
+        return $out;
     }
 }

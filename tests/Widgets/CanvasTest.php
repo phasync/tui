@@ -356,3 +356,34 @@ it('shows a canvas inside nested windows on Kitty as the root does (the device o
         $t->detach();
     });
 });
+
+it('on pixels, draws again only the cells whose pixels changed, as small raw images; the other cells keep their image', function () {
+    fiber\run(function () {
+        $s = new State(['x' => 2]);
+        $draw = function (CanvasContext $c) use ($s) {
+            $c->fillStyle = '#ef4444';
+            $c->fillRect($s->x, 1, 2, 1);      // a 2x1 cell block that moves right
+        };
+        $t = Tui::headless(fn() => new Canvas(draw: $draw, marker: 'pixels'), 16, 4, images: 'kitty');
+        $t->settle();
+        $first = $t->surface->cell(0, 0)->style->image;
+        expect($first)->not->toBeNull()->and($first->image->format)->toBe('png')->and($first->cols)->toBe(16);
+        $t->takeOutput();
+        $s->x = 4;
+        $t->settle();
+        // one run of 4 cells at (2,1): the two the block left and the two it covers now
+        $fragments = [];
+        for ($x = 0; $x < 16; $x++) {
+            $fragments[$x] = $t->surface->cell($x, 1)->style->image;
+        }
+        expect($fragments[2]->image->format)->toBe('rgba')->and($fragments[2]->image->width)->toBe(32)->and($fragments[2]->cols)->toBe(4)
+            ->and($fragments[5]->image)->toBe($fragments[2]->image)->and($fragments[5]->col)->toBe(3)
+            ->and($fragments[1]->image)->toBe($first->image)->and($fragments[6]->image)->toBe($first->image)
+            ->and($t->surface->cell(0, 0)->style->image->image)->toBe($first->image);
+        expect($t->takeOutput())->not->toContain('f=100');      // (no PNG went out again)
+        $t->takeOutput();
+        $t->settle();
+        expect($t->takeOutput())->toBe('');
+        $t->detach();
+    });
+});

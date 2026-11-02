@@ -22,6 +22,11 @@
   queries the device uses: for a report about a terminal.
 - `examples/graphs.php --fast`: new samples every 5 ms, frames uncapped, the frame rate in the
   header (a Braille graph redraws about 115 times a second on a 2014 Xeon, interpreted).
+- `Canvas` on `pixels` draws again only the cells whose pixels changed since its last render,
+  as one small raw image per run of them; the other cells keep the image they show. The first
+  frame and a size change send the whole picture as before. A scrolling graph changes the cells
+  along its curve and not the space around it, and the terminal decodes only those: on Kitty
+  and Sixel the bytes per frame drop with the area that changed.
 
 ## 0.0.4-beta1 (2026-11-01)
 
