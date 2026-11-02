@@ -359,4 +359,4 @@ it('ends the sleep of a component at a tick of the frame clock, so loops begun a
         // still about ten steps a second: a sleep(0.1) ends at most 2 ms early, one tick late
         expect($at['a'][2] - $at['a'][0])->toBeGreaterThan(0.19)->toBeLessThan(0.24);
     });
-});
+})->group('benchmark');   // (timing within 6 ms of a tick: not for a shared CI runner, see .github/workflows/ci.yml)
