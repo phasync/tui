@@ -233,7 +233,7 @@ $log->append("started\n");
     });
     $graph = function (CanvasContext $c) use ($s) {
         [$w, $h] = [$c->width(), $c->height()];
-        $c->fillStyle = 'rgba(52, 211, 153, 0.5)';     // the slow wave, as an area
+        $c->fillStyle = 'rgba(251, 191, 36, 0.5)';     // the slow wave, as an area (amber)
         $c->beginPath();
         $c->moveTo(0, $h);
         foreach ($s->samples as $i => [, $v]) {
