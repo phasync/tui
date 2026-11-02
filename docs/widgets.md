@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator` and `MaskedInput`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, and `Menu` with `MenuBar`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -820,3 +820,17 @@ Backspace/Delete, Ctrl-U/Ctrl-K edit; no word motions or copy. Enter calls `onSu
 key goes on, so a `Form` submits). Alt-R or a click on the sign at the right (`◎`/`◉`) reveals the
 text. A standalone field (not an `Editor`). `value()`, `setValue()`, `cursor()`, `setRevealed()`; a
 `Field`. Styles: `MaskedInput` (focused: `$panel` background), `MaskedInput::placeholder`, `MaskedInput::reveal`.
+
+## Menu, MenuBar
+
+`Menu::popup($this, $items, new Rect($x, $y, 1, 1), onSelect: fn($key) => ...)`: a context menu as an
+overlay of the calling component (returns the `Overlay`; `await($overlay->closed())` gives the key).
+Items by key: a label, `'-'` (separator) or `['label', 'shortcut' => 'Ctrl+O' (shown, binds nothing),
+'disabled', 'onSelect' => Closure, 'items' => [...] (submenu)]`. Up/Down (wrapping, skipping
+separators and disabled items), Home/End, Enter/Space pick, Right opens a submenu, Left closes it,
+Escape closes one level; hover makes an item current, a click picks, a click outside closes.
+`new MenuBar(['File' => [...], 'Help' => [...]], onSelect: fn($key, $bar) => ...)`: titles in a row;
+Left/Right change title (also inside an open menu), Enter/Space/Down/click open; `open()`,
+`openTitle()`. Keep item keys unique across menus. Styles: `Menu` (rounded border), `Menu::item`
+(`current`, `disabled`), `Menu::shortcut`, `Menu::separator`; `MenuBar`, `MenuBar::title`
+(`current`, `open`, `focused`).
