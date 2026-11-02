@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "dd4bffd1d56aaefd34af333ad84de7a2",
+    "content-hash": "191bfd45ca19dace9ea2ed1209155bd3",
     "packages": [
         {
             "name": "fiber-interop/api",
-            "version": "v0.3.2",
+            "version": "v0.3.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/fiber-interop/api.git",
-                "reference": "47e4a06db26a0a45819fd5f7c8a78c7a3ad4f560"
+                "reference": "608629a24a5ba2a41f6f54175488a9a8a5e9ac24"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/fiber-interop/api/zipball/47e4a06db26a0a45819fd5f7c8a78c7a3ad4f560",
-                "reference": "47e4a06db26a0a45819fd5f7c8a78c7a3ad4f560",
+                "url": "https://api.github.com/repos/fiber-interop/api/zipball/608629a24a5ba2a41f6f54175488a9a8a5e9ac24",
+                "reference": "608629a24a5ba2a41f6f54175488a9a8a5e9ac24",
                 "shasum": ""
             },
             "require": {
@@ -52,9 +52,9 @@
             "description": "One surface for fiber-based concurrency: go, await, sleep, readable, writable on phasync, Revolt, AMPHP and ReactPHP.",
             "support": {
                 "issues": "https://github.com/fiber-interop/api/issues",
-                "source": "https://github.com/fiber-interop/api/tree/v0.3.2"
+                "source": "https://github.com/fiber-interop/api/tree/v0.3.3"
             },
-            "time": "2026-10-31T14:06:21+00:00"
+            "time": "2026-11-02T21:18:10+00:00"
         },
         {
             "name": "fiber-interop/scope",

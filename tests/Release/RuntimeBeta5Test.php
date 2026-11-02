@@ -57,7 +57,7 @@ it('ends the exact shape with its exception, and prints no warning before it', f
     expect($status)->toBe(255)->and($err)->toContain('test code failed')->not->toContain('phasync/tui: ');
 });
 
-it('still ends what Tui::headless() owns: the root closure failing, a Tui::go() coroutine failing, quitting', function (string $code, string $message) {
+it('still ends what Tui::headless() owns: the root closure failing, a \fiber\go() coroutine failing, quitting', function (string $code, string $message) {
     [$status, , $err] = inProcess($code);
     expect($status)->toBe(255)->and($err)->toContain($message);
 })->with([
@@ -72,19 +72,19 @@ it('still ends what Tui::headless() owns: the root closure failing, a Tui::go() 
             $s->n = 1;
         });
         PHP, 'the root closure failed'],
-    'a coroutine of Tui::go()' => [<<<'PHP'
+    'a coroutine of \fiber\go()' => [<<<'PHP'
         fiber\run(function () {
             Tui::headless(new Text('x'), 10, 1);
-            Tui::go(function () { Tui::sleep(0.05); throw new LogicException('the job failed'); });
+            \fiber\go(function () { \fiber\sleep(0.05); throw new LogicException('the job failed'); });
         });
         PHP, 'the job failed'],
 ]);
 
-it('ends a headless program that quits, with coroutines of Tui::go() looping in it, on any runtime', function () {
+it('ends a headless program that quits, with coroutines of \fiber\go() looping in it, on any runtime', function () {
     [$status, $out] = inProcess(<<<'PHP'
         fiber\run(function () {
             $s = new State(['n' => 0]);
-            Tui::go(function () use ($s) { while (true) { Tui::sleep(0.01); $s->n++; } });
+            \fiber\go(function () use ($s) { while (true) { \fiber\sleep(0.01); $s->n++; } });
             $t = Tui::headless(fn() => new Text("n={$s->n}"), 10, 1);
             fiber\sleep(0.1);
             $t->press('ctrl+q');

@@ -2,7 +2,7 @@
 
 /*
  * TODO-0.0.3-beta4 item 3, small things from use: Tui::quit(), Select's initial value, Editor
- * completion that finds nothing, Alt-number anywhere in Tabs, Tui::go() failures, println()
+ * completion that finds nothing, Alt-number anywhere in Tabs, \fiber\go() failures, println()
  * markup, State arrays by index, press() then text(), exceptions in headless test code.
  */
 
@@ -281,12 +281,12 @@ it('ends fiber\run() with the exception of test code that fails after Tui::headl
     expect($caught)->toBe("the test failed ($mode)")->and(microtime(true) - $started)->toBeLessThan(3.0);
 })->with('failing test code');
 
-it('ends the program when a coroutine of test code started with Tui::go() fails under Tui::headless()', function () {
+it('ends the program when a coroutine of test code started with \fiber\go() fails under Tui::headless()', function () {
     $caught = null;
     try {
         fiber\run(function () {
             $t = Tui::headless(fn() => new \phasync\Tui\Component\Spinner(), 20, 3);
-            Tui::go(function () use ($t) {
+            \fiber\go(function () use ($t) {
                 $t->settle();
                 throw new RuntimeException('a coroutine of the test failed');
             });
@@ -298,11 +298,11 @@ it('ends the program when a coroutine of test code started with Tui::go() fails 
     expect($caught)->toBe('a coroutine of the test failed');
 });
 
-it('does not throw the Tui::go() failure of an ended headless program out of the next one', function () {
+it('does not throw the \fiber\go() failure of an ended headless program out of the next one', function () {
     try {
         fiber\run(function () {
             Tui::headless(fn() => new Text('first'), 20, 3);
-            Tui::go(fn() => throw new RuntimeException('the first program failed'));
+            \fiber\go(fn() => throw new RuntimeException('the first program failed'));
             fiber\sleep(0.05);
         });
     } catch (RuntimeException) {

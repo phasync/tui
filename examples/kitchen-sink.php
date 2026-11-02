@@ -19,11 +19,11 @@ $s = new State(['progress' => 0.0, 'samples' => [], 'fruit' => 'apple', 'loud' =
 $log = new Log();
 $log->append("started\n");
 \fiber\run(function () use ($s, $log) {
-    Tui::go(function () use ($s) {            // a coroutine feeds the bar and the graph
+    fiber\go(function () use ($s) {            // a coroutine feeds the bar and the graph
         for ($t = 0; ; $t++) {
             $s->progress = $s->progress >= 1 ? 0.0 : $s->progress + 0.01;
             $s->samples = [...array_slice($s->samples, -59), [50 + 35 * sin($t / 4), 50 + 30 * sin($t / 11) * cos($t / 29)]];
-            Tui::sleep(0.1);
+            fiber\sleep(0.1);
         }
     });
     $graph = function (CanvasContext $c) use ($s) {

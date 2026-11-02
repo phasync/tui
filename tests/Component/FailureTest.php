@@ -287,12 +287,12 @@ it('restores the real terminal and exits non-zero with the message on stderr', f
     'go()' => ['go', 'failed in go()'],
     'Tui::run()' => ['tui', 'failed in run()'],
     'a closure given to Tui::run()' => ['closure', 'failed in the closure'],
-    'a coroutine of Tui::go()' => ['tuigo', 'failed in Tui::go()'],
+    'a coroutine of \fiber\go()' => ['tuigo', 'failed in \fiber\go()'],
     'a key handler of Tui::run(keys:)' => ['keys', 'failed in a key handler'],
 ]);
 
 it('prints the stack trace of an uncaught failure with TUI_TRACE=1 (0.0.3-beta4)', function () {
     [$status, $stderr, $s] = crashOnPty('tuigo', 'TUI_TRACE=1');
-    expect($stderr)->toContain('RuntimeException: failed in Tui::go()')
+    expect($stderr)->toContain('RuntimeException: failed in \fiber\go()')
         ->and($stderr)->toContain('#0 ')->and($s->isAltScreen())->toBeFalse();
 });

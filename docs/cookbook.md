@@ -7,14 +7,13 @@ read here works. Without a terminal, `TUI_HEADLESS=80x24 php screen.php` prints 
 text, and `TUI_THEME=light` (or `--theme=mono`) picks the theme it is drawn in.
 
 The pattern is the same in all of them: a `State` holds what changes, coroutines
-(`Tui::go()`, which ends the program when one fails), key handlers (`keys:`, `onKey:`) or
+(`fiber\go()`, which ends the program when one fails), key handlers (`keys:`, `onKey:`) or
 callbacks (`onSubmit:`, `onSelect:`, `onFocus:`) change it, and a closure
 builds the screen from it; the screen follows the state by itself (see
 [components.md](components.md), "Reactive"). Utility classes (`grow`, `text-muted`,
 `md:flex-row`, see [styling.md](styling.md)) do the styling, and the default theme the rest.
-A coroutine that should end with the screen waits with `Tui::sleep()`, which throws `Quit` once
-the screen has quit (and `Tui::go()` takes that as the coroutine's end), so `fiber\run()`
-returns with the screen.
+A coroutine of the program ends with the screen: once it has quit, the run is cancelled and the
+coroutine's `fiber\sleep()` throws `fiber\Cancelled`, so `fiber\run()` returns with the screen.
 
 ## 1. A progress runner
 
@@ -30,9 +29,9 @@ $jobs = ['compile' => 0.04, 'test' => 0.07, 'package' => 0.02, 'upload' => 0.05]
 $s = new State(['done' => array_map(fn() => 0.0, $jobs)]);
 \fiber\run(function () use ($jobs, $s) {
     foreach ($jobs as $job => $every) {
-        Tui::go(function () use ($job, $every, $s) {
+        fiber\go(function () use ($job, $every, $s) {
             while ($s->done[$job] < 1.0) {
-                Tui::sleep($every);
+                fiber\sleep($every);
                 $s->done = [...$s->done, $job => min(1.0, $s->done[$job] + 0.05)];
             }
         });
@@ -62,12 +61,12 @@ $show = function () use ($s, $log) {
     $log->setLines(array_values(array_filter($s->lines, fn($l) => $s->filter === '' || stripos($l, $s->filter) !== false)));
 };
 \fiber\run(function () use ($s, $log, $show) {
-    Tui::go(function () use ($s, $show) {
-        for ($i = 1; ; $i++) {      // (until the screen quits: Tui::sleep() then throws Quit)
+    fiber\go(function () use ($s, $show) {
+        for ($i = 1; ; $i++) {      // (until the screen quits: the run is cancelled, fiber\sleep() throws)
             $level = ['info', 'info', 'warn', 'error'][$i % 4];
             $s->lines = [...array_slice($s->lines, -999), sprintf('%04d %-5s request %d served', $i, $level, $i * 7)];
             $show();
-            Tui::sleep(0.05);
+            fiber\sleep(0.05);
         }
     });
     Tui::run(fn() => new Column([
@@ -262,10 +261,10 @@ $chart = function (int $height) use ($s): string {
     return implode("\n", $rows);
 };
 \fiber\run(function () use ($s, $chart) {
-    Tui::go(function () use ($s) {
+    fiber\go(function () use ($s) {
         for ($t = 0; ; $t++) {
             $s->samples = [...array_slice($s->samples, -119), 0.5 + 0.4 * sin($t / 6) * cos($t / 17)];
-            Tui::sleep(0.1);
+            fiber\sleep(0.1);
         }
     });
     Tui::run(fn() => new Column([
@@ -322,9 +321,9 @@ $s = new State(['done' => ['build' => 0.0, 'test' => 0.0, 'lint' => 0.0, 'docs' 
 $bars = $buttons = [];
 \fiber\run(function () use ($s, &$bars, &$buttons) {
     foreach (array_keys($s->done) as $i => $job) {
-        Tui::go(function () use ($s, $job, $i) {
+        fiber\go(function () use ($s, $job, $i) {
             while ($s->done[$job] < 1.0) {
-                Tui::sleep(0.01 * ($i + 1));
+                fiber\sleep(0.01 * ($i + 1));
                 $s->done[$job] = empty($s->paused[$job]) ? min(1.0, $s->done[$job] + 0.01) : $s->done[$job];
             }
         });

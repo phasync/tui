@@ -124,19 +124,19 @@ $screen = fn() => new Column([
 
 \fiber\run(function () use ($s, $screen, $graphBox, $theme, $argv, $fast) {
     // two series sampled by coroutines: a noisy cpu load and a bursty network
-    Tui::go(function () use ($s, $fast) {
+    fiber\go(function () use ($s, $fast) {
         $v = 40.0;
         while (true) {
             $v = max(2, min(98, $v + mt_rand(-120, 120) / 10));
             $s->cpu = [...array_slice($s->cpu, -59), $v];
-            Tui::sleep($fast ? 0.005 : 0.2);
+            fiber\sleep($fast ? 0.005 : 0.2);
         }
     });
-    Tui::go(function () use ($s, $fast) {
+    fiber\go(function () use ($s, $fast) {
         while (true) {
             $burst = mt_rand(0, 9) === 0 ? mt_rand(40, 90) : mt_rand(5, 25);
             $s->net = [...array_slice($s->net, -59), (float) $burst];
-            Tui::sleep($fast ? 0.005 : 0.3);
+            fiber\sleep($fast ? 0.005 : 0.3);
         }
     });
     in_array('--inline', $argv, true)

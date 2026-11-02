@@ -41,7 +41,7 @@ use phasync\Tui\Component\ProgressBar;
 
 fiber\run(function () {
     $s = new State(['done' => 0]);
-    Tui::go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { Tui::sleep(0.05); $s->done = $i; } });
+    fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
     Tui::inline(fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),
@@ -133,36 +133,32 @@ One dialog at a time per root: opening another while one is open gives the open 
 and returns its awaitable. Without a running program, `Dialog::open()` throws a
 `LogicException`.
 
-**Coroutines.** Start the program's own coroutines with `Tui::go()` (before `Tui::run()`, or
-from a handler): they belong to the program. An exception in one ends the program at once, the
-terminal is restored and the exception comes out of `Tui::run()` (see "How a program ends").
-And they stop with it: once the program has ended (Ctrl-Q, `Tui::quit()`, a `Tui::go()`
-coroutine calling `Tui::quit()`), each is cancelled with `Quit`: `Tui::sleep($seconds)`, which
-sleeps as `fiber\sleep()` does, throws it, and so does any other wait the coroutine is in or
-comes to; that ends the coroutine quietly under every runner, `Tui::headless()` included (catch
-it to clean up first), so `fiber\run()` returns when the screen is gone. (The coroutine that
-quit goes on until its next `Tui::sleep()`.)
-Outside a `Tui::go()` coroutine (the code that started a headless program, a handler, a
-`fiber\go()` coroutine) `Tui::sleep()` returns early when the program ends instead, since
-nothing there would take the exception. A loop that animates is paced by the frames the
+**Coroutines.** The program is the `fiber\run()` it is in: start its coroutines with plain
+`fiber\go()` (before `Tui::run()`, or from a handler) and let them wait with `fiber\sleep()`,
+`fiber\await()`, a stream. An exception in one that nobody awaits ends the program at once
+(`fiber\on_failure()`): the terminal is restored, and the exception comes out of `fiber\run()`
+(see "How a program ends"). And they stop with it: once the program has ended (its quit key,
+`Tui::quit()`, the root disposed), the run is cancelled (`fiber\cancel(fiber\frame())`): the
+wait each coroutine is in throws `fiber\Cancelled`, and so does every later one, which ends
+the coroutine quietly (catch `fiber\CancelledException` to clean up first, without waiting), so
+`fiber\run()` returns when the screen is gone. The coroutine that quit goes on until its next
+wait, as does the code after `Tui::run()`. `Tui::headless()` is the same: the test's run is the
+program's (a test that goes on after the program, or runs several, nests each in a
+`fiber\run()` of its own). A loop that animates is paced by the frames the
 terminal gets with `Tui::nextFrame()`: it returns once the next frame has been drawn and sent,
 with the seconds since the frame before (the `dt` of a game loop), so the loop runs once per
 frame on a fast terminal and no faster than a slow one takes them (a frame comes at the frame
-rate also when nothing changed); it ends with the program as `Tui::sleep()` does:
+rate also when nothing changed); it ends with the program as `fiber\sleep()` does:
 
 ```php
-Tui::go(function () use ($s) {
-    while (true) { Tui::sleep(0.1); $s->load = sys_getloadavg()[0]; }
+fiber\go(function () use ($s) {
+    while (true) { fiber\sleep(0.1); $s->load = sys_getloadavg()[0]; }
 });
-Tui::run(fn() => new Text("load {$s->load}"));     // Ctrl-Q: the loop ends with the screen
+Tui::run(fn() => new Text("load {$s->load}"), keys: ['q' => 'quit']);     // q: the loop ends with the screen
 ```
 
-When the program ends, a `Tui::go()` coroutine is cancelled (`fiber\cancel()`) with `Quit` as
-the reason: whatever it waits in throws it, a `fiber\sleep()` or an `fiber\await()` as well as
-`Tui::sleep()`, and so does every later wait, so clean up in a `catch (Quit)` without waiting
-(on an adapter that cannot cancel, only `Tui::sleep()` throws it). A coroutine started with
-plain `fiber\go()` is not the program's: its exception waits in
-`fiber\run()` until the screen has ended by itself, and it is not stopped; end such a loop
+Cancellation needs an adapter with `fiber\cancel()` (phasync, Revolt, AMPHP, ReactPHP,
+TrueAsync have it); on one without, the screen still ends but the coroutines run on; end such a loop
 with a flag (`while ($running)`, `$running = false` after `Tui::run()` returns). The
 alternative is a class: a component's `$this->go()` is contained by its error boundary, so a
 failure shows in the component's rectangle and the rest goes on (see "Errors stay in their
@@ -179,7 +175,7 @@ terminal device shows (`Tui::headless()` returns the device), and `children()` l
 children by key: `$t->component()->children()['progress']`. `Component::of($surface)` gives the
 component of a surface.
 
-`fiber\go()` and `Tui::go()` must be called inside `fiber\run()` (fiber-interop/api throws
+`fiber\go()` and `fiber\go()` must be called inside `fiber\run()` (fiber-interop/api throws
 `NotInRunException` otherwise), which is why the program above is wrapped in one; the runners
 work inside a `fiber\run()` of yours. Classes stay for widgets with behaviour of their own that
 are used more than once (a component with its own keys, coroutines and children); a closure
@@ -242,7 +238,7 @@ program is the same thing without a name.
 
 A component's coroutines are not cancelled from outside: write loops as
 `while ($this->sleep(...))`, check `isMounted()`, or race a wait against `stopped()`:
-`fiber\await_any([$work, $this->stopped()])` (a `Tui::go()` coroutine of a program is: see
+`fiber\await_any([$work, $this->stopped()])` (a `fiber\go()` coroutine of a program is: see
 "Without a class").
 
 ## How a program ends
@@ -282,9 +278,11 @@ quits** when no component on the key's way binds it (a `Help` element lists it a
   `fiber\run()` throws the exception, as it would without a terminal UI. The library watches
   the task that called `start()` (and `TerminalDevice::attach()`) through `fiber\current()`
   (awaiting that task from inside it needs fiber-interop/api >= 0.3.2 and, on phasync,
-  fiber-interop/phasync >= 0.4.2, which the library requires). An exception in
-  a coroutine you started yourself with `fiber\go()` is not seen until `fiber\run()` ends: start
-  such work with the component's `go()`, whose failure is the component's.
+  fiber-interop/phasync >= 0.4.2, which the library requires). Under `Tui`, an exception in a
+  coroutine you started with `fiber\go()` that nobody awaits ends the program the same way
+  (`fiber\on_failure()`, api >= 0.3.3); on a root you `start()` yourself it is not seen until
+  `fiber\run()` ends, so there start such work with the component's `go()`, whose failure is
+  the component's.
 - **A failing child** is contained to its rectangle (see below); its own children end with it.
 
 What keeps `fiber\run()` running: an attached terminal device, the programs of running ptys,
@@ -630,12 +628,12 @@ with a coroutine of the program for the tick:
 
 ```php
 $s = new State(['now' => date('H:i:s')]);
-Tui::go(function () use ($s) { while (true) { Tui::sleep(1); $s->now = date('H:i:s'); } });
+fiber\go(function () use ($s) { while (true) { fiber\sleep(1); $s->now = date('H:i:s'); } });
 Tui::run(fn() => new Text($s->now));            // reads $s->now: renders when it is written
 ```
 
 Or, in a component of a class, call `requestRender()` from its `run()` loop (see the `Clock`
-at the top). `Tui::go()` is the program's coroutine (it ends with the program); a plain
+at the top). `fiber\go()` is the program's coroutine (it ends with the program); a plain
 `fiber\go()` is not.
 
 `$state->set(count: 0, label: 'x')` assigns several properties at once. A write of the value a

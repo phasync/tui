@@ -29,9 +29,9 @@ it('opens with the dashboard, as examples/dashboard.php has it', function () {
 it('runs the one-file program of the README and of docs/components.md on an in-memory terminal', function (string $doc) {
     $text = (string) file_get_contents(__DIR__ . '/../../' . $doc);
     preg_match('/```php\n((?:(?!```).)*Working….*?)```/s', $text, $m);
-    expect($m[1])->toContain('Tui::inline(fn() => new Column([')->toContain('Tui::go(');
+    expect($m[1])->toContain('Tui::inline(fn() => new Column([')->toContain('fiber\go(');
     // as written, but faster, and headless: the screen is read, then Ctrl-Q
-    $code = str_replace(['Tui::sleep(0.05)', 'Tui::inline(', "]));\n});"], ['Tui::sleep(0.002)', '$t = Tui::headless(', "]), 60, 8, inline: true);\n    readmeWorking(\$t);\n});"], $m[1], $count);
+    $code = str_replace(['fiber\sleep(0.05)', 'Tui::inline(', "]));\n});"], ['fiber\sleep(0.002)', '$t = Tui::headless(', "]), 60, 8, inline: true);\n    readmeWorking(\$t);\n});"], $m[1], $count);
     expect($count)->toBe(3);
     eval($code);
 })->with(['README.md', 'docs/components.md']);

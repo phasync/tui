@@ -10,7 +10,7 @@ use phasync\Tui\Internal\Live;
  *
  *     $s = new State(['done' => 0]);
  *     fiber\run(function () use ($s) {
- *         Tui::go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { Tui::sleep(0.05); $s->done = $i; } });
+ *         fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
  *         Tui::inline(fn() => new Column([
  *             new Text("Working… {$s->done}%"),
  *             new ProgressBar($s->done / 100),
@@ -45,12 +45,18 @@ use phasync\Tui\Internal\Live;
  * `TUI_HEADLESS=COLSxROWS` in the environment) runs `Tui::run()`/`Tui::inline()` on a
  * `FakeTerminal` of that size instead of the terminal for a second (`COLSxROWS@SECONDS` for
  * another time), prints the screen and ends (the root quits, as with Ctrl-Q):
- * `php examples/dashboard.php --headless=100x30`. Each call wraps the program in its own `fiber\run()` (it also works inside one of
- * yours, which a program that starts coroutines with `fiber\go()` needs: `fiber\go()` must be
- * called inside `fiber\run()`). It returns when the root has ended, with the root component
- * (read what it collected from it). **Quitting**: the root quits when it is disposed
- * (`$this->dispose()` in the root, `$root->dispose()` from anywhere) or when Ctrl-Q reaches it
- * and no component on the way binds Ctrl-Q (a `Help` element lists it as "quit").
+ * `php examples/dashboard.php --headless=100x30`.
+ *
+ * **The program is the `fiber\run()` it is in.** `Tui::run()` and `Tui::inline()` called inside
+ * your `fiber\run()` run the screen there: the coroutines you start with `fiber\go()` before or
+ * beside it are the program's, and when the screen ends (Ctrl-Q, `Tui::quit()`, the root
+ * disposed) the whole run is cancelled (`fiber\cancel(fiber\frame())`): every wait they are in
+ * throws `fiber\Cancelled`, which ends them (or is caught, to clean up without waiting), and
+ * `fiber\run()` returns. Called from `{main}`, they make a `fiber\run()` of their own. They return
+ * the root component, ended (read what it collected from it); the code after the call runs
+ * until its next wait. **Quitting**: the root quits when it is disposed (`$this->dispose()` in
+ * the root, `$root->dispose()` from anywhere, `Tui::quit()`) or when Ctrl-Q reaches it and no
+ * component on the way binds Ctrl-Q (a `Help` element lists it as "quit").
  * **Theme**: `theme:` is `'dark'`, `'light'` or `'mono'` (see `Stylesheet::theme()`); without it the
  * program is drawn in the theme the person running it asked for with `--theme=NAME` or
  * `TUI_THEME=NAME` (`run()` and `inline()`, with or without `--headless`), else in the theme for
@@ -59,129 +65,18 @@ use phasync\Tui\Internal\Live;
  * refines the theme in force.
  * **Failing**: an exception anywhere in the program that no error boundary contains (the
  * root's hooks, handlers or coroutines, the closure given as the root, the handlers given with
- * `keys:` and to elements, a coroutine started with `Tui::go()`) ends the program: the tree is
- * disposed, the terminal restored, and the exception comes out of the call, as it would
- * without a terminal UI. Start the program's own coroutines with `Tui::go()`, not
- * `fiber\go()`, and let them wait with `Tui::sleep()`: they stop when the program ends (see
- * `go()`).
+ * `keys:` and to elements, a coroutine of the run that nobody awaits: `fiber\on_failure()`)
+ * ends the program: the tree is disposed, the terminal restored, the run cancelled, and the
+ * exception comes out of `fiber\run()`, readable on the restored terminal, as it would without a
+ * terminal UI. A coroutine of a component (`$this->go()` in a class) is contained by the
+ * component's error boundary instead: the component shows the error in its rectangle and the
+ * rest of the program goes on. Needs an adapter with cancellation (`fiber\cancel()`); on one
+ * without, the screen still ends but the program's other coroutines are left running.
  */
 final class Tui
 {
     /** The key that quits a program run by `Tui` when nothing binds it. */
     public const QUIT = 'ctrl+q';
-
-    /**
-     * The exception of a coroutine started with go(), for the runner to throw, with the root
-     * it ended (null: none was running yet, the next runner throws it as it starts).
-     *
-     * @var array{\Throwable, ?\WeakReference<Component>}|null
-     */
-    private static ?array $failure = null;
-
-    /** @var \WeakMap<object, Internal\Job>|null the coroutines of go(), by their task's fiber\current() */
-    private static ?\WeakMap $jobs = null;
-    /** @var list<Internal\Job> coroutines of go() started while no program ran: the next program's */
-    private static array $unclaimed = [];
-
-    /**
-     * Start a coroutine of the program, as `fiber\go()` does, except that it belongs to the
-     * program (the one running, or the next one to start when none runs yet: start your jobs,
-     * then call `Tui::run()`):
-     *
-     * - **It stops when the program ends.** Once the program has ended (Ctrl-Q, `Tui::quit()`),
-     *   the coroutine is cancelled with `Quit` as the reason: the wait it is in throws it at once
-     *   (`Tui::sleep()`, `fiber\sleep()`, an await, a stream), and so does every later one,
-     *   which ends the coroutine (or is caught, to clean up without waiting). So `fiber\run()`
-     *   returns when the screen is gone, without a flag of yours. (On a runtime that cannot
-     *   cancel, only `Tui::sleep()` throws it: wait with that one.)
-     * - **Its exception ends the program** at once: the screen is disposed, the terminal
-     *   restored, and the exception comes out of `Tui::run()` (and so out of your
-     *   `fiber\run()`), readable on the restored terminal.
-     *
-     *     fiber\run(function () use ($s) {
-     *         Tui::go(function () use ($s) {
-     *             while (true) { Tui::sleep(0.1); $s->done = fetchProgress(); }
-     *         });
-     *         Tui::run(fn() => new ProgressBar($s->done));     // Ctrl-Q: the loop ends with it
-     *     });
-     *
-     * A coroutine started with `fiber\go()` itself is not seen by the library: an exception in
-     * it is kept by `fiber\run()` until everything inside it has ended (the screen too), and
-     * only then thrown, and it is not stopped (end it with a flag the program clears when
-     * `Tui::run()` returns). A coroutine of a component (`$this->go()` in a class) is contained
-     * by the component's error boundary instead: the component shows the error in its rectangle
-     * and the rest of the program goes on, and it ends with the component.
-     */
-    public static function go(\Closure $task): void
-    {
-        $job = new Internal\Job();
-        $root = Component::runningRoot();
-        if ($root !== null) {
-            self::claim($job, $root);
-        } else {
-            self::$unclaimed[] = $job;
-        }
-        self::$jobs ??= new \WeakMap();
-        $job->task = \fiber\go(static function () use ($task, $job): void {
-            // which job Tui::sleep() is asked from: known by the task's own fiber\current()
-            // (on a runtime that tells it only after the task's first suspension, after one)
-            if (\fiber\current() === null) {
-                \fiber\sleep(0);
-            }
-            $me = \fiber\current();
-            if ($me !== null) {
-                self::$jobs[$me] = $job;
-            }
-            try {
-                $task();
-            } catch (Quit) {
-                // (its program ended: the coroutine's end)
-            } catch (\Throwable $e) {
-                $root = $job->program?->get() ?? Component::runningRoot();
-                self::$failure ??= [$e, $root === null ? null : \WeakReference::create($root)];
-                $root?->dispose();
-                throw $e;
-            }
-        });
-        $job->cancel();     // (its program ended before go() returned)
-    }
-
-    /**
-     * Sleep $seconds, as `fiber\sleep()` does, but end at once when the program ends. In a
-     * coroutine started with `Tui::go()` it ends with a `Quit` exception (the coroutine is
-     * cancelled with it), which `Tui::go()` takes as the coroutine's end, so the coroutine stops
-     * with its program (see there); one whose program has ended gets `Quit` from every call. Elsewhere (the code that started a
-     * `Tui::headless()` program, a handler, a coroutine of `fiber\go()`), where nothing would
-     * take the exception, it returns early when the program running at the call ends during
-     * the sleep, and sleeps plainly when none runs.
-     *
-     * @throws Quit in a `Tui::go()` coroutine, when its program has ended
-     */
-    public static function sleep(float $seconds): void
-    {
-        $me = \fiber\current();
-        $job = $me === null ? null : (self::$jobs[$me] ?? null);
-        if ($job === null) {
-            // (not a Tui::go() coroutine: nothing takes a Quit here, so the sleep ends early)
-            $root = Component::runningRoot();
-            if ($root === null) {
-                \fiber\sleep($seconds);
-                return;
-            }
-            $wait = new Internal\Job();
-            self::claim($wait, $root);
-            if (!$wait->ended) {
-                $wait->wake->wait($seconds);
-            }
-            return;
-        }
-        if (!$job->ended) {
-            $job->wake->wait($seconds);
-        }
-        if ($job->ended) {
-            throw new Quit();
-        }
-    }
 
     /**
      * Wait for the next frame of the running program: returns once the frame has been drawn
@@ -191,56 +86,26 @@ final class Tui
      * terminal takes frames, and no faster than a slow one (a Sixel terminal decoding a large
      * picture), where sleeping a fixed time would run ahead of what is shown.
      *
-     *     Tui::go(function () use ($game, $s) {
+     *     fiber\go(function () use ($game, $s) {
      *         while (true) {
      *             $game->update(Tui::nextFrame());    // one step per frame, by the real time between them
      *             $s->tick++;                         // (what the canvas reads: it draws in the next frame)
      *         }
      *     });
      *
-     * Ends as `Tui::sleep()` does: in a `Tui::go()` coroutine it throws `Quit` once the program
-     * has ended; elsewhere it returns early then. Without a running program it sleeps a sixtieth
-     * of a second and returns that.
-     *
-     * @throws Quit in a `Tui::go()` coroutine, when its program has ended
+     * When the program ends, the run is cancelled and the wait throws `fiber\Cancelled`, as every
+     * wait of the program's coroutines does. Without a running program it sleeps a sixtieth of
+     * a second and returns that.
      */
     public static function nextFrame(): float
     {
-        $me = \fiber\current();
-        $job = $me === null ? null : (self::$jobs[$me] ?? null);
-        if ($job?->ended) {
-            throw new Quit();
-        }
-        $root = $job?->program?->get() ?? Component::runningRoot();
-        $device = $root?->device();
+        $device = Component::runningRoot()?->device();
         if ($device === null) {
             $t = microtime(true);
             \fiber\sleep(1 / 60);
             return microtime(true) - $t;
         }
-        $dt = $device->nextFrame();
-        if ($job?->ended) {
-            throw new Quit();
-        }
-        return $dt;
-    }
-
-    /** True if the code running now is the coroutine of $job. */
-    private static function isCurrent(Internal\Job $job): bool
-    {
-        $me = \fiber\current();
-        return $me !== null && (self::$jobs[$me] ?? null) === $job;
-    }
-
-    /** $job belongs to the program $root: it ends when the root is disposed. */
-    private static function claim(Internal\Job $job, Component $root): void
-    {
-        $job->program = \WeakReference::create($root);
-        if (!$root->isMounted()) {
-            $job->end();
-            return;
-        }
-        $root->stopped()->then(static fn() => $job->end(self::isCurrent($job)));
+        return $device->nextFrame();
     }
 
     /**
@@ -264,7 +129,7 @@ final class Tui
      * frozen as the one running in its place. Nothing happens for a component that is not on a
      * terminal.
      *
-     *     Tui::go(function () use ($s, $bar, $i) {
+     *     fiber\go(function () use ($s, $bar, $i) {
      *         ... $s->done[$i] = true;
      *         Tui::freeze($bar);      // its row stays as it is now, above the region
      *     });
@@ -311,9 +176,11 @@ final class Tui
     /**
      * Start $root (as for `run()`) on a new `FakeTerminal` of $cols x $rows (in inline mode with
      * $inline, see `FakeTerminal::inline()`) and return the terminal: for tests and headless
-     * programs, inside your own `fiber\run()`. The root quits as under `run()` (Ctrl-Q
-     * included); drive it with the terminal's `press()`, `type()`, `settle()` and read it with
-     * `text()`. `$terminal->detach()` ends it.
+     * programs, inside your own `fiber\run()`, which is the program's run as for `run()`: its
+     * end cancels that run (a test that goes on after the program ended, or runs several, puts
+     * each in a nested `fiber\run()`). The root quits as under `run()` (Ctrl-Q included); drive it
+     * with the terminal's `press()`, `type()`, `settle()` and read it with `text()`.
+     * `$terminal->detach()` ends it. A failure of the program comes out of your `fiber\run()`.
      *
      *     fiber\run(function () {
      *         $terminal = Tui::headless(new App(), 60, 20);
@@ -331,14 +198,16 @@ final class Tui
     {
         $terminal = $inline ? FakeTerminal::inline($cols, $rows, background: $background, images: $images) : new FakeTerminal($cols, $rows, background: $background, images: $images);
         $terminal->setFrameRate($fps);
-        self::starting(fn() => self::start($root, $terminal, $theme, $keys));
+        // (not owned: the caller's failure ends the program, see Runtime::watch())
+        $app = self::starting(fn() => self::start($root, $terminal, $theme, $keys));
+        \fiber\go(static fn() => self::serve($app, $terminal));
         return $terminal;
     }
 
     /**
-     * Run $runner, a runner starting a program; when it fails before the program started (a
-     * wrong theme, a bad `--headless=`, no terminal), the coroutines of go() waiting for that
-     * program end with `Quit` as when it ends, so they do not keep `fiber\run()` waiting.
+     * Run $runner, which starts a program; when it fails before the program runs (a wrong
+     * theme, a bad `--headless=`, no terminal), the run the program would have been is cancelled
+     * as when a program ends, so the coroutines started for it do not keep `fiber\run()` waiting.
      *
      * @template T
      * @param \Closure(): T $runner
@@ -349,11 +218,44 @@ final class Tui
         try {
             return $runner();
         } catch (\Throwable $e) {
-            [$jobs, self::$unclaimed] = [self::$unclaimed, []];
-            foreach ($jobs as $job) {
-                $job->end(self::isCurrent($job));
+            if (self::inRun()) {
+                try {
+                    \fiber\cancel(\fiber\frame());
+                } catch (\fiber\NotSupportedException) {
+                }
             }
             throw $e;
+        }
+    }
+
+    /**
+     * The program is on its device: wait for its end, then end its run. A failure of a coroutine
+     * of the run that nobody awaits ends the program (the exception is rethrown by the run, once
+     * everything has unwound); the end of the program cancels the run, so every coroutine of it
+     * stops and the run returns. On an adapter without cancellation the coroutines run on.
+     */
+    private static function serve(Component $app, TerminalDevice $device): void
+    {
+        \fiber\on_failure(static fn() => $app->dispose());
+        try {
+            $device->wait();
+        } finally {
+            $app->dispose();
+            try {
+                \fiber\cancel(\fiber\frame());
+            } catch (\fiber\NotSupportedException) {
+            }
+        }
+    }
+
+    /** True inside a `fiber\run()`: the program runs there; else it gets one of its own. */
+    private static function inRun(): bool
+    {
+        try {
+            \fiber\frame();
+            return true;
+        } catch (\fiber\NotInRunException) {
+            return false;
         }
     }
 
@@ -366,58 +268,34 @@ final class Tui
     private static function until(?TerminalDevice $device, Element|\Closure $root, ?string $theme, array $keys, bool $inline = false, int $fps = 60): Component
     {
         $device?->setFrameRate($fps);
-        return \fiber\run(static function () use ($device, $root, $theme, $keys, $inline, $fps): Component {
+        $program = static function () use ($device, $root, $theme, $keys, $inline, $fps): Component {
             // (this coroutine waits for the program and disposes it whatever happens: it owns it)
             if ($device === null) {
                 [$cols, $rows, $seconds] = self::headlessSize();
                 $terminal = $inline ? FakeTerminal::inline($cols, $rows) : new FakeTerminal($cols, $rows);
                 $terminal->setFrameRate($fps);
                 $app = Internal\Runtime::owned(fn() => self::start($root, $terminal, $theme, $keys));
+                \fiber\on_failure(static fn() => $app->dispose());
                 try {
                     \fiber\sleep($seconds);
                     $terminal->settle();
                     $screen = $inline ? '' : $terminal->text();
                 } finally {
                     $app->dispose();
+                    try {
+                        \fiber\cancel(\fiber\frame());
+                    } catch (\fiber\NotSupportedException) {
+                    }
                 }
                 echo rtrim($inline ? $terminal->frozen() : $screen), "\n";
-                self::rethrow($app);
                 return $app;
             }
             $app = Internal\Runtime::owned(fn() => self::start($root, $device, $theme, $keys));
-            try {
-                $device->wait();
-            } finally {
-                $app->dispose();
-            }
-            self::rethrow($app);
+            self::serve($app, $device);
             return $app;
-        });
-    }
-
-    /**
-     * A coroutine of go() failed: its exception comes out of the runner of the program it
-     * ended ($app), or out of the next runner when it ended none. One that ended another
-     * program (a headless one, whose exception reached `fiber\run()` through its coroutine) is
-     * not thrown by a program after it.
-     */
-    private static function rethrow(?Component $app = null): void
-    {
-        if (self::$failure === null) {
-            return;
-        }
-        [$e, $root] = self::$failure;
-        if ($root !== null) {
-            $ended = $root->get();
-            if ($app === null || $ended !== $app) {
-                if ($ended === null || !$ended->isMounted()) {
-                    self::$failure = null;      // (another program's, ended: not this one's)
-                }
-                return;
-            }
-        }
-        self::$failure = null;
-        throw $e;
+        };
+        // inside a run(): the program is that run; from {main}: a run of its own
+        return self::inRun() ? $program() : \fiber\run($program);
     }
 
     /**
@@ -469,7 +347,6 @@ final class Tui
             Stylesheet::theme($theme);      // (an unknown one fails before the terminal is taken over)
         }
         Component::normalizeBindings($keys);      // (a mistake fails before the terminal is taken over)
-        self::rethrow();                          // (a coroutine of the program failed already)
         if ($root instanceof \Closure) {
             $live = new Live($root);
             $reads = State::reads();
@@ -495,11 +372,6 @@ final class Tui
             $app->setTheme($theme);
         }
         $app->start($device);
-        // the coroutines of go() started before it are this program's
-        [$jobs, self::$unclaimed] = [self::$unclaimed, []];
-        foreach ($jobs as $job) {
-            self::claim($job, $app);
-        }
         return $app;
     }
 }

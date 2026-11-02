@@ -65,9 +65,9 @@ $screen = fn() => new Column([
 $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
 \fiber\run(function () use ($jobs, $s, $log, $screen, $boxes, $theme, $argv) {
     foreach ($jobs as $job => $every) {
-        Tui::go(function () use ($job, $every, $s, $log) {
-            while (true) {      // (Tui::sleep() ends the job when the screen quits)
-                Tui::sleep($every * (0.5 + mt_rand() / mt_getrandmax()));
+        fiber\go(function () use ($job, $every, $s, $log) {
+            while (true) {      // (fiber\sleep() ends the job when the screen quits)
+                fiber\sleep($every * (0.5 + mt_rand() / mt_getrandmax()));
                 $step = mt_rand(2, 12) / 100;
                 $s->steps = [...$s->steps, $job => [...array_slice($s->steps[$job], -15), $step * 8]];
                 $s->done = [...$s->done, $job => min(1.0, $s->done[$job] + $step)];
@@ -83,9 +83,9 @@ $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
 });
 ```
 
-Three jobs run in coroutines of the program (`Tui::go()`, which stop with it: once the screen
-has quit, they are cancelled with `Quit`, which their `Tui::sleep()` throws) and write their progress into a
-`State`; the screen is closures
+Three jobs run in coroutines of the program (`fiber\go()`; the program is the `fiber\run()` it
+is in, so once the screen has quit the run is cancelled and their `fiber\sleep()` throws
+`fiber\Cancelled`, which ends them) and write their progress into a `State`; the screen is closures
 over that state, so each `ProgressBar` and `Text` is drawn again when what it read changes,
 and nothing else is. The look is utility classes (`grow`, `px-1`, `text-muted`,
 `flex-col md:flex-row`: stacked under 80 columns) on the default theme (rounded borders, one
@@ -103,7 +103,7 @@ use phasync\Tui\Element\{Column, Text};
 
 $s = new State(['done' => 0]);
 fiber\run(function () use ($s) {
-    Tui::go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { Tui::sleep(0.05); $s->done = $i; } });
+    fiber\go(function () use ($s) { for ($i = 1; $i <= 100; $i++) { fiber\sleep(0.05); $s->done = $i; } });
     Tui::inline(fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),
@@ -115,10 +115,10 @@ That is a whole program: a line and a progress bar as a live region under the sh
 counting to 100%. The closure is the screen; it is rendered again whenever a `State` it read
 changes, here from a coroutine. Ctrl-Q quits; `Tui::run()` shows the same screen full screen,
 `Tui::headless()` on an in-memory terminal for tests (`examples/working.php` runs both ways).
-`Tui::go()` is `fiber\go()` for a coroutine of the program: its exception ends the program, and
-it stops with the program when it waits with `Tui::sleep()`; both must be called inside
+`fiber\go()` is `fiber\go()` for a coroutine of the program: its exception ends the program, and
+it stops with the program when it waits with `fiber\sleep()`; both must be called inside
 `fiber\run()`, which is why the program is wrapped in one. A loop that should run once per frame
-the terminal really gets (a game) waits with `Tui::nextFrame()` instead of `Tui::sleep()`: it
+the terminal really gets (a game) waits with `Tui::nextFrame()` instead of `fiber\sleep()`: it
 returns after the frame was drawn and sent, with the seconds since the one before.
 
 Such a program takes input without a class too: `keys:` on the runner binds keys to closures
@@ -228,11 +228,11 @@ $s = new State(['progress' => 0.0, 'samples' => [], 'fruit' => 'apple', 'loud' =
 $log = new Log();
 $log->append("started\n");
 \fiber\run(function () use ($s, $log) {
-    Tui::go(function () use ($s) {            // a coroutine feeds the bar and the graph
+    fiber\go(function () use ($s) {            // a coroutine feeds the bar and the graph
         for ($t = 0; ; $t++) {
             $s->progress = $s->progress >= 1 ? 0.0 : $s->progress + 0.01;
             $s->samples = [...array_slice($s->samples, -59), [50 + 35 * sin($t / 4), 50 + 30 * sin($t / 11) * cos($t / 29)]];
-            Tui::sleep(0.1);
+            fiber\sleep(0.1);
         }
     });
     $graph = function (CanvasContext $c) use ($s) {

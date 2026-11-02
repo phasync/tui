@@ -42,7 +42,7 @@ it('switches the only Tabs on the screen with Alt-number from outside it, and no
         $t->press('ctrl+tab');
         $t->settle();
         expect($tabs->current())->toBe('a');
-        Tui::go(fn() => \fiber\await(Confirm::ask('Sure', 'Sure?')));
+        \fiber\go(fn() => \fiber\await(Confirm::ask('Sure', 'Sure?')));
         $t->settle();
         $t->press('alt+2');
         $t->settle();

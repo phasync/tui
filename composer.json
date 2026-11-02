@@ -20,7 +20,7 @@
     ],
     "require": {
         "php": ">=8.3",
-        "fiber-interop/api": "^0.3.2",
+        "fiber-interop/api": "^0.3.3",
         "phasync/canvas": "^0.2.5"
     },
     "require-dev": {
@@ -28,7 +28,7 @@
         "pestphp/pest": "*"
     },
     "conflict": {
-        "fiber-interop/api": "<0.3.2",
+        "fiber-interop/api": "<0.3.3",
         "fiber-interop/phasync": "<0.4.2"
     },
     "autoload": {

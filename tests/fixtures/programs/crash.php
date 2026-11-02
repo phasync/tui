@@ -6,7 +6,7 @@
 //   go     - a coroutine of the root component (go()) throws
 //   tui    - Tui::run() of a root whose run() throws
 //   closure - Tui::run() of a closure that throws when the state it reads changes
-//   tuigo  - a coroutine started with Tui::go() before Tui::run() throws
+//   tuigo  - a coroutine started with \fiber\go() before Tui::run() throws
 //   keys   - a key handler given with Tui::run(keys:) throws (the program presses it itself)
 // It must end at once with the exception on stderr and the terminal restored.
 require __DIR__ . '/../../../vendor/autoload.php';
@@ -65,9 +65,9 @@ if ($mode === 'closure') {
 if ($mode === 'tuigo') {
     fiber\run(function () {
         $running = true;
-        Tui::go(function () use (&$running) {
+        \fiber\go(function () use (&$running) {
             fiber\sleep(0.1);
-            throw new RuntimeException('failed in Tui::go()');
+            throw new RuntimeException('failed in \fiber\go()');
         });
         try {
             Tui::run(new Text('a screen'));

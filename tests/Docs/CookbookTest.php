@@ -26,13 +26,20 @@ function cookbookRecipes(): array
 function cookbookRun(bool $inline, Element|Closure $root, array $keys = []): void
 {
     [$cols, $rows, $check] = $GLOBALS['cookbook'];
-    \fiber\run(function () use ($inline, $root, $keys, $cols, $rows, $check) {
+    // in the recipe's own fiber\run() when it has one (its coroutines are the program's, as under Tui::run())
+    $program = function () use ($inline, $root, $keys, $cols, $rows, $check) {
         $t = Tui::headless($root, $cols, $rows, inline: $inline, keys: $keys);
         $t->run(function () use ($t, $check) {
             $check($t);
             $t->press('ctrl+q');
         });
-    });
+    };
+    try {
+        \fiber\frame();
+        $program();
+    } catch (\fiber\NotInRunException) {
+        \fiber\run($program);
+    }
 }
 
 /** Run recipe $n at $cols x $rows with $check($terminal). */

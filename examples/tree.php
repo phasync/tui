@@ -60,8 +60,8 @@ final class Browser extends Component
             load: function (array $node): object {
                 // a pretend-slow disk: an awaitable of the entries
                 $d = new \fiber\Deferred();
-                \fiber\go(function () use ($d, $node) {
-                    \fiber\sleep(0.4);
+                fiber\go(function () use ($d, $node) {
+                    fiber\sleep(0.4);
                     $d->resolve(self::entries($node['value']));
                 });
                 return $d;

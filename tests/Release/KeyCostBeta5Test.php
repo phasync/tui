@@ -116,9 +116,9 @@ it('takes a Tab to the screen in well under 20 ms with fifty bars moving', funct
     fiber\run(function () {
         $s = new State(['paused' => array_fill(0, 50, false), 'p' => array_fill(0, 50, 0.0), 'current' => null]);
         for ($i = 0; $i < 50; $i++) {
-            Tui::go(function () use ($s, $i) {
+            \fiber\go(function () use ($s, $i) {
                 while (true) {
-                    Tui::sleep(0.1);
+                    \fiber\sleep(0.1);
                     $s->p[$i] = fmod($s->p[$i] + 0.01, 1.0);
                 }
             });
@@ -137,6 +137,6 @@ it('takes a Tab to the screen in well under 20 ms with fifty bars moving', funct
         // about 12 ms on the machine this was written on (a CPU clocked down between keys):
         // the budget leaves room for a busy test machine
         expect($times[10])->toBeLessThan(40.0);
-        $t->detach();       // (the coroutines end with the program: Tui::sleep() throws Quit)
+        $t->detach();       // (the coroutines end with the program: \fiber\sleep() throws Quit)
     });
 });

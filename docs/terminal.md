@@ -273,9 +273,8 @@ inside it has ended. In a program built with this library, these keep it running
 - an attached terminal device (its frame and input coroutines run until `detach()`);
 - every `Pty` whose program is still running (its output pump runs until the program exits);
 - every mounted component's coroutines (`run()`, `go()`), until it is disposed;
-- coroutines of your own: those of `Tui::go()` until the program ends, when they wait with
-  `Tui::sleep()` (it throws `Quit` then); those of `fiber\go()`, and any that waits with
-  `fiber\sleep()`, until they return.
+- coroutines of your own (`fiber\go()`): until the program ends, when the run is cancelled and
+  their waits throw `fiber\Cancelled`.
 
 And this is what ends them:
 
@@ -316,12 +315,12 @@ redirected (attaching then throws `RuntimeException`). The terminal settings are
 to raw mode with `stty`, and restored on `detach()`, and also when the program ends any other
 way: an uncaught exception, a fatal error, `exit()`, or SIGTERM, SIGHUP, SIGINT or SIGQUIT (with
 ext-pcntl; the program then exits with 128 + signal). **An exception nobody catches** (in the
-run closure, a coroutine of `Tui::go()`, a handler, the root) is printed once the terminal is
+run closure, a coroutine of `fiber\go()`, a handler, the root) is printed once the terminal is
 restored, on stderr, as its class, message and file:line, with those of its previous
 exceptions:
 
 ```
-RuntimeException: failed in Tui::go()
+RuntimeException: failed in fiber\go()
   at /home/me/app.php:70
 (TUI_TRACE=1 shows the stack trace)
 ```
@@ -344,13 +343,13 @@ cell size, Sixel geometry, background colour, modes 2026, 80 and 1016).
 
 **In a test, call `settle()` after input and before reading the screen**: `text()` right after
 `press()` shows what the key's handler changed at once, but not what a coroutine it started
-(a `go()`, an awaited dialog, a `Tui::go()`) changes afterwards; `settle()` waits for those
+(a `go()`, an awaited dialog, a `fiber\go()`) changes afterwards; `settle()` waits for those
 frames too.
 
 **A test that fails ends the program.** An exception in the test code after `Tui::headless()`
 (a failed `expect()`, in the closure given to `fiber\run()`) detaches the terminal, ends the
 program (its coroutines, its `Terminal`s, an open dialog) and comes out of `fiber\run()` at
-once. Start coroutines of test code with `Tui::go()`, not `fiber\go()`: an exception in a
+once. Start coroutines of test code with `fiber\go()`, not `fiber\go()`: an exception in a
 plain `fiber\go()` coroutine is kept by `fiber\run()` until everything else has ended, which a
 program still on its terminal never does (fiber-interop/api has no way to learn of it sooner).
 

@@ -277,7 +277,7 @@ it('gives the focus back to where it was when a dialog closes', function (string
                 'keys' => $t->press('ctrl+d'),
                 'card' => $t->press('d'),
                 'button' => $t->press('enter'),
-                'go' => Tui::go($ask),
+                'go' => \fiber\go($ask),
             };
             $t->settle();
             expect($t->text())->toContain('Really?');
@@ -291,7 +291,7 @@ it('gives the focus back to where it was when a dialog closes', function (string
                 'keys' => $t->press('ctrl+d'),
                 'card' => $t->press('d'),
                 'button' => $t->press('enter'),
-                'go' => Tui::go($ask),
+                'go' => \fiber\go($ask),
             };
             $t->settle();
             $t->press('escape');            // cancelled: back too

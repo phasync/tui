@@ -1,7 +1,7 @@
 <?php
 
 /*
- * TODO-0.0.3-beta5 item 4, small things from use: Tui::go() coroutines stop with their program,
+ * TODO-0.0.3-beta5 item 4, small things from use: \fiber\go() coroutines stop with their program,
  * a Column that clips its rows and ScrollView following the focus, hasFocus() on an instance
  * handed over, Help with a fresh instance matched by place.
  */
@@ -9,31 +9,30 @@
 use phasync\Tui\Component\Button;
 use phasync\Tui\Element\Column;
 use phasync\Tui\Element\Text;
-use phasync\Tui\Quit;
 use phasync\Tui\State;
 use phasync\Tui\Tui;
 
-it('stops the Tui::go() coroutines of a program when it quits: their Tui::sleep() throws Quit', function () {
+it('stops the fiber\go() coroutines of a program when it quits: their fiber\sleep() throws the cancellation', function () {
     $log = [];
     $start = microtime(true);
     fiber\run(function () use (&$log) {
         $s = new State(['n' => 0]);
         // started before the program: it is the next program's
-        Tui::go(function () use ($s, &$log) {
+        \fiber\go(function () use ($s, &$log) {
             try {
                 while (true) {
-                    Tui::sleep(0.05);
+                    \fiber\sleep(0.05);
                     $s->n++;
                 }
-            } catch (Quit) {
+            } catch (\fiber\CancelledException) {
                 $log[] = 'cleaned up';
             }
         });
         $t = Tui::headless(fn() => new Text("n={$s->n}"), 20, 2);
         // started while it runs, ended by Quit without a catch of its own
-        Tui::go(function () use (&$log) {
+        \fiber\go(function () use (&$log) {
             while (true) {
-                Tui::sleep(10);
+                \fiber\sleep(10);
             }
         });
         fiber\sleep(0.2);
@@ -45,61 +44,63 @@ it('stops the Tui::go() coroutines of a program when it quits: their Tui::sleep(
     expect(microtime(true) - $start)->toBeLessThan(2.0)->and($log)->toBe(['cleaned up']);
 });
 
-it('throws Quit from every Tui::sleep() of a coroutine whose program has ended', function () {
+it('throws the cancellation from every fiber\sleep() of a coroutine whose program has ended', function () {
     fiber\run(function () {
         $t = Tui::headless(new Text('x'), 10, 1);
         $calls = [];
-        Tui::go(function () use (&$calls) {
+        \fiber\go(function () use (&$calls) {
             try {
                 fiber\sleep(0.1);     // (since 0.0.3-beta8 cut short too: the coroutine is cancelled with the Quit)
                 $calls[] = 'slept';
-            } catch (Quit $e) {
+            } catch (\fiber\CancelledException $e) {
                 $calls[] = 'fiber\sleep: ' . $e->getMessage();
             }
             foreach ([0.0, 5.0] as $s) {
                 try {
-                    Tui::sleep($s);
+                    \fiber\sleep($s);
                     $calls[] = 'slept';
-                } catch (Quit $e) {
+                } catch (\fiber\CancelledException $e) {
                     $calls[] = $e->getMessage();
                 }
             }
         });
         Tui::quit();
         fiber\sleep(0.2);
-        expect($calls)->toBe(['fiber\sleep: The program has ended', 'The program has ended', 'The program has ended']);
+        expect($calls)->toBe(['fiber\sleep: Cancelled', 'Cancelled', 'Cancelled']);
     });
 });
 
-it('cuts the Tui::sleep() of a plain coroutine short when the program ends, and sleeps plainly without one', function () {
-    fiber\run(function () {
-        $start = microtime(true);
-        Tui::sleep(0.01);                    // (no program: a plain sleep)
+it('cancels every coroutine of the run when the program ends, and a sleep without a program is plain', function () {
+    $start = microtime(true);
+    $ended = null;
+    fiber\run(function () use (&$ended) {
+        \fiber\sleep(0.01);                    // (no program: a plain sleep)
         $t = Tui::headless(new Text('x'), 10, 1);
-        $ended = null;
         fiber\go(function () use (&$ended) {
-            Tui::sleep(10);                  // (returns early: no Quit outside a Tui::go() coroutine, since 0.0.3-beta8)
-            $ended = microtime(true);
+            try {
+                \fiber\sleep(10);
+            } catch (\fiber\CancelledException) {
+                $ended = microtime(true);      // (the program ended: the run is cancelled)
+            }
         });
         fiber\sleep(0.05);
         $t->detach();
-        fiber\sleep(0.05);
-        expect($ended)->not->toBeNull()->and($ended - $start)->toBeLessThan(1.0);
     });
+    // fiber\run() returned: every coroutine of the run was cancelled with the program
+    expect($ended)->not->toBeNull()->and($ended - $start)->toBeLessThan(1.0);
 });
 
-it('still ends the program with the exception of a Tui::go() coroutine, and Quit is not one', function () {
+it('still ends the program with the exception of a fiber\go() coroutine, and a cancelled one is no failure', function () {
     $caught = null;
     try {
         fiber\run(function () {
             $t = Tui::headless(new Button('x'), 10, 1);
-            Tui::go(function () {
-                throw new Quit();           // (ends the coroutine, not the program)
-            });
+            $c = \fiber\go(fn() => \fiber\sleep(10));
+            \fiber\cancel($c);                 // (ends the coroutine, not the program)
             fiber\sleep(0.05);
             expect($t->component()?->isMounted())->toBeTrue();
-            Tui::go(function () {
-                Tui::sleep(0.01);
+            \fiber\go(function () {
+                \fiber\sleep(0.01);
                 throw new RuntimeException('job failed');
             });
             fiber\sleep(0.1);
@@ -111,15 +112,15 @@ it('still ends the program with the exception of a Tui::go() coroutine, and Quit
     expect($caught)->toBe('job failed');
 });
 
-it('ends the Tui::go() coroutines waiting for a program whose runner fails before it starts', function () {
+it('ends the \fiber\go() coroutines waiting for a program whose runner fails before it starts', function () {
     $ended = false;
     $start = microtime(true);
     try {
         fiber\run(function () use (&$ended) {
-            Tui::go(function () use (&$ended) {
+            \fiber\go(function () use (&$ended) {
                 try {
                     while (true) {
-                        Tui::sleep(10);
+                        \fiber\sleep(10);
                     }
                 } finally {
                     $ended = true;

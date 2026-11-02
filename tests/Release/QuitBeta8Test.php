@@ -1,58 +1,57 @@
 <?php
 
 /*
- * TODO-0.0.3-beta8 item 2: Tui::quit() from a Tui::go() job under Tui::headless() was a fatal
- * "Uncaught phasync\Tui\Quit: The program has ended" from another job's Tui::sleep().
+ * TODO-0.0.3-beta8 item 2: Tui::quit() from a \fiber\go() job under Tui::headless() was a fatal
+ * "Uncaught phasync\Tui\Quit: The program has ended" from another job's \fiber\sleep().
  */
 
 use phasync\Tui\Element\Text;
-use phasync\Tui\Quit;
 use phasync\Tui\Tui;
 
-it('ends every Tui::go() job quietly when one of them quits, headless', function () {
+it('ends every \fiber\go() job quietly when one of them quits, headless', function () {
     $ended = [];
     fiber\run(function () use (&$ended) {
         $t = Tui::headless(fn() => new Text('hi'), 20, 3);
-        Tui::go(function () use (&$ended) {
+        \fiber\go(function () use (&$ended) {
             try {
                 while (true) {
-                    Tui::sleep(0.05);
+                    \fiber\sleep(0.05);
                 }
             } finally {
                 $ended[] = 'loop';
             }
         });
-        Tui::go(function () use (&$ended) {
-            Tui::sleep(0.2);
+        \fiber\go(function () use (&$ended) {
+            \fiber\sleep(0.2);
             Tui::quit();
             $ended[] = 'quitter';
         });
         $t->settle();
-        Tui::sleep(0.5);
+        \fiber\sleep(0.5);
         $t->detach();
     });
     expect($ended)->toContain('loop')->toContain('quitter');
 });
 
-it('ends every Tui::go() job quietly when one of them quits, headless in inline mode', function () {
+it('ends every \fiber\go() job quietly when one of them quits, headless in inline mode', function () {
     $ended = [];
     fiber\run(function () use (&$ended) {
         $t = Tui::headless(fn() => new Text('hi'), 20, 3, inline: true);
-        Tui::go(function () use (&$ended) {
+        \fiber\go(function () use (&$ended) {
             try {
                 while (true) {
-                    Tui::sleep(0.05);
+                    \fiber\sleep(0.05);
                 }
             } finally {
                 $ended[] = 'loop';
             }
         });
-        Tui::go(function () {
-            Tui::sleep(0.2);
+        \fiber\go(function () {
+            \fiber\sleep(0.2);
             Tui::quit();
         });
         $t->settle();
-        Tui::sleep(0.5);
+        \fiber\sleep(0.5);
         $t->detach();
         expect($t->frozen() . "\n" . $t->surface->text())->toContain('hi');
     });
@@ -65,11 +64,10 @@ it('ends the same program quietly with Tui::inline() on a terminal (a pty)', fun
         use phasync\Tui\Tui;
         use phasync\Tui\Element\Text;
         fiber\run(function () {
-            Tui::go(function () { while (true) { Tui::sleep(0.05); } });
-            Tui::go(function () { Tui::sleep(0.2); Tui::quit(); });
+            \fiber\go(function () { while (true) { \fiber\sleep(0.05); } });
+            \fiber\go(function () { \fiber\sleep(0.2); Tui::quit(); });
             Tui::inline(fn() => new Text('hi'));
-            Tui::sleep(0.1);
-            echo "returned\n";
+            echo "returned\n";           // (runs: the code after the runner goes on until its next wait)
         });
         PHP);
     try {
@@ -84,39 +82,39 @@ it('ends the same program quietly with Tui::inline() on a terminal (a pty)', fun
     }
 });
 
-it('cancels a Tui::go() coroutine with Quit wherever it waits when the program quits', function () {
+it('cancels a fiber\go() coroutine wherever it waits when the program quits', function () {
     $got = [];
     $start = microtime(true);
     fiber\run(function () use (&$got) {
         $t = Tui::headless(new Text('x'), 10, 1);
-        Tui::go(function () use (&$got) {
+        \fiber\go(function () use (&$got) {
             try {
                 fiber\sleep(30);
-            } catch (Quit $quit) {
+            } catch (\fiber\CancelledException $quit) {
                 $got[] = 'fiber\sleep: ' . $quit->getMessage();
             }
         });
-        Tui::go(function () use (&$got) {
+        \fiber\go(function () use (&$got) {
             try {
                 fiber\await(new fiber\Deferred());
-            } catch (Quit) {
+            } catch (\fiber\CancelledException) {
                 $got[] = 'await';
             }
         });
-        Tui::go(function () use (&$got) {
+        \fiber\go(function () use (&$got) {
             try {
-                Tui::sleep(30);
+                \fiber\sleep(30);
             } finally {
                 $got[] = 'Tui::sleep';
             }
         });
-        Tui::go(function () use (&$got) {
+        \fiber\go(function () use (&$got) {
             try {
-                Tui::sleep(30);
-            } catch (Quit) {
+                \fiber\sleep(30);
+            } catch (\fiber\CancelledException) {
                 try {
                     fiber\sleep(0.01);      // (cancelled: every later wait throws the Quit again)
-                } catch (Quit) {
+                } catch (\fiber\CancelledException) {
                     $got[] = 'again';
                 }
             }
@@ -125,7 +123,6 @@ it('cancels a Tui::go() coroutine with Quit wherever it waits when the program q
         $t->press('ctrl+q');
     });
     sort($got);
-    expect($got)->toBe(['Tui::sleep', 'again', 'await', 'fiber\sleep: The program has ended'])
-        ->and(microtime(true) - $start)->toBeLessThan(5.0)
-        ->and(new Quit())->toBeInstanceOf(fiber\CancelledException::class);
+    expect($got)->toBe(['Tui::sleep', 'again', 'await', 'fiber\sleep: Cancelled'])
+        ->and(microtime(true) - $start)->toBeLessThan(5.0);
 });

@@ -98,8 +98,17 @@ final class Signal
             // earlier than the clock wakes: a clock for this deadline (the other one ends when it wakes)
             $at = self::$clockAt = min($deadline, microtime(true) + self::LONGEST);
             $n = ++self::$clock;
-            \fiber\go(static function () use ($n, $at): void {
-                self::tick($n, $at);
+            // a service: the clock belongs to no program, so a program ending (its run()
+            // cancelled) does not stop the clock of the waits of another
+            \fiber\service(static function () use ($n, $at): void {
+                try {
+                    self::tick($n, $at);
+                } catch (\fiber\CancelledException) {
+                    // (the runtime ended its services: the next timed wait starts a clock again)
+                    if ($n === self::$clock) {
+                        self::$clockAt = \INF;
+                    }
+                }
             });
         }
     }

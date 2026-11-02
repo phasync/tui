@@ -6,14 +6,13 @@
  */
 
 use phasync\Tui\Element\Text;
-use phasync\Tui\Quit;
 use phasync\Tui\State;
 use phasync\Tui\Tui;
 
 it('returns once per frame, at the frame rate although nothing changed, with the seconds since the frame before', function () {
     $log = new ArrayObject();
     \fiber\run(function () use ($log) {
-        Tui::go(function () use ($log) {
+        \fiber\go(function () use ($log) {
             while (true) {
                 $log[] = Tui::nextFrame();      // (writes no state: the screen is still)
             }
@@ -35,7 +34,7 @@ it('paces a loop that changes state: one step per frame, drawn in the next', fun
     $steps = new ArrayObject();
     \fiber\run(function () use ($steps) {
         $s = new State(['n' => 0]);
-        Tui::go(function () use ($s, $steps) {
+        \fiber\go(function () use ($s, $steps) {
             while (true) {
                 $steps[] = Tui::nextFrame();
                 $s->n++;
@@ -50,15 +49,15 @@ it('paces a loop that changes state: one step per frame, drawn in the next', fun
     });
 });
 
-it('throws Quit in a Tui::go() coroutine once the program has ended, and returns early elsewhere', function () {
+it('throws Quit in a \fiber\go() coroutine once the program has ended, and returns early elsewhere', function () {
     $seen = new ArrayObject();
     \fiber\run(function () use ($seen) {
-        Tui::go(function () use ($seen) {
+        \fiber\go(function () use ($seen) {
             try {
                 while (true) {
                     Tui::nextFrame();
                 }
-            } catch (Quit) {
+            } catch (\fiber\CancelledException) {
                 $seen[] = 'quit';
             }
         });
@@ -69,7 +68,7 @@ it('throws Quit in a Tui::go() coroutine once the program has ended, and returns
             \fiber\sleep(0.01);
             $t->detach();
         });
-        Tui::nextFrame();                           // outside Tui::go(): returns when the program ends
+        Tui::nextFrame();                           // outside \fiber\go(): returns when the program ends
         $seen[] = 'returned';
         expect(microtime(true) - $started)->toBeLessThan(0.5);
     });
