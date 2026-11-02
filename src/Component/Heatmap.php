@@ -69,12 +69,11 @@ class Heatmap extends Component
         return [$min, max($max, $min)];
     }
 
-    /** The colour of $value as [r, g, b], blended along `$colors`. */
-    private function colorOf(float $value, float $min, float $max): array
+    /** The colour of $value as [r, g, b], blended along $stops (`$colors` as [r, g, b]). */
+    private function colorOf(float $value, float $min, float $max, array $stops): array
     {
         $t = $max > $min ? min(1.0, max(0.0, ($value - $min) / ($max - $min))) : 0.0;
         $t = round($t * 63) / 63;
-        $stops = array_map(static fn(string $c) => sscanf(ltrim($c, '#'), '%2x%2x%2x'), $this->colors);
         $at = $t * (\count($stops) - 1);
         $i = min((int) floor($at), \count($stops) - 2);
         $f = $at - $i;
@@ -93,7 +92,9 @@ class Heatmap extends Component
         }
         $row = $mouse->y - ($this->colLabels === [] ? 0 : 1);
         $col = intdiv($mouse->x - $this->labelWidth(), $this->cellWidth);
-        $value = $mouse->x >= $this->labelWidth() ? ($this->data[$row][$col] ?? null) : null;
+        $fitCols = intdiv($this->surface->cols() - $this->labelWidth(), $this->cellWidth);
+        $fitRows = $this->surface->rows() - ($this->colLabels === [] ? 0 : 1);
+        $value = $mouse->x >= $this->labelWidth() && $col < $fitCols && $row < $fitRows ? (array_values($this->data[$row] ?? [])[$col] ?? null) : null;
         if ($row < 0 || $value === null) {
             return false;
         }
@@ -114,6 +115,7 @@ class Heatmap extends Component
         $labelW = $this->labelWidth();
         $fitCols = max(0, intdiv($cols - $labelW, $this->cellWidth));
         [$min, $max] = $this->range();
+        $stops = array_map(static fn(string $c) => sscanf(ltrim($c, '#'), '%2x%2x%2x'), $this->colors);
         $base = Ansi::style($this->style()->text);
         $label = Ansi::style($this->style('label')->text);
         $lines = [];
@@ -131,7 +133,7 @@ class Heatmap extends Component
                     $line .= $base . str_repeat(' ', $this->cellWidth);
                     continue;
                 }
-                [$red, $green, $blue] = $this->colorOf((float) $v, $min, $max);
+                [$red, $green, $blue] = $this->colorOf((float) $v, $min, $max, $stops);
                 $text = $this->values ? Text::pad(substr(self::number((float) $v, $this->cellWidth), 0, $this->cellWidth), $this->cellWidth, 'center') : str_repeat(' ', $this->cellWidth);
                 $dark = 0.299 * $red + 0.587 * $green + 0.114 * $blue < 140;
                 $line .= sprintf("\e[0;%s;48;2;%d;%d;%dm", $dark ? '97' : '30', $red, $green, $blue) . $text;

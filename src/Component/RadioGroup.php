@@ -51,6 +51,14 @@ class RadioGroup extends Component implements Field
         $this->current = $at === false ? 0 : $at;
     }
 
+    protected function propsChanged(): void
+    {
+        if ($this->value !== null && !\array_key_exists($this->value, $this->options)) {
+            $this->value = null;
+        }
+        $this->current = max(0, min($this->current, \count($this->options) - 1));
+    }
+
     protected function bindings(): array
     {
         return $this->horizontal

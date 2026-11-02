@@ -44,7 +44,7 @@ class DirectoryTree extends Tree
         string|array|null $class = null,
         ?array $style = null,
     ) {
-        $this->extensions = $extensions === null ? null : array_map('strtolower', $extensions);
+        $this->extensions = $extensions === null ? null : array_map(static fn(string $e) => strtolower(ltrim($e, '.')), $extensions);
         $root = rtrim($path, '/') === '' ? '/' : rtrim($path, '/');
         parent::__construct(
             [['label' => $root, 'key' => $root, 'value' => $root, 'expanded' => true]],
@@ -72,7 +72,7 @@ class DirectoryTree extends Tree
     /** Show only files with these extensions (without dots, ignoring case); null: all. Loads again. */
     public function setExtensions(?array $extensions): void
     {
-        $this->extensions = $extensions === null ? null : array_map('strtolower', $extensions);
+        $this->extensions = $extensions === null ? null : array_map(static fn(string $e) => strtolower(ltrim($e, '.')), $extensions);
         $this->reloadRoot();
     }
 

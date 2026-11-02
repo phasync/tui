@@ -765,7 +765,7 @@ address either way).
 `new Sparkline([1, 4, 2, 8], max: 10)`: one row of blocks `▁`..`█`, newest value at the right,
 null leaves a gap. `new BarChart(['mon' => 3, 'tue' => 7], vertical: false, max: null)`: bars with
 labels and values, one row per bar, or columns with `vertical: true`; eighth-block precision.
-`new Rule('Title', align: 'left'|'center'|'right', char: '─')`: a divider across the width.
+`new Rule('Title', align: 'left'|'center'|'right', char: '─')`: a divider across the width (`char` must be one column wide, else `InvalidArgumentException`).
 Styles: `Sparkline`, `BarChart::bar`, `Rule`, `Rule::title`.
 
 ## Slider, RadioGroup
@@ -800,7 +800,7 @@ are given once; `open()`, `setOpen($key, $open)`. Styles: `Collapsible::header` 
 `Toast::show('Saved', 'success', timeout: 3.0, position: 'bottom-right')`: a notification in a
 screen corner, from anywhere in a running program (no instance needed). Severities `info`,
 `success`, `warning`, `error`; positions `bottom-right`/`bottom-left`/`top-right`/`top-left`;
-`timeout: 0` stays until clicked. Toasts stack in one overlay on the running root, one row each
+`timeout: 0` stays until clicked. Toasts stack in one overlay per position on the running root, one row each
 (markup allowed), never take the focus or the keys; a click dismisses one; `Toast::clear()`
 removes all. Styles: `Toast::message`, `Toast::mark`, with the severity as state.
 
@@ -824,7 +824,7 @@ text. A standalone field (not an `Editor`). `value()`, `setValue()`, `cursor()`,
 ## Menu, MenuBar
 
 `Menu::popup($this, $items, new Rect($x, $y, 1, 1), onSelect: fn($key) => ...)`: a context menu as an
-overlay of the calling component (returns the `Overlay`; `await($overlay->closed())` gives the key).
+overlay of the calling component, modal, so a click outside it closes it and reaches nothing below (returns the `Overlay`; `await($overlay->closed())` gives the key).
 Items by key: a label, `'-'` (separator) or `['label', 'shortcut' => 'Ctrl+O' (shown, binds nothing),
 'disabled', 'onSelect' => Closure, 'items' => [...] (submenu)]`. Up/Down (wrapping, skipping
 separators and disabled items), Home/End, Enter/Space pick, Right opens a submenu, Left closes it,
@@ -886,7 +886,7 @@ last, so a `Form` collects it); `directories: true` lists directories only and E
 ## Gauge and LineGauge
 
 ratatui's `Gauge` is a `ProgressBar` (a filled bar with a centred or trailing percentage and label), and
-its `LineGauge` is the same bar with thin glyphs, so there is no separate widget: `new ProgressBar($v, fill: '━', empty: '─')`
+its `LineGauge` is the same bar with thin glyphs, so there is no separate widget: `new ProgressBar($v, fill: '━', empty: '─')` (`fill` and `empty` must each be one column wide, else `InvalidArgumentException`)
 draws `━━━━━━━━──────── 50%`. `fill` and `empty` (props) are any one-column characters.
 
 ## Scrollbar

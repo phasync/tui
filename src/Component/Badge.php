@@ -83,7 +83,9 @@ class Badge extends Component
         }
         if ($mouse->action === Mouse::PRESS && $mouse->button === Mouse::LEFT) {
             $this->focus();
-            if ($mouse->x >= $this->surface->cols() - 3) {
+            // (the drawn badge's width, not the surface's: a column stretches the surface to its own width)
+            $width = $this->measure($this->surface->cols(), 1)[0];
+            if ($mouse->x >= $width - 3 && $mouse->x < $width) {
                 $this->close();
             }
         }

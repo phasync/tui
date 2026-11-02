@@ -66,7 +66,7 @@ class BarChart extends Component
             return null;
         }
         if (!$this->vertical) {
-            $labelW = max(array_map(static fn($l) => Text::width(Markup::plain((string) $l)), array_keys($this->bars)));
+            $labelW = min(intdiv($cols, 2), max(array_map(static fn($l) => Text::width(Markup::plain((string) $l)), array_keys($this->bars))));
             $valueW = max(array_map(static fn($v) => \strlen(self::num($v)), $this->bars));
             $room = max(0, $cols - $labelW - $valueW - 2);
             foreach (\array_slice($this->bars, 0, $rows, true) as $label => $value) {
@@ -74,8 +74,8 @@ class BarChart extends Component
                 $full = intdiv($eighths, 8);
                 $part = $eighths % 8;
                 $fill = str_repeat('█', $full) . ($part ? self::EIGHTHS[$part] : '');
-                $lines[] = $base . Text::pad($this->markup((string) $label), $labelW) . ' ' . $bar . $fill
-                    . $base . str_repeat(' ', $room - Text::width($fill)) . ' ' . self::num($value);
+                $lines[] = Text::truncate($base . Text::pad(Text::truncate($this->markup((string) $label), $labelW), $labelW) . ' ' . $bar . $fill
+                    . $base . str_repeat(' ', $room - Text::width($fill)) . ' ' . self::num($value), $cols, '');
             }
         } else {
             $height = max(1, $rows - 2);               // bar rows; the label row and the value row
@@ -102,8 +102,8 @@ class BarChart extends Component
             $values = $base;
             $labels = $base;
             foreach ($columns as [$label, $value, $w]) {
-                $values .= Text::pad(self::num($value), $w, 'center') . ' ';
-                $labels .= Text::pad($this->markup($label), $w, 'center') . ' ';
+                $values .= Text::pad(Text::truncate(self::num($value), $w, ''), $w, 'center') . ' ';
+                $labels .= Text::pad(Text::truncate($this->markup($label), $w, ''), $w, 'center') . ' ';
             }
             array_unshift($lines, $values);
             $lines[] = $labels;

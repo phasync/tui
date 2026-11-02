@@ -32,6 +32,9 @@ class Rule extends Component
         string|array|null $class = null,
         ?array $style = null,
     ) {
+        if (Text::width($char) !== 1) {
+            throw new \InvalidArgumentException('Rule $char must be one character, one column wide');
+        }
         $this->with($key, $id, $class, $style);
     }
 

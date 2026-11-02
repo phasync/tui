@@ -5,6 +5,7 @@ namespace phasync\Tui;
 use fiber\Deferred;
 use fiber\TimeoutException;
 use phasync\Tui\Component\Dialog;
+use phasync\Tui\Component\Menu;
 use phasync\Tui\Internal\Floating;
 use phasync\Tui\Internal\OverlayLayout;
 use phasync\Tui\Internal\Runtime;
@@ -3315,6 +3316,9 @@ abstract class Component extends Element
             $rect = $this->surface->viewport($overlay->content->surface)?->rect();
             $inside = $rect !== null && $mouse->x >= $rect[0] && $mouse->x < $rect[0] + $rect[2] && $mouse->y >= $rect[1] && $mouse->y < $rect[1] + $rect[3];
             if ($overlay->modal) {
+                if (!$inside && !$inAbove && $mouse->action === Mouse::PRESS && $overlay->content instanceof Menu) {
+                    $overlay->cancel();     // (a popup menu closes on a click outside, which activates nothing below)
+                }
                 return !$inside && !$inAbove;
             }
             if (!$inside && !$inAbove && $mouse->action === Mouse::PRESS) {

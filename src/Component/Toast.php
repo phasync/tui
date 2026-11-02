@@ -21,9 +21,8 @@ use phasync\Tui\Text;
  * callback): the toasts are one overlay (`Component::overlay()`) on the running root, over
  * everything, which never takes the focus or the keys, and ends when the last toast is gone.
  * Toasts stack, oldest first, in the corner `$position` names (`'bottom-right'` (default),
- * `'bottom-left'`, `'top-right'`, `'top-left'`; the position of the first toast of a stack
- * decides). `$severity` is `'info'`, `'success'`, `'warning'` or `'error'`; `$timeout` is the
- * seconds a toast stays (0: until clicked). A click on a toast dismisses it. A message takes
+ * `'bottom-left'`, `'top-right'`, `'top-left'`; each position is a stack of its own). `$severity` is `'info'`, `'success'`,
+ * `'warning'` or `'error'`; `$timeout` is the seconds a toast stays (0: until clicked). A click on a toast dismisses it. A message takes
  * markup, is one row, and is cut with "…" when wider than the screen. `Toast::clear()` removes
  * all. The root is the one `Dialog::open()` uses; pass `$root` for another.
  *
@@ -34,7 +33,7 @@ class Toast extends Component
 {
     private const SIGNS = ['info' => 'ℹ', 'success' => '✔', 'warning' => '⚠', 'error' => '✖'];
 
-    /** @var \WeakMap<Component, Toast>|null the stack on each root */
+    /** @var \WeakMap<Component, array<string, Toast>>|null the stack of each position on each root */
     private static ?\WeakMap $stacks = null;
 
     /** @var list<array{string, string, float}> message, severity, expiry (microtime; INF: stays) */
@@ -64,9 +63,11 @@ class Toast extends Component
         }
         $root ??= Component::runningRoot() ?? throw new \LogicException('Toast::show() needs a running program');
         self::$stacks ??= new \WeakMap();
-        $stack = self::$stacks[$root] ?? null;
+        $stack = self::$stacks[$root][$position] ?? null;
         if ($stack === null || $stack->overlay === null || !$stack->overlay->isOpen()) {
-            $stack = self::$stacks[$root] = new self($position);
+            $stacks = self::$stacks[$root] ?? [];
+            $stacks[$position] = $stack = new self($position);
+            self::$stacks[$root] = $stacks;
             $stack->add($message, $severity, $timeout);
             $far = 1 << 20;
             $anchor = new Rect(str_ends_with($position, 'right') ? $far : -$far, str_starts_with($position, 'top') ? -$far : $far, 1, 1);
@@ -83,7 +84,9 @@ class Toast extends Component
     {
         $root ??= Component::runningRoot();
         if ($root !== null) {
-            (self::$stacks[$root] ?? null)?->overlay?->close();
+            foreach (self::$stacks[$root] ?? [] as $stack) {
+                $stack->overlay?->close();
+            }
         }
     }
 

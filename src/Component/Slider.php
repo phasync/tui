@@ -51,6 +51,11 @@ class Slider extends Component implements Field
         $this->value = $this->snap($value);
     }
 
+    protected function propsChanged(): void
+    {
+        $this->value = $this->snap($this->value);     // (min, max or step may have moved under it)
+    }
+
     protected function bindings(): array
     {
         return [
@@ -104,8 +109,11 @@ class Slider extends Component implements Field
             return false;
         }
         if (($mouse->action === Mouse::PRESS || $mouse->action === Mouse::DRAG) && $mouse->button === Mouse::LEFT) {
-            $this->focus();
-            if ($this->trackWidth > 1) {
+            $onTrack = $mouse->x >= $this->trackX && $mouse->x < $this->trackX + $this->trackWidth;
+            if ($mouse->action === Mouse::PRESS) {
+                $this->focus();
+            }
+            if ($onTrack && $this->trackWidth > 1) {
                 $at = min($this->trackWidth - 1, max(0, $mouse->x - $this->trackX));
                 $this->setValue($this->min + $at / ($this->trackWidth - 1) * ($this->max - $this->min));
             }
@@ -135,7 +143,7 @@ class Slider extends Component implements Field
             $at = $this->trackWidth === 1 ? 0 : (int) round(($this->value - $this->min) / ($this->max - $this->min) * ($this->trackWidth - 1));
             $track = Ansi::style($this->style('filled')->text) . str_repeat('━', $at)
                 . Ansi::style($this->style('knob')->text) . '●'
-                . Ansi::style($this->style()->text) . str_repeat('─', $this->trackWidth - $at - 1);
+                . Ansi::style($this->style()->text) . str_repeat('─', max(0, $this->trackWidth - $at - 1));
         }
         $line = Ansi::style($this->style()->text) . $prefix . $track . Ansi::style($this->style()->text) . $suffix;
         $this->surface->write("\e[?25l\e[2J\e[H" . Text::truncate($line, $cols));

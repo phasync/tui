@@ -64,6 +64,11 @@ class ProgressBar extends Component
         string|array|null $class = null,
         ?array $style = null,
     ) {
+        foreach (['fill' => $fill, 'empty' => $empty] as $name => $char) {
+            if (Text::width($char) !== 1) {
+                throw new \InvalidArgumentException("ProgressBar \$$name must be one character, one column wide");
+            }
+        }
         $this->with($key, $id, $class, $style);
     }
 

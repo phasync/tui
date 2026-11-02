@@ -43,6 +43,11 @@ Widget parity with ratatui, Textual and Bubbles:
 - New: `Badge` (status label with variants; `closable: true` for a removable tag).
 - New: `Link` (focusable OSC 8 hyperlink with `onActivate`).
 - New: `Placeholder` (hatched stand-in showing its label and size).
+- Fixed in the new widgets: `Slider` re-clamps its value when `min`/`max` change and sets it only from the track;
+  `Badge` closes on the drawn ×, `Link` activates on release inside its text; `Menu::popup()` closes on a click
+  outside; `Heatmap` ignores undrawn cells; `RadioGroup` survives shrinking options; `BarChart` caps and truncates
+  labels and values; `Toast` keeps a stack per position; `ProgressBar` and `Rule` reject characters that are not
+  one column wide; `DirectoryTree` accepts extensions written `.php`.
 
 ## 0.0.5 (2026-11-02)
 

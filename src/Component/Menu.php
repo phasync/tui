@@ -78,7 +78,7 @@ class Menu extends Component
      */
     public static function popup(Component $from, array $items, ?Rect $anchor = null, ?\Closure $onSelect = null, string $place = 'below'): Overlay
     {
-        return $from->overlay(new self($items, $onSelect), $anchor, $place);
+        return $from->overlay(new self($items, $onSelect), $anchor, $place, modal: true);       // (modal: a click outside closes it, see overlayMouse())
     }
 
     protected function bindings(): array

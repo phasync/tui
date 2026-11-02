@@ -27,6 +27,8 @@ use phasync\Tui\Text;
  */
 class Link extends Component
 {
+    private bool $pressed = false;
+
     /**
      * @param (\Closure(string $url, Link $link): void)|null $onActivate
      * @param string|list<string>|null $class
@@ -66,9 +68,26 @@ class Link extends Component
         if ($this->attribute('disabled')) {
             return false;
         }
-        if ($mouse->action === Mouse::PRESS && $mouse->button === Mouse::LEFT) {
+        if ($mouse->button !== Mouse::LEFT) {
+            return false;
+        }
+        // (the text's width, not the surface's: a column stretches the surface to its own width)
+        $inside = $mouse->x >= 0 && $mouse->y >= 0 && $mouse->x < $this->measure($this->surface->cols(), 1)[0] && $mouse->y < $this->surface->rows();
+        if (!$inside) {
+            if ($mouse->action === Mouse::RELEASE) {
+                $this->pressed = false;
+            }
+            return $mouse->action !== Mouse::PRESS;
+        }
+        if ($mouse->action === Mouse::PRESS) {
             $this->focus();
-            $this->activate();
+            $this->pressed = true;
+        } elseif ($mouse->action === Mouse::RELEASE) {
+            $was = $this->pressed;
+            $this->pressed = false;
+            if ($was) {
+                $this->activate();
+            }
         }
         return true;
     }
