@@ -233,6 +233,13 @@ final class Tty extends TerminalDevice
             return;
         }
         stream_set_blocking($this->out, true);
+        if ($this->queue !== '') {
+            // what a frame still had to send (its writer waits for the terminal): before the
+            // restore sequence, or that would cut it, and what is left would print as text on
+            // the main screen
+            @fwrite($this->out, $this->queue);
+            $this->queue = '';
+        }
         if ($this->restore !== '') {
             $this->trace($this->restore);
             @fwrite($this->out, $this->restore);

@@ -13,6 +13,10 @@
   `braille`) is snapped to the dot grid and shows as exactly one dot wide, where a browser would
   draw it as two faint dots; axes and grid lines come out crisp. Curves and rotated transforms
   are stroked as they are.
+- A program that quit while a frame was still on its way to the terminal (its writer waiting
+  for the terminal queue, as with a large Sixel frame on Ctrl-Q) sent the restore sequence
+  around the queue: the rest of the frame printed as text on the shell and its images came
+  after the switch back to the main screen. The queue is written out first now.
 - On a Sixel terminal the last frame before the program gives the screen back draws the image
   cells as quarter blocks. Windows Terminal keeps Sixel images apart from the text and showed
   them over the shell after the switch back to the main screen; erasing the screen first raced
