@@ -27,7 +27,7 @@ $log->append("started\n");
         }
     });
     $graph = function (CanvasContext $c) use ($s) {
-        $c->lineWidth = 0.25;                 // one Braille dot
+        $c->lineWidth = 0.25;                 // one Braille dot, or a few pixels
         $c->beginPath();
         foreach ($s->samples as $i => $v) {
             $c->lineTo($i * $c->width() / 60, $c->height() * (1 - $v / 100));
@@ -48,7 +48,7 @@ $log->append("started\n");
             ], gap: 1), fn() => "widgets · {$s->fruit}" . ($s->loud ? ' · <b>loud</b>' : ''), class: 'grow'),
         ], class: 'h-10'),
         new Row([
-            new Box(new Canvas(draw: $graph, marker: 'braille'), 'canvas', class: 'w-1/2'),
+            new Box(new Canvas(draw: $graph), 'canvas', class: 'w-1/2'),
             new Box($log, 'log', class: 'grow'),
         ], class: 'grow'),
         new Help(),
