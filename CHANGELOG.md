@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.6 (unreleased)
+## 0.0.6 (2026-11-02)
 
 For a device whose terminal is not in front of it, what the first multiplexer on the library
 (a daemon showing one root to several clients) had to work around:

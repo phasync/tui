@@ -5,7 +5,6 @@ namespace phasync\Tui;
 use fiber\Deferred;
 use fiber\TimeoutException;
 use phasync\Tui\Component\Dialog;
-use phasync\Tui\Component\Menu;
 use phasync\Tui\Internal\Floating;
 use phasync\Tui\Internal\OverlayLayout;
 use phasync\Tui\Internal\Runtime;
@@ -1287,6 +1286,18 @@ abstract class Component extends Element
      * arrows whatever its parents bind. Override it for a widget that wants the same (a game,
      * a raw key pad).
      */
+    /**
+     * Shown modal in an overlay (`overlay(..., modal: true)`), whether a press outside it
+     * cancels the overlay. A modal overlay takes all input until it closes, so a press outside
+     * reaches nothing below either way; with this true it also closes it, as a popup `Menu`
+     * is: the user clicks elsewhere and the menu is gone, and nothing under the click is
+     * activated. A `Dialog` stays (false, the default): it is answered or escaped.
+     */
+    protected function dismissedByPressOutside(): bool
+    {
+        return false;
+    }
+
     protected function takesEveryKey(): bool
     {
         return false;
@@ -3316,8 +3327,8 @@ abstract class Component extends Element
             $rect = $this->surface->viewport($overlay->content->surface)?->rect();
             $inside = $rect !== null && $mouse->x >= $rect[0] && $mouse->x < $rect[0] + $rect[2] && $mouse->y >= $rect[1] && $mouse->y < $rect[1] + $rect[3];
             if ($overlay->modal) {
-                if (!$inside && !$inAbove && $mouse->action === Mouse::PRESS && $overlay->content instanceof Menu) {
-                    $overlay->cancel();     // (a popup menu closes on a click outside, which activates nothing below)
+                if (!$inside && !$inAbove && $mouse->action === Mouse::PRESS && $overlay->content->dismissedByPressOutside()) {
+                    $overlay->cancel();     // (a popup menu: closed by the click outside, which activates nothing below)
                 }
                 return !$inside && !$inAbove;
             }

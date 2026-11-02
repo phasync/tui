@@ -78,7 +78,13 @@ class Menu extends Component
      */
     public static function popup(Component $from, array $items, ?Rect $anchor = null, ?\Closure $onSelect = null, string $place = 'below'): Overlay
     {
-        return $from->overlay(new self($items, $onSelect), $anchor, $place, modal: true);       // (modal: a click outside closes it, see overlayMouse())
+        return $from->overlay(new self($items, $onSelect), $anchor, $place, modal: true);       // (modal: a click outside reaches nothing below; it closes the menu, see below)
+    }
+
+    /** A click outside a popup menu closes it (and activates nothing under the click). */
+    protected function dismissedByPressOutside(): bool
+    {
+        return true;
     }
 
     protected function bindings(): array

@@ -308,6 +308,7 @@ and the coroutines of mounted components and your own.
 | `onResize(Resize $size): void` | The surface was resized (a render follows by itself; so does one after a move). |
 | `wantsPointer(): bool` | Return true to follow the mouse: every motion over the component reaches `onMouse()` (`Mouse::MOVE`) and its `:hover` state is kept (see "The mouse"). |
 | `canFocus(): bool` | Whether `focus()` gives the keys to the component itself or to the field it focused inside (see "Focus"). |
+| `dismissedByPressOutside(): bool` | Shown modal in an overlay, whether a press outside closes it (a popup `Menu`; default false, a `Dialog` stays). See "Overlays and dialogs". |
 | `measure(int $cols, int $rows): ?array` | The size it needs for a parent's `'auto'` size: by default that of the element tree it rendered last (see "Sizes"). |
 
 Event handlers run as the event travels down the surface tree (see [hosting](hosting.md)): a
@@ -840,7 +841,9 @@ $overlay = $this->overlay(Element $element, ?Rect $anchor = null, string|Rect $p
   an `Editor` with its completion list, calls `$this->focus()` after opening it). Closing
   gives it back to where it was.
 - **Modal** overlays take all input until they close: clicks outside reach nothing, and the
-  opener's keys are suspended (see "Key bindings"). **Non-modal** ones are cancelled by Escape
+  opener's keys are suspended (see "Key bindings"); a modal content whose
+  `dismissedByPressOutside()` is true (a popup `Menu`) is also closed by a press outside it,
+  which still activates nothing below. **Non-modal** ones are cancelled by Escape
   (when their content does not take it), a press outside them and their opener, or the focus
   moving to something else.
 - **The element** is shown by a child component of the opener: the element itself when it is
