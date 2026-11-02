@@ -855,15 +855,27 @@ contrast). A click on a cell with a value calls `onSelect`. `null` leaves a cell
 
 ## BigText
 
-`new BigText('12:45', compact: false, glyphs: [])`: large block-glyph text from a 3x5 font: digits,
-the capitals of the Latin, Greek and Cyrillic alphabets, Æ Ø Œ Ð Þ ß Ł, space and `: . , - + ! ? / % _`.
-Lower case shows as upper case; a letter with a diacritic as its base letter (ü as U, Å as A, Ё as Е;
-ext-intl decomposes it, without it such a letter is unknown); an unknown character as `?`. `glyphs:`
-adds or replaces glyphs, `['☃' => '010111010111101']`: five rows of three cells, `1` filled, so a
-program can draw the characters it needs (a 3x5 font has no room for every script; a wider font
-is a later option). Five rows high, or three with `compact: true` (half blocks). A clock or counter
-is `new BigText((string) $n)`; there is no separate `Digits` widget. `BigText::rows($text, $compact,
-$glyphs)` gives the rows as strings. Style: `BigText` (the colour of the glyphs, the accent by default).
+`new BigText('12:45', compact: false, font: 'block', glyphs: [])`: large text, five rows high (three
+with `compact: true`), from one of two kinds of font:
+
+- **`font: 'block'`** (the default): a 3x5 font of full blocks `█`, a column apart: digits, the
+  capitals of the Latin, Greek and Cyrillic alphabets, Æ Ø Œ Ð Þ ß Ł, space and `: . , - + ! ? / % _`.
+  Lower case shows as upper case; a letter with a diacritic as its base letter (ü as U, Å as A, Ё as
+  Е; ext-intl decomposes it). `compact: true` draws two font rows per text row with half blocks.
+  `glyphs:` adds or replaces glyphs, `['☃' => '010111010111101']`: five rows of three cells, `1` filled.
+- **A bitmap font**, for any script: `font: '6x13'` is the bundled Misc-Fixed 6x13 (public domain,
+  4121 glyphs: Latin with every diacritic, Greek, Cyrillic, Armenian, Hebrew, Georgian, box drawing
+  and symbols), `'5x7'` the smaller one (1848 glyphs); or the path of a BDF file or of a Linux console
+  font (`font: '/usr/share/consolefonts/Uni3-TerminusBold16.psf.gz'`; `.psf`, `.psf.gz`, up to 8
+  pixels wide). The pixels are drawn as quarter blocks, two by two per cell, so 6x13 is three columns
+  and seven rows per character and 5x7 three by four; `compact: true` draws them as Braille dots, two
+  by four per cell (6x13: three columns, four rows). Lower case stays lower case; a letter the font
+  lacks is drawn as its base letter.
+
+A character neither has shows as `?`. A clock or counter is `new BigText((string) $n)`; there is no
+separate `Digits` widget. `BigText::rows($text, $compact, $glyphs, $font)` gives the rows as strings.
+Style: `BigText` (the colour of the glyphs, the accent by default). `tools/bdf2font.php` packs a BDF
+font into the library's `.font` form (`resources/fonts/`).
 
 ## Stopwatch, Timer
 

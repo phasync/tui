@@ -4,6 +4,8 @@ namespace phasync\Tui\Component;
 
 use phasync\Tui\Ansi;
 use phasync\Tui\Component;
+use phasync\Tui\Internal\BitmapFont;
+use phasync\Tui\Internal\Dots;
 use phasync\Tui\Text;
 
 /**
@@ -64,7 +66,8 @@ class BigText extends Component
 
     /**
      * @param string $text what to show (one line)
-     * @param bool $compact half blocks: three rows high instead of five
+     * @param bool $compact `block`: half blocks, three rows high instead of five; a bitmap font: Braille dots instead of quarter blocks
+     * @param string $font `'block'`, `'6x13'`, `'5x7'`, or the path of a `.bdf` or `.psf(.gz)` file
      * @param array<string, string> $glyphs glyphs added to the font (or replacing its): character => five rows of three cells, `1` filled
      * @param string|list<string>|null $class
      * @param array<string, mixed>|null $style
@@ -72,6 +75,7 @@ class BigText extends Component
     public function __construct(
         public string $text = '',
         public bool $compact = false,
+        public string $font = 'block',
         public array $glyphs = [],
         ?string $key = null,
         ?string $id = null,
@@ -84,18 +88,17 @@ class BigText extends Component
     /**
      * The glyph rows of $text: one string per row, `█` and spaces, a blank column between glyphs.
      *
-     * @param array<string, string> $glyphs added to the font (see `glyphs:`)
+     * @param array<string, string> $glyphs added to the block font (see `glyphs:`)
      * @return list<string>
      */
-    public static function rows(string $text, bool $compact = false, array $glyphs = []): array
+    public static function rows(string $text, bool $compact = false, array $glyphs = [], string $font = 'block'): array
     {
-        $rows = ['', '', '', '', ''];
-        $text = mb_strtoupper(str_replace(["\r", "\n"], ' ', $text));
-        if (class_exists(\Normalizer::class)) {
-            // a letter with a diacritic is drawn as its base letter (the mark decomposed away)
-            $text = (string) preg_replace('/\p{Mn}/u', '', (string) \Normalizer::normalize($text, \Normalizer::FORM_D));
+        $text = str_replace(["\r", "\n"], ' ', $text);
+        if ($font !== 'block') {
+            return self::bitmapRows($text, $compact, BitmapFont::load($font));
         }
-        foreach (mb_str_split($text) as $i => $ch) {
+        $rows = ['', '', '', '', ''];
+        foreach (mb_str_split(self::plain(mb_strtoupper($text))) as $i => $ch) {
             $glyph = $glyphs[$ch] ?? self::FONT[$ch] ?? self::FONT[self::LOOKALIKES[$ch] ?? '?'];
             for ($r = 0; $r < 5; $r++) {
                 $rows[$r] .= ($i ? ' ' : '') . strtr(substr($glyph, $r * 3, 3), ['1' => '█', '0' => ' ']);
@@ -117,16 +120,57 @@ class BigText extends Component
         return $out;
     }
 
+    /** $text with every diacritic decomposed away (ext-intl; as given without it): the base letters. */
+    private static function plain(string $text): string
+    {
+        return class_exists(\Normalizer::class)
+            ? (string) preg_replace('/\p{Mn}/u', '', (string) \Normalizer::normalize($text, \Normalizer::FORM_D))
+            : $text;
+    }
+
+    /**
+     * The rows of $text in a bitmap font: its pixels as quarter blocks (two by two a cell) or,
+     * compact, as Braille (two by four).
+     *
+     * @return list<string>
+     */
+    private static function bitmapRows(string $text, bool $compact, BitmapFont $font): array
+    {
+        [$dx, $dy] = Dots::RESOLUTION[$compact ? 'braille' : 'quarter'];
+        $chars = mb_str_split($text);
+        $w = $font->width;
+        $width = (int) ceil(\count($chars) * $w / $dx) * $dx;
+        $height = (int) ceil($font->height / $dy) * $dy;
+        $on = str_repeat("\0", $width * $height);
+        foreach ($chars as $i => $ch) {
+            // the glyph, else the base letter's, else the font's '?' (else nothing)
+            $glyph = $font->glyph(mb_ord($ch, 'UTF-8')) ?? $font->glyph(mb_ord(mb_substr(self::plain($ch), 0, 1) ?: '?', 'UTF-8')) ?? $font->glyph(63);
+            if ($glyph === null) {
+                continue;
+            }
+            for ($y = 0; $y < $font->height; $y++) {
+                $bits = \ord($glyph[$y]);
+                for ($x = 0; $x < $w; $x++) {
+                    if ($bits & (0x80 >> $x)) {
+                        $on[$y * $width + $i * $w + $x] = "\1";
+                    }
+                }
+            }
+        }
+        $cells = Dots::cells($compact ? 'braille' : 'quarter', ['width' => $width, 'height' => $height, 'on' => $on, 'rgb' => str_repeat("\xff", 3 * $width * $height)]);
+        return array_map(static fn(array $line) => implode('', array_column($line, 0)), $cells);
+    }
+
     public function measure(int $cols, int $rows): ?array
     {
-        $glyphs = self::rows($this->text, $this->compact, $this->glyphs);
+        $glyphs = self::rows($this->text, $this->compact, $this->glyphs, $this->font);
         return [min($cols, Text::width($glyphs[0])), min($rows, \count($glyphs))];
     }
 
     protected function render(): null
     {
         $cols = $this->surface->cols();
-        $rows = array_map(static fn(string $r) => Text::truncate(rtrim($r), $cols, ''), self::rows($this->text, $this->compact, $this->glyphs));
+        $rows = array_map(static fn(string $r) => Text::truncate(rtrim($r), $cols, ''), self::rows($this->text, $this->compact, $this->glyphs, $this->font));
         $this->surface->write("\e[?25l" . Ansi::style($this->style()->text) . "\e[2J\e[H" . implode("\r\n", $rows));
         return null;
     }
