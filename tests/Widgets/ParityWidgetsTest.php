@@ -93,3 +93,49 @@ it('picks in a RadioGroup with arrows, Space and a click; arrows at the ends go 
         expect($seen->getArrayCopy())->toBe(['l', 'm', 's', 'm']);
     });
 });
+
+it('draws a horizontal BarChart scaled to the largest value', function () {
+    $app = new ParityScreen(fn() => new Column([new Component\BarChart(['a' => 4, 'bb' => 8])]));
+    mountOn($app, 14, 2, function (FakeTerminal $t) {
+        $t->settle();
+        expect(screenRows($t))->toBe(['a  ████▄     4', 'bb █████████ 8']);
+    });
+});
+
+it('draws a vertical BarChart with values above and labels below', function () {
+    $app = new ParityScreen(fn() => new Column([new Component\BarChart(['x' => 1, 'y' => 2], vertical: true)]));
+    mountOn($app, 8, 4, function (FakeTerminal $t) {
+        $t->settle();
+        expect(screenRows($t))->toBe([' 1   2', '    ███', '███ ███', ' x   y']);
+    });
+});
+
+it('moves a Calendar by day and month, picks a date, and counts the weeks from Monday', function () {
+    $picked = new ArrayObject();
+    $app = new ParityScreen(fn(ParityScreen $s) => new Column([
+        $s->make('c', fn() => new Component\Calendar('2026-11-02', onSelect: fn($d) => $picked[] = $d)),
+    ]));
+    mountOn($app, 22, 9, function (FakeTerminal $t, ParityScreen $app) use ($picked) {
+        $t->settle();
+        $rows = screenRows($t);
+        expect($rows[0])->toBe('‹  November 2026   ›');
+        expect($rows[1])->toBe('Mo Tu We Th Fr Sa Su');
+        expect($rows[2])->toBe('26 27 28 29 30 31  1');
+        expect($rows[3])->toBe(' 2  3  4  5  6  7  8');
+        $c = $app->children()['c'];
+        $c->focus();
+        $t->press('down', 'right', 'enter');
+        expect($c->value())->toBe('2026-11-10');
+        $t->press('pagedown');
+        expect($c->current())->toBe('2026-12-10');
+        $t->press('end');
+        expect($c->current())->toBe('2026-12-31');
+        $t->press('pagedown');
+        expect($c->current())->toBe('2027-01-31');
+        $t->press('pageup', 'pageup');
+        expect($c->current())->toBe('2026-11-30');   // 30 Nov, not an overflowed 31 -> 1 Dec
+        $t->settle();
+        $t->click(0, 3);                              // the 2nd of November (row 3, column 0)
+        expect($picked->getArrayCopy())->toBe(['2026-11-10', '2026-11-02']);
+    });
+});

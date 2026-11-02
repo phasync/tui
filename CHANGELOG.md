@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+Widget parity with ratatui, Textual and Bubbles (branch `widgets/parity`):
+
+- New: `Sparkline`, `BarChart` (horizontal and vertical), `Rule` (divider with a title),
+  `Slider`, `RadioGroup`, `Calendar` (month view and date picker). See docs/widgets.md.
+
 ## 0.0.5 (2026-11-02)
 
 - `Tui::nextFrame()`: waits for the next frame and returns once it has been drawn and sent to

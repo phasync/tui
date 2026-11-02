@@ -759,3 +759,27 @@ $app->setStylesheet(Stylesheet::default()->with([
 A hyperlink needs a terminal that shows OSC 8, and the Surface passes none today: until it does
 `hyperlinks: true` shows the link text only (a link inside a pane shows its text without the
 address either way).
+
+## Sparkline, BarChart, Rule
+
+`new Sparkline([1, 4, 2, 8], max: 10)`: one row of blocks `▁`..`█`, newest value at the right,
+null leaves a gap. `new BarChart(['mon' => 3, 'tue' => 7], vertical: false, max: null)`: bars with
+labels and values, one row per bar, or columns with `vertical: true`; eighth-block precision.
+`new Rule('Title', align: 'left'|'center'|'right', char: '─')`: a divider across the width.
+Styles: `Sparkline`, `BarChart::bar`, `Rule`, `Rule::title`.
+
+## Slider, RadioGroup
+
+`new Slider(0, 100, value: 40, step: 5, label: 'volume', onChange: ...)`: Left/Right (h/l), Page
+Up/Down (ten steps), Home/End, click or drag on the track; `value()`, `setValue()`.
+`new RadioGroup(['s' => 'Small', 'm' => 'Medium'], value: 'm', horizontal: false, onChange: ...)`:
+arrows move and pick, Space picks, a click picks; arrows at the ends go on to the next field.
+Both are `Field`s, so a `Form` collects their `value()`.
+
+## Calendar
+
+`new Calendar('2026-11-02', marked: ['2026-11-05'], sundayFirst: false, onSelect: fn($d) => ...)`:
+arrows move the day, Page Up/Down the month (the day is kept, clamped to the month's length),
+Home/End first/last day, `t` today, Enter/Space/click picks (`'Y-m-d'`); `‹ ›` in the title
+change month. Styles: `Calendar::title`, `::weekday`, `::day` with the states `today`, `marked`,
+`current`, `chosen`, `outside`.
