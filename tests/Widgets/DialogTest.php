@@ -333,3 +333,31 @@ it('runs the form in a dialog of docs/widgets.md: refused while the name is empt
         expect($t->text())->toContain('1 contacts')->and($t->text())->not->toContain('Add a contact');
     });
 });
+
+it('closes on the first click on a button when it was opened from a button whose press awaits the answer', function () {
+    // (the host kept the press's capture while the handler waited, so the next click went to
+    // the button that opened the dialog instead of the dialog's)
+    $answers = new ArrayObject();       // (shared: the root closure is an arrow function, which captures by value)
+    \fiber\run(function () use ($answers) {
+        $t = \phasync\Tui\Tui::headless(fn() => new Column([
+            new Text('above', height: 2),
+            new \phasync\Tui\Component\Button('Ask', fn() => $answers[] = await(Dialog::open(new Confirm('Really?')))),
+        ]), 40, 12);
+        $t->settle();
+        $t->click(2, 2);                        // the button: opens the dialog, the handler awaits
+        $t->settle();
+        $lines = explode("\n", $t->text());
+        $row = array_key_first(array_filter($lines, fn($l) => str_contains($l, '[ No ]')));
+        $col = mb_strpos($lines[$row], '[ No ]');
+        $t->click($col + 2, $row);              // one click on No
+        $t->settle();
+        expect($answers->getArrayCopy())->toBe([false])->and($t->text())->not->toContain('Really?');
+        $t->click(2, 2);
+        $t->settle();
+        expect($t->text())->toContain('Really?');
+        $t->press('y');
+        $t->settle();
+        expect($answers->getArrayCopy())->toBe([false, true]);
+        $t->detach();
+    });
+});

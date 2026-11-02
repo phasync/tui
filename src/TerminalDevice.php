@@ -923,6 +923,13 @@ abstract class TerminalDevice
             $start = $x > 0 && $chars[$x] === '' ? $x - 1 : $x;
             $end = $x;
             while (++$k < $count && $changed[$k] - $end <= 4) {
+                // (not over an image cell that did not change: written over, a Sixel or iTerm2
+                // terminal would drop its image, and the painter sends changed cells only)
+                for ($j = $end + 1; $j < $changed[$k] && ($styles[$j] ?? null)?->image === null; $j++) {
+                }
+                if ($j < $changed[$k]) {
+                    break;
+                }
                 $end = $changed[$k];
             }
             if (($chars[$end + 1] ?? null) === '') {

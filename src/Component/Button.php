@@ -76,7 +76,11 @@ class Button extends Component
         if ($this->attribute('disabled') || $mouse->button !== Mouse::LEFT && $mouse->action !== Mouse::RELEASE) {
             return false;
         }
-        $inside = $mouse->x >= 0 && $mouse->y >= 0 && $mouse->x < $this->surface->cols() && $mouse->y < $this->surface->rows();
+        // (the label's width, not the surface's: a column stretches the surface to its own width)
+        $inside = $mouse->x >= 0 && $mouse->y >= 0 && $mouse->x < $this->measure($this->surface->cols(), 1)[0] && $mouse->y < $this->surface->rows();
+        if ($mouse->action === Mouse::PRESS && !$inside) {
+            return false;
+        }
         if ($mouse->action === Mouse::PRESS) {
             $this->focus();
             $this->setStyleState('pressed');

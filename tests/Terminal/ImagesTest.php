@@ -334,6 +334,24 @@ it('on Sixel, draws the image cells as text before leaving the screen (a termina
     });
 });
 
+it('on Sixel, leaves an unchanged image cell alone between two changed cells near it (a gap rewritten with spaces would drop its image)', function () {
+    if (!function_exists('imagecreatefromstring')) {
+        $this->markTestSkipped('Sixel output needs GD');
+    }
+    onImages('sixel', function (FakeTerminal $t, Surface $root) {
+        $root->write("\e[2;3H" . Ansi::image(twoColours(64, 48), 8, 3));
+        $t->refresh();
+        $t->takeOutput();
+        // a glyph left of the image and one over its third cell: cells 2 and 3 of row 1 did not change
+        $root->write("\e[2;2HA\e[2;5HB");
+        $t->refresh();
+        $out = $t->takeOutput();
+        expect($t->surface->cell(1, 1)->char)->toBe('A')->and($t->surface->cell(4, 1)->char)->toBe('B')
+            ->and($t->surface->cell(2, 1)->style->image)->not->toBeNull()->and($t->surface->cell(3, 1)->style->image)->not->toBeNull()
+            ->and($out)->not->toContain("\eP");
+    });
+});
+
 it('round-trips a hosted program\'s Sixel image to a Sixel terminal, and shows it as quarter blocks without a protocol', function () {
     if (!function_exists('imagecreatefromstring')) {
         $this->markTestSkipped('Sixel output needs GD');

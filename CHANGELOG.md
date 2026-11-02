@@ -13,6 +13,16 @@
   `braille`) is snapped to the dot grid and shows as exactly one dot wide, where a browser would
   draw it as two faint dots; axes and grid lines come out crisp. Curves and rotated transforms
   are stroked as they are.
+- On a Sixel or iTerm2 terminal, an image cell that did not change between two cells that did,
+  within four cells, lost its image: the device rewrote the gap with spaces and the painter
+  sends changed cells only. A span never takes in an unchanged image cell now (seen as black
+  holes in a `Canvas` on `pixels` once it drew only the changed cells).
+- A `Button` is pressed by a click on its label (`[ … ]`) only; a column stretches its surface
+  to the column's width, and a click anywhere on that row pressed it.
+- A click on a dialog's button closed it only the second time when the dialog was opened from
+  a button whose press awaited the answer: the host kept the mouse capture of that press while
+  the handler waited, and routed the next click to the opening button. The capture is set and
+  cleared before the program gets the event.
 - A program that quit while a frame was still on its way to the terminal (its writer waiting
   for the terminal queue, as with a large Sixel frame on Ctrl-Q) sent the restore sequence
   around the queue: the rest of the frame printed as text on the shell and its images came

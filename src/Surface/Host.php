@@ -870,14 +870,19 @@ final class Host
         if ($pos !== null) {
             $source = $view->source;
             $local = $m->at($pos[0], $this->capture !== null ? $pos[1] : max(0, min($source->rows() - 1, $pos[1])));
+            // the capture is set before the program gets the event, not after: a handler may
+            // wait inside it (a button's press opening a dialog and awaiting the answer), and
+            // the clicks meanwhile must go where they land
+            $captured = $this->capture;
+            if ($m->action === Mouse::PRESS) {
+                $this->capture = $view;
+            } elseif ($m->action === Mouse::RELEASE) {
+                $this->capture = null;
+            }
             if ($source->dispatch($local)) {
-                if ($m->action === Mouse::PRESS) {
-                    $this->capture = $view;
-                } elseif ($m->action === Mouse::RELEASE) {
-                    $this->capture = null;
-                }
                 return true;
             }
+            $this->capture = $captured;
         }
         // the program did not want it: the host scrolls and selects
         if ($m->action === Mouse::WHEEL_UP || $m->action === Mouse::WHEEL_DOWN) {
