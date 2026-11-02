@@ -7,6 +7,7 @@ Widget parity with ratatui, Textual and Bubbles (branch `widgets/parity`):
 - New: `Sparkline`, `BarChart` (horizontal and vertical), `Rule` (divider with a title),
   `Slider`, `RadioGroup`, `Calendar` (month view and date picker). See docs/widgets.md.
 - New: `Collapsible` (header row that toggles its content) and `Accordion` (several, one open at a time).
+- New: `Toast::show()`: transient notifications in a screen corner, stacked, auto-dismissed.
 
 ## 0.0.5 (2026-11-02)
 

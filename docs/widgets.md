@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, and `Toast`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -794,3 +794,12 @@ first instance's only; `setCollapsed()`, `isCollapsed()`, event `toggle`.
 Collapsibles in a column, one open at a time (or independent with `exclusive: false`); sections
 are given once; `open()`, `setOpen($key, $open)`. Styles: `Collapsible::header` (states
 `collapsed`, `focused`), `Collapsible::mark`.
+
+## Toast
+
+`Toast::show('Saved', 'success', timeout: 3.0, position: 'bottom-right')`: a notification in a
+screen corner, from anywhere in a running program (no instance needed). Severities `info`,
+`success`, `warning`, `error`; positions `bottom-right`/`bottom-left`/`top-right`/`top-left`;
+`timeout: 0` stays until clicked. Toasts stack in one overlay on the running root, one row each
+(markup allowed), never take the focus or the keys; a click dismisses one; `Toast::clear()`
+removes all. Styles: `Toast::message`, `Toast::mark`, with the severity as state.
