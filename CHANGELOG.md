@@ -24,6 +24,26 @@ For a device whose terminal is not in front of it, what the first multiplexer on
   `focus()` takes effect and what `focusContent()` focuses, that a closure reading no `State`
   renders once, `Canvas` on `pixels` sending only changed runs, `whenProbed()`, `nextFrame()`.
 
+Widget parity with ratatui, Textual and Bubbles:
+
+- New: `Sparkline`, `BarChart` (horizontal and vertical), `Rule` (divider with a title),
+  `Slider`, `RadioGroup`, `Calendar` (month view and date picker). See docs/widgets.md.
+- New: `Collapsible` (header row that toggles its content) and `Accordion` (several, one open at a time).
+- New: `Toast::show()`: transient notifications in a screen corner, stacked, auto-dismissed.
+- New: `Paginator` (page N of M as numbers, dots or text).
+- New: `MaskedInput` (password field with a mask character and a reveal toggle).
+- New: `Menu` (context menu with shortcuts, separators, submenus; `Menu::popup()`) and `MenuBar`.
+- New: `LineChart` and `ScatterChart` (series on axes with labels and legend, drawn on a `Canvas`).
+- New: `Heatmap` (cells coloured by value, optional labels and numbers).
+- New: `BigText` (large block-glyph numbers and text, also compact).
+- New: `Stopwatch` and `Timer` (self-ticking clock and countdown with play/pause/reset, `onFinish`).
+- New: `DirectoryTree` (lazy file-system `Tree`, extension filter) and `FilePicker`.
+- New: `ProgressBar` `fill:` and `empty:` characters (a thin line gauge is `fill: '━', empty: '─'`); no separate `Gauge`/`LineGauge`.
+- New: `Scrollbar` (standalone, for a view you scroll yourself).
+- New: `Badge` (status label with variants; `closable: true` for a removable tag).
+- New: `Link` (focusable OSC 8 hyperlink with `onActivate`).
+- New: `Placeholder` (hatched stand-in showing its label and size).
+
 ## 0.0.5 (2026-11-02)
 
 - `Tui::nextFrame()`: waits for the next frame and returns once it has been drawn and sent to

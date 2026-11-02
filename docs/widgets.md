@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, and `Markdown`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, `LineChart` with `ScatterChart`, `Heatmap`, `BigText`, `Stopwatch`, `Timer`, `DirectoryTree` and `FilePicker`, and the small ones: `Scrollbar`, `Badge`, `Link` and `Placeholder`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -759,3 +759,162 @@ $app->setStylesheet(Stylesheet::default()->with([
 A hyperlink needs a terminal that shows OSC 8, and the Surface passes none today: until it does
 `hyperlinks: true` shows the link text only (a link inside a pane shows its text without the
 address either way).
+
+## Sparkline, BarChart, Rule
+
+`new Sparkline([1, 4, 2, 8], max: 10)`: one row of blocks `▁`..`█`, newest value at the right,
+null leaves a gap. `new BarChart(['mon' => 3, 'tue' => 7], vertical: false, max: null)`: bars with
+labels and values, one row per bar, or columns with `vertical: true`; eighth-block precision.
+`new Rule('Title', align: 'left'|'center'|'right', char: '─')`: a divider across the width.
+Styles: `Sparkline`, `BarChart::bar`, `Rule`, `Rule::title`.
+
+## Slider, RadioGroup
+
+`new Slider(0, 100, value: 40, step: 5, label: 'volume', onChange: ...)`: Left/Right (h/l), Page
+Up/Down (ten steps), Home/End, click or drag on the track; `value()`, `setValue()`.
+`new RadioGroup(['s' => 'Small', 'm' => 'Medium'], value: 'm', horizontal: false, onChange: ...)`:
+arrows move and pick, Space picks, a click picks; arrows at the ends go on to the next field.
+Both are `Field`s, so a `Form` collects their `value()`.
+
+## Calendar
+
+`new Calendar('2026-11-02', marked: ['2026-11-05'], sundayFirst: false, onSelect: fn($d) => ...)`:
+arrows move the day, Page Up/Down the month (the day is kept, clamped to the month's length),
+Home/End first/last day, `t` today, Enter/Space/click picks (`'Y-m-d'`); `‹ ›` in the title
+change month. Styles: `Calendar::title`, `::weekday`, `::day` with the states `today`, `marked`,
+`current`, `chosen`, `outside`.
+
+## Collapsible, Accordion
+
+`new Collapsible('Advanced', $element_or_string, collapsed: true, onToggle: fn(bool $collapsed) => ...)`:
+a `▸`/`▾` header row over content that is laid out only while open. Enter, Space or a click on the
+header toggle; Right opens and Left closes (the key goes on when it cannot). `collapsed` is the
+first instance's only; `setCollapsed()`, `isCollapsed()`, event `toggle`.
+`new Accordion(['a' => ['title' => 'One', 'content' => $el], ...], open: 'a', exclusive: true, onChange: fn(array $open) => ...)`:
+Collapsibles in a column, one open at a time (or independent with `exclusive: false`); sections
+are given once; `open()`, `setOpen($key, $open)`. Styles: `Collapsible::header` (states
+`collapsed`, `focused`), `Collapsible::mark`.
+
+## Toast
+
+`Toast::show('Saved', 'success', timeout: 3.0, position: 'bottom-right')`: a notification in a
+screen corner, from anywhere in a running program (no instance needed). Severities `info`,
+`success`, `warning`, `error`; positions `bottom-right`/`bottom-left`/`top-right`/`top-left`;
+`timeout: 0` stays until clicked. Toasts stack in one overlay on the running root, one row each
+(markup allowed), never take the focus or the keys; a click dismisses one; `Toast::clear()`
+removes all. Styles: `Toast::message`, `Toast::mark`, with the severity as state.
+
+## Paginator
+
+`new Paginator(pages: 20, page: 1, display: 'numbers'|'dots'|'text', onChange: fn(int $page) => ...)`:
+`‹ 1 … 9 10 11 … 20 ›`, `‹ ● ○ ○ ›` or `‹ 3 / 20 ›`. Pages count from 1. Left/Right (h/l) and
+Page Up/Down step, Home/End go to the ends (at an end the key goes on); a click on a number or dot
+goes there, on `‹ ›` steps. `page()`, `setPage()`; a `Field` (value = the page). Styles:
+`Paginator::page` (state `current`), `Paginator::arrow` (state `disabled`).
+
+## MaskedInput
+
+`new MaskedInput(placeholder: 'password', mask: '•', maxLength: 0, revealable: true, onSubmit: fn(string $v) => ..., onChange: ...)`:
+a one-line password/token field, a mask per typed character (grapheme cluster). Left/Right, Home/End,
+Backspace/Delete, Ctrl-U/Ctrl-K edit; no word motions or copy. Enter calls `onSubmit` (without one the
+key goes on, so a `Form` submits). Alt-R or a click on the sign at the right (`◎`/`◉`) reveals the
+text. A standalone field (not an `Editor`). `value()`, `setValue()`, `cursor()`, `setRevealed()`; a
+`Field`. Styles: `MaskedInput` (focused: `$panel` background), `MaskedInput::placeholder`, `MaskedInput::reveal`.
+
+## Menu, MenuBar
+
+`Menu::popup($this, $items, new Rect($x, $y, 1, 1), onSelect: fn($key) => ...)`: a context menu as an
+overlay of the calling component (returns the `Overlay`; `await($overlay->closed())` gives the key).
+Items by key: a label, `'-'` (separator) or `['label', 'shortcut' => 'Ctrl+O' (shown, binds nothing),
+'disabled', 'onSelect' => Closure, 'items' => [...] (submenu)]`. Up/Down (wrapping, skipping
+separators and disabled items), Home/End, Enter/Space pick, Right opens a submenu, Left closes it,
+Escape closes one level; hover makes an item current, a click picks, a click outside closes.
+`new MenuBar(['File' => [...], 'Help' => [...]], onSelect: fn($key, $bar) => ...)`: titles in a row;
+Left/Right change title (also inside an open menu), Enter/Space/Down/click open; `open()`,
+`openTitle()`. Keep item keys unique across menus. Styles: `Menu` (rounded border), `Menu::item`
+(`current`, `disabled`), `Menu::shortcut`, `Menu::separator`; `MenuBar`, `MenuBar::title`
+(`current`, `open`, `focused`).
+
+## LineChart, ScatterChart
+
+`new LineChart(['cpu' => [12, 30, 22], 'mem' => [[0, 40], [1, 42], [2, 50]]], yMin: 0, yMax: 100, points: false, legend: true, colors: [...], marker: 'auto')`:
+series on axes, drawn on a `Canvas` (braille dots or pixels; needs `ext-gd`). A series is y values
+(x = position) or `[x, y]` pairs, `null` leaves a gap. Axes fit the data or are fixed with
+`xMin/xMax/yMin/yMax`; the y axis has labels at the bottom, top and middle, the x axis at its ends;
+axes and labels are characters, the legend (top right) names the series in their colours.
+`lines` joins points, `points` marks them. `new ScatterChart(['s' => [[1, 2], [3, 5]]])` is the same
+with points only. Takes the room it is given. Style: `LineChart::axis` (also for `ScatterChart`).
+
+## Heatmap
+
+`new Heatmap([[1, 4, 9], [2, 6, null]], rowLabels: [...], colLabels: [...], min: null, max: null, colors: ['#1e3a8a', '#0ea5e9', '#fde047', '#ef4444'], cellWidth: 2, values: false, onSelect: fn(int $row, int $col, float $value) => ...)`:
+a grid of background-coloured cells; the lowest value gets the first colour, the highest the last,
+the rest a blend (64 steps). `values: true` writes the number in each cell (black or white by
+contrast). A click on a cell with a value calls `onSelect`. `null` leaves a cell empty. Style:
+`Heatmap::label`.
+
+## BigText
+
+`new BigText('12:45', compact: false)`: large block-glyph text from a 3x5 font (digits, A-Z, space
+`: . , - + ! ? / % _`; lower case shows as upper case, unknown characters as `?`), five rows high, or
+three with `compact: true` (half blocks). A clock or counter is `new BigText((string) $n)`; there is no
+separate `Digits` widget. `BigText::rows($text, $compact)` gives the rows as strings. Style: `BigText`
+(the colour of the glyphs, the accent by default).
+
+## Stopwatch, Timer
+
+`new Stopwatch(running: false, precision: 0, onTick: fn(float $elapsed) => ...)`: a clock that counts
+up (`00:12`, `00:12.3` with `precision: 1`, `1:02:03` from an hour) and ticks by itself only while it
+runs. Space or a click starts/stops, `r` resets; `play()`, `pause()` (not `start()`/`stop()`: those are
+the component's), `reset()`, `elapsed()`, `isRunning()`, `Stopwatch::format($seconds, $precision)`.
+`new Timer(300, running: true, onFinish: fn(Timer $t) => ...)` counts down (rounded up, so `00:00`
+means over), stops at zero, calls `onFinish` once and sets the state `finished` until reset;
+`remaining()`, `isFinished()`; playing a finished timer starts over. Styles: `Stopwatch` (states
+`running`, `focused`), `Timer:finished`.
+
+## DirectoryTree, FilePicker
+
+`new DirectoryTree('/path', extensions: ['php', 'md'], showHidden: false, directoriesOnly: false, onFile: fn(string $path) => ..., onSelect: ...)`:
+a `Tree` of the file system, the root open, directories listed when first opened (directories before
+files, sorted ignoring case; unreadable ones show empty). `extensions` limits the files (never the
+directories). Keys and values are paths: `path()` is the current node's, `setExtensions()` and
+`setShowHidden()` load again. Enter on a file calls `onFile`; everything else is `Tree`'s.
+`new FilePicker('/path', extensions: [...], directories: false, onPick: fn(string $path) => ...)`: the
+tree over a line with the highlighted path; Enter on a file picks it (`value()` is the path picked
+last, so a `Form` collects it); `directories: true` lists directories only and Enter on one picks it.
+
+## Gauge and LineGauge
+
+ratatui's `Gauge` is a `ProgressBar` (a filled bar with a centred or trailing percentage and label), and
+its `LineGauge` is the same bar with thin glyphs, so there is no separate widget: `new ProgressBar($v, fill: '━', empty: '─')`
+draws `━━━━━━━━──────── 50%`. `fill` and `empty` (props) are any one-column characters.
+
+## Scrollbar
+
+The widgets that scroll (`Log`, `Markdown`, `Tree`, `Table`, ...) draw their own. `new Scrollbar(total: 500, view: 20, position: $top, horizontal: false, onScroll: fn(int $to) => ...)`
+is for a view you scroll yourself: a column (row) with a thumb as large as the part in view. The three
+numbers are props; the owner passes the current ones. A click on the track puts the thumb there, a drag
+moves it, the wheel scrolls three; `onScroll($position)` gets the new first row. Nothing is drawn when
+everything shows. It takes no keys. Style: `Scrollbar`, `Scrollbar::thumb`.
+
+## Badge
+
+`new Badge('beta', 'warning')`: a small coloured label, a space each side. Variants `neutral`, `info`,
+`success`, `warning`, `error` (the state `Badge:success` etc. in the stylesheet). `closable: true` makes a
+removable tag (`php ×`): a click on the `×`, or Delete/Backspace on the focused tag, calls
+`onClose($badge)`; the owner stops rendering it. A plain badge takes no focus. Style: `Badge`, `Badge::close`.
+
+## Link
+
+`new Link('https://example.com', 'the docs', onActivate: fn(string $url) => ...)`: the label (the URL by
+default; markup allowed) drawn as an OSC 8 hyperlink, so a terminal that supports them opens it with a
+Ctrl-click, and shown as plain text on the others. It takes the focus; Enter or a click calls
+`onActivate($url)`, which is how a program opens it itself (a terminal that is sent mouse reports does
+not follow links on its own). Style: `Link` (accent, underlined), `:focused`, `:hover`, `:disabled`. In a
+`Text` or `Markdown` a link is `<href=https://...>text</>` (see [styling](styling.md#markup-in-text)).
+
+## Placeholder
+
+`new Placeholder('sidebar', width: 20)`: a `╱`-hatched stand-in that fills its room and writes its label and
+size (` sidebar 20x5 `) in the middle, for sketching a layout before the widgets exist. Style:
+`Placeholder` (dimmed), `Placeholder::label`.
