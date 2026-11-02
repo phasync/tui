@@ -22,7 +22,7 @@
   them over the shell after the switch back to the main screen; erasing the screen first raced
   the switch there and sometimes erased the shell's text instead.
 - `TUI_TRACE_BYTES=<file>` logs every byte the device sends to the terminal (and `<file>.in`
-  what it reads), and `tools/terminal-probe.php` prints what the terminal answers to the
+  what it reads; `<file>.times` when, one line per send or read with its first bytes), and `tools/terminal-probe.php` prints what the terminal answers to the
   queries the device uses: for a report about a terminal.
 - `examples/graphs.php --fast`: new samples every 5 ms, frames uncapped, the frame rate in the
   header (a Braille graph redraws about 115 times a second on a 2014 Xeon, interpreted).

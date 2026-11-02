@@ -63,11 +63,17 @@ final class Tty extends TerminalDevice
 
     /** `TUI_TRACE_BYTES=<file>` in the environment: every byte sent to the terminal is appended to the file, every byte received to `<file>.in`. */
     private ?string $traceFile = null;
+    private ?float $traceStart = null;
 
     private function trace(string $bytes, bool $in = false): void
     {
         if ($this->traceFile !== null && $bytes !== '') {
             @file_put_contents($this->traceFile . ($in ? '.in' : ''), $bytes, \FILE_APPEND);
+            // and when, in `<file>.times`: the seconds since the first byte, the direction, the
+            // length, and the first bytes (escaped), one line per read or send
+            $this->traceStart ??= microtime(true);
+            $head = preg_replace_callback('/[\x00-\x1f\x7f]/', fn($m) => $m[0] === "\e" ? 'ESC' : sprintf('\\x%02x', \ord($m[0])), substr($bytes, 0, 60));
+            @file_put_contents($this->traceFile . '.times', sprintf("%7.3f %s %6d  %s\n", microtime(true) - $this->traceStart, $in ? 'in ' : 'out', \strlen($bytes), $head), \FILE_APPEND);
         }
     }
 
