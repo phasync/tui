@@ -12,6 +12,7 @@ Widget parity with ratatui, Textual and Bubbles (branch `widgets/parity`):
 - New: `MaskedInput` (password field with a mask character and a reveal toggle).
 - New: `Menu` (context menu with shortcuts, separators, submenus; `Menu::popup()`) and `MenuBar`.
 - New: `LineChart` and `ScatterChart` (series on axes with labels and legend, drawn on a `Canvas`).
+- New: `Heatmap` (cells coloured by value, optional labels and numbers).
 
 ## 0.0.5 (2026-11-02)
 

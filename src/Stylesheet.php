@@ -276,6 +276,7 @@ final class Stylesheet
             'MenuBar' => ['background' => '$panel'],
             'MenuBar:disabled' => ['dim' => true],
             'LineChart::axis' => ['color' => '$muted'],
+            'Heatmap::label' => ['color' => '$muted'],
             'Form::error' => ['color' => '$error'],
             '*:invalid' => ['color' => '$error'],
             '*::scrollbar' => ['color' => '$muted'],

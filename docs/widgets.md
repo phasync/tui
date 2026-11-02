@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, and `LineChart` with `ScatterChart`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, `LineChart` with `ScatterChart`, and `Heatmap`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -844,3 +844,11 @@ series on axes, drawn on a `Canvas` (braille dots or pixels; needs `ext-gd`). A 
 axes and labels are characters, the legend (top right) names the series in their colours.
 `lines` joins points, `points` marks them. `new ScatterChart(['s' => [[1, 2], [3, 5]]])` is the same
 with points only. Takes the room it is given. Style: `LineChart::axis` (also for `ScatterChart`).
+
+## Heatmap
+
+`new Heatmap([[1, 4, 9], [2, 6, null]], rowLabels: [...], colLabels: [...], min: null, max: null, colors: ['#1e3a8a', '#0ea5e9', '#fde047', '#ef4444'], cellWidth: 2, values: false, onSelect: fn(int $row, int $col, float $value) => ...)`:
+a grid of background-coloured cells; the lowest value gets the first colour, the highest the last,
+the rest a blend (64 steps). `values: true` writes the number in each cell (black or white by
+contrast). A click on a cell with a value calls `onSelect`. `null` leaves a cell empty. Style:
+`Heatmap::label`.
