@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.7 (unreleased)
+
+- `BigText` draws more than English: a letter with a diacritic as its base letter (ü as U, Å as A,
+  Ё as Е; decomposed with ext-intl), Æ Ø Œ Ð Þ ß Ł, and the Greek and Cyrillic capitals; `glyphs:`
+  adds glyphs of a program's own. It was A-Z and digits, everything else a `?`.
+
 ## 0.0.6 (2026-11-02)
 
 For a device whose terminal is not in front of it, what the first multiplexer on the library

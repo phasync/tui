@@ -42,3 +42,19 @@ it('measures to the glyphs so a Column gives it exactly its size', function () {
         expect(screenRows($t)[5])->toBe('end');
     });
 });
+
+it('draws Latin letters with diacritics as their base letter, Æ Ø and the Greek and Cyrillic capitals, and takes extra glyphs', function () {
+    $rows = fn(string $t, array $g = []) => \phasync\Tui\Component\BigText::rows($t, false, $g);
+    expect($rows('üẼå'))->toBe($rows('UEA'))                       // decomposed (ext-intl)
+        ->and($rows('Ёж'))->toBe($rows('Еж'))
+        ->and($rows('ÆØ'))->not->toContain(implode('', $rows('?')))
+        ->and($rows('ΑΒΓΔ'))->toBe($rows('AB' . 'ΓΔ'))                // look-alikes share the Latin glyph
+        ->and($rows('АСНХ'))->toBe($rows('ACHX'))
+        ->and($rows('ЖЩЯ'))->not->toBe($rows('???'))
+        ->and($rows('☃'))->toBe($rows('?'))                          // unknown
+        ->and($rows('☃', ['☃' => '010111010111101'])[0])->toBe(' █ ');
+    $app = new WidgetScreen(fn() => new Column([new BigText('Ærø ☃', glyphs: ['☃' => '010111010111101'])]));
+    mountOn($app, 24, 5, function (\phasync\Tui\FakeTerminal $t) use ($rows) {
+        expect($t->text())->toContain(rtrim($rows('Ærø ☃', ['☃' => '010111010111101'])[0]));
+    });
+})->skip(!class_exists(Normalizer::class), 'needs ext-intl');

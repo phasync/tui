@@ -855,11 +855,15 @@ contrast). A click on a cell with a value calls `onSelect`. `null` leaves a cell
 
 ## BigText
 
-`new BigText('12:45', compact: false)`: large block-glyph text from a 3x5 font (digits, A-Z, space
-`: . , - + ! ? / % _`; lower case shows as upper case, unknown characters as `?`), five rows high, or
-three with `compact: true` (half blocks). A clock or counter is `new BigText((string) $n)`; there is no
-separate `Digits` widget. `BigText::rows($text, $compact)` gives the rows as strings. Style: `BigText`
-(the colour of the glyphs, the accent by default).
+`new BigText('12:45', compact: false, glyphs: [])`: large block-glyph text from a 3x5 font: digits,
+the capitals of the Latin, Greek and Cyrillic alphabets, Æ Ø Œ Ð Þ ß Ł, space and `: . , - + ! ? / % _`.
+Lower case shows as upper case; a letter with a diacritic as its base letter (ü as U, Å as A, Ё as Е;
+ext-intl decomposes it, without it such a letter is unknown); an unknown character as `?`. `glyphs:`
+adds or replaces glyphs, `['☃' => '010111010111101']`: five rows of three cells, `1` filled, so a
+program can draw the characters it needs (a 3x5 font has no room for every script; a wider font
+is a later option). Five rows high, or three with `compact: true` (half blocks). A clock or counter
+is `new BigText((string) $n)`; there is no separate `Digits` widget. `BigText::rows($text, $compact,
+$glyphs)` gives the rows as strings. Style: `BigText` (the colour of the glyphs, the accent by default).
 
 ## Stopwatch, Timer
 
