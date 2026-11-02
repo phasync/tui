@@ -1248,13 +1248,16 @@ All in `phasync\Tui\Component\`. The widgets of the components layer (`Editor`, 
 ### Terminal
 
 A command in a pseudo-terminal, as a component: `new Terminal(string|array $command, ?string
-$cwd = null, array $env = [], ?Closure $onExit = null, ?string $key = null, ?string $id = null,
-string|array|null $class = null, ?array $style = null)`, so it goes in an element tree like any
+$cwd = null, array $env = [], ?Closure $onExit = null, ?array $size = null, ?string $key = null,
+?string $id = null, string|array|null $class = null, ?array $style = null)`, so it goes in an element tree like any
 widget (`new Terminal('htop', onExit: fn(int $code) => $s->status = "htop: $code", class: 'grow')`). The program gets the component's surface
 as its terminal: size and resizes, keys and pastes while focused, answers to its queries. The
 program starts when the component is sized (the render of its parent that shows it), in a pty
 that already has the pane's size, so full-screen programs that read their size once (vim, htop,
 less) fill their pane; until then `pty()` is null (`exited()` can be awaited from the start).
+A program that must run before any render shows it (a shell opened in the background, kept
+with `keep()`) is given a size: `new Terminal('sh', size: [80, 24])` starts at mount, 80x24, and
+is resized (SIGWINCH) when a render places it.
 
 When the program exits, the window keeps its last output and the end is announced:
 `$onExit(int $code, Terminal $terminal)` is called (in a coroutine of the component, so it may

@@ -2,6 +2,21 @@
 
 ## 0.0.6 (unreleased)
 
+For a device whose terminal is not in front of it, what the first multiplexer on the library
+(a daemon showing one root to several clients) had to work around:
+
+- `TerminalDevice::redraw()`: draw everything again at the next frame as to a terminal that
+  shows nothing of it yet, the title, the cursor's visibility and shape and the mouse modes
+  included; for a viewer that joins, or a terminal that was reset. The first frame of an
+  attach hides the cursor explicitly too.
+- `TerminalDevice::$probe` (protected, default true): false for a device with nobody to answer
+  the queries of `attach()`: nothing is asked, `whenProbed()` runs at once, `images()` is
+  `'none'` unless set.
+- A device whose input is handed to it calls `receive()` from where the bytes arrive and only
+  idles in `read()`; documented, with `tests/Support/PushDevice.php` as the example
+  ("A device without a terminal" in docs/terminal.md).
+- `Terminal(..., size: [cols, rows])`: the program starts at mount at that size, before any
+  render shows it (a shell opened in the background), and follows its pane when shown.
 - GitHub Actions: the suite on PHP 8.3, 8.4 and 8.5 (with GD, pcntl and tmux); the timing-bounded
   tests of `tests/Benchmark` (group `benchmark`) run in a job of their own that may fail.
 - Tests: a `Table` cell with markup is cut on its visible text, never in the markup.

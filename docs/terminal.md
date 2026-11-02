@@ -56,6 +56,7 @@ fiber\run(function () use ($tty) {
 | `component(): ?Component` | The root component shown on it (`Tui::run()`'s, `Tui::headless()`'s, or one given to `start()`), null when none is: `$terminal->component()->children()['progress']` reaches a component a closure program placed with `key: 'progress'`. |
 | `wait()` | Wait until `detach()` (returns at once when not attached). |
 | `refresh()` | Draw what changed now instead of at the next frame: the renders that are pending run first. |
+| `redraw()` | Draw everything again at the next frame, as to a terminal that shows nothing of it yet: the screen cleared and every row written, and the title, the cursor's visibility and shape and the mouse modes sent whether or not they changed. For a terminal that changed under the device: a viewer that joined (see "A device without a terminal"), a terminal that was reset. |
 | `nextFrame(): float` | Wait for the next frame, and return once it has been drawn and sent to the terminal, with the seconds since the frame before it (`Tui::nextFrame()` is the one for a program's coroutine). |
 | `TerminalDevice::of(Surface $root): ?TerminalDevice` | The device a root is attached to, or null. A component reaches its own with `$this->device()`. |
 | `size(): array` | The terminal's size as `[cols, rows]`. |
@@ -142,6 +143,32 @@ per frame follow the area that changed.
 `whenProbed(Closure $listener)` calls `$listener` once the terminal has answered what
 `attach()` asked (the image protocol, the background, the cell size), at once if it has: the
 way to draw again when `images()` or `background()` has just changed.
+
+## A device without a terminal
+
+A subclass of `TerminalDevice` is five methods: `open(string $restore)` (take the terminal
+over; `$restore` is what gives it back, to be sent also when the program dies), `close()`,
+`send(string $bytes)`, `read(float $timeout): string` and `size(): array`. `Tty` and
+`FakeTerminal` are the two in the library; a multiplexer's daemon, whose "terminal" is every
+client connected to it, or a recorder, is a third. What such a device needs:
+
+- **No probe.** `attach()` asks the terminal what it is (kitty keyboard, name, background,
+  images, cell size) and waits up to a second for the device-attributes answer. A device with
+  nobody to answer sets `protected bool $probe = true` to false in its constructor: nothing is
+  asked, `whenProbed()` listeners run at once, `images()` is `'none'` unless the device set
+  `$images`, and `hasKittyKeyboard()` stays false. Set `$hyperlinks` and `$colors` too, since no
+  answer will.
+- **Input handed to it.** A device whose bytes arrive on a socket needs no queue in `read()`:
+  it gives them to `receive($bytes)` where they arrive, from any coroutine, and its `read()`
+  only idles (`fiber\sleep($timeout); return '';`). The input loop keeps calling `read()` for
+  the lone-ESC timeout (Escape after 50 ms) and for `resized()`, which re-reads `size()`; a
+  device that learns of a size change calls `resized()` itself.
+- **A viewer that joins.** It has taken its own terminal over (the alternate screen, mouse and
+  paste reporting; what `attach()` sends) and shows nothing of the root yet: `redraw()` draws
+  the next frame as to a fresh terminal, screen, title, cursor state and mouse modes included,
+  so the device sends every viewer the same bytes and need not remember the state itself.
+
+`tests/Support/PushDevice.php` is a device of this kind, as small as it gets.
 
 ## Inline mode: a live region in the terminal's normal screen
 

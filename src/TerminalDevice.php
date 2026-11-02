@@ -120,7 +120,7 @@ abstract class TerminalDevice
     /** @var list<\Closure> */
     private array $offs = [];
     private ?float $probing = null;
-    private string $probe = '';
+    private string $answers = '';
     private bool $kitty = false;
     /** The terminal's background as it answered OSC 11: 'light' or 'dark'; null when it did not. */
     private ?string $background = null;
@@ -145,6 +145,13 @@ abstract class TerminalDevice
      * `images()`).
      */
     protected ?string $images = null;
+    /**
+     * Whether `attach()` asks the terminal what it is (kitty keyboard, name, background, images,
+     * cell size; see `whenProbed()`). A device without a terminal to answer (one that draws for
+     * viewers that join later, a recording) sets it false: nothing is asked, the probe is over
+     * at once, and `images` is `'none'` unless the device set it.
+     */
+    protected bool $probe = true;
     /** The terminal answered Kitty's graphics query at attach. */
     private bool $kittyGraphics = false;
     /** The terminal's device attributes (DA1) at attach included Sixel graphics (4). */
@@ -200,7 +207,13 @@ abstract class TerminalDevice
     /** Send bytes to the terminal (may wait cooperatively until it accepts them). */
     abstract protected function send(string $bytes): void;
 
-    /** Wait up to $timeout seconds for input; '' when none came. Never blocks other coroutines. */
+    /**
+     * Wait up to $timeout seconds for input; '' when none came. Never blocks other coroutines.
+     * A device whose input is handed to it (a socket's bytes, a test's keys) needs no queue
+     * here: it gives them to `receive()` where they arrive and only idles in this method
+     * (`fiber\sleep($timeout)`), which the input loop keeps calling for the lone-ESC timeout and
+     * `resized()`.
+     */
     abstract protected function read(float $timeout): string;
 
     /**
@@ -297,12 +310,17 @@ abstract class TerminalDevice
             $root->on('clipboard', fn(string $text) => $this->clipboard($text)),
             $root->on('close', fn() => $this->release(false)),
         ];
-        // ask for the kitty keyboard protocol, the terminal's name and its background colour;
-        // the answer to primary device attributes (which every terminal answers) ends the probe
-        $this->probing = microtime(true);
-        $this->probe = '';
-        $this->send(($this->inline ? self::INLINE_TAKEOVER : self::TAKEOVER) . ($root->title() !== '' ? Ansi::title($root->title()) : '')
-            . "\e[?u\e[>0q\e]11;?\e\\" . ($this->images === null ? self::KITTY_QUERY : '') . "\e[16t\e[c");
+        $takeover = ($this->inline ? self::INLINE_TAKEOVER : self::TAKEOVER) . ($root->title() !== '' ? Ansi::title($root->title()) : '');
+        if ($this->probe) {
+            // ask for the kitty keyboard protocol, the terminal's name and its background colour;
+            // the answer to primary device attributes (which every terminal answers) ends the probe
+            $this->probing = microtime(true);
+            $this->answers = '';
+            $takeover .= "\e[?u\e[>0q\e]11;?\e\\" . ($this->images === null ? self::KITTY_QUERY : '') . "\e[16t\e[c";
+        } else {
+            $this->images ??= 'none';
+        }
+        $this->send($takeover);
         go(fn() => $this->loop($this->frames(...)));
         go(fn() => $this->loop($this->inputs(...)));
     }
@@ -677,9 +695,10 @@ abstract class TerminalDevice
                 return;
             }
             // the cursor is hidden while drawing, so it does not flicker over the screen
+            // (the first frame hides it whatever the terminal shows: see redraw())
             $visible = $shown !== null && $shown->visible;
             $frame = "\e[?2026h";
-            if ($visible && ($out !== '' || !$cursor->visible)) {
+            if ($shown === null || ($visible && ($out !== '' || !$cursor->visible))) {
                 $frame .= "\e[?25l";
                 $visible = false;
             }
@@ -725,6 +744,27 @@ abstract class TerminalDevice
         return $this->frameInterval;
     }
 
+    /**
+     * Draw everything again at the next frame, as to a terminal that shows nothing of it yet:
+     * the screen is cleared and every row written, and the title, the cursor's visibility and
+     * shape and the mouse modes are sent whether or not they changed. For a device whose
+     * terminal changed under it: a viewer that joined (it has taken its terminal over, as
+     * `attach()` does, and nothing more), a terminal that was reset or lost its contents.
+     * Nothing to do when not attached.
+     */
+    public function redraw(): void
+    {
+        if ($this->root === null) {
+            return;
+        }
+        $this->redraw = true;
+        $this->shown = null;
+        $this->motion = false;
+        $this->mouse = false;
+        $this->link = ['', ''];
+        $this->damage();
+    }
+
     /** Full screen: the damaged rows of the root, against the previous frame (all of them after a resize). */
     private function drawFull(Surface $root): string
     {
@@ -734,7 +774,7 @@ abstract class TerminalDevice
             $this->frame = [];
             $this->pen = Style::plain();
             $this->at = [0, 0];
-            $out .= $this->painter->clear() . "\e[0m\e[H\e[2J";
+            $out .= $this->painter->clear() . "\e[0m\e[H\e[2J" . ($root->title() !== '' ? Ansi::title($root->title()) : '');
             $damaged = range(0, $root->rows() - 1);
         } else {
             $damaged = $root->damagedSince($this->drawnVersion);
@@ -1011,6 +1051,8 @@ abstract class TerminalDevice
     /**
      * Handle bytes the terminal sent: answers to the device's own query, then keys, mouse,
      * paste and focus events for the root. With $final, a lone ESC at the end is the Escape key.
+     * Called by the input loop with what `read()` returned, or by a device straight from where
+     * its bytes arrive (any coroutine, see `read()`).
      */
     protected function receive(string $bytes, bool $final = false): void
     {
@@ -1018,9 +1060,9 @@ abstract class TerminalDevice
             return;
         }
         if ($this->probing !== null) {
-            $this->probe .= $bytes;
-            if (preg_match('/\e\[\?[\d;]*c/', $this->probe) === 1) {
-                $this->endProbe(preg_match('/\e\[\?\d*u/', $this->probe) === 1);
+            $this->answers .= $bytes;
+            if (preg_match('/\e\[\?[\d;]*c/', $this->answers) === 1) {
+                $this->endProbe(preg_match('/\e\[\?\d*u/', $this->answers) === 1);
             }
             return;
         }
@@ -1032,23 +1074,23 @@ abstract class TerminalDevice
 
     private function endProbe(bool $kitty): void
     {
-        if (preg_match('/\eP>\|([^\e\x07]*)(?:\e\\\\|\x07)/', $this->probe, $m)) {
+        if (preg_match('/\eP>\|([^\e\x07]*)(?:\e\\\\|\x07)/', $this->answers, $m)) {
             $this->terminalName = $m[1];
         }
-        if (preg_match('/\e\]11;rgb:([0-9a-f]+)\/([0-9a-f]+)\/([0-9a-f]+)(?:\e\\\\|\x07)/i', $this->probe, $m)) {
+        if (preg_match('/\e\]11;rgb:([0-9a-f]+)\/([0-9a-f]+)\/([0-9a-f]+)(?:\e\\\\|\x07)/i', $this->answers, $m)) {
             // (each channel 1 to 4 hex digits) by its luminance
             [$r, $g, $b] = array_map(fn(string $h) => hexdec($h) / (16 ** \strlen($h) - 1), [$m[1], $m[2], $m[3]]);
             $this->background = 0.2126 * $r + 0.7152 * $g + 0.0722 * $b > 0.5 ? 'light' : 'dark';
         }
-        if (preg_match('/\e\[6;(\d+);(\d+)t/', $this->probe, $m) && (int) $m[1] > 0 && (int) $m[2] > 0 && $this->root !== null) {
+        if (preg_match('/\e\[6;(\d+);(\d+)t/', $this->answers, $m) && (int) $m[1] > 0 && (int) $m[2] > 0 && $this->root !== null) {
             $this->root->setCellSize((int) $m[2], (int) $m[1]);
         }
-        $this->kittyGraphics = preg_match('/\e_Gi=31;OK(?:\e\\\\|\x07)/', $this->probe) === 1;
-        $this->sixelGraphics = preg_match('/\e\[\?([\d;]*)c/', $this->probe, $m) === 1 && \in_array('4', explode(';', $m[1]), true);
+        $this->kittyGraphics = preg_match('/\e_Gi=31;OK(?:\e\\\\|\x07)/', $this->answers) === 1;
+        $this->sixelGraphics = preg_match('/\e\[\?([\d;]*)c/', $this->answers, $m) === 1 && \in_array('4', explode(';', $m[1]), true);
         $bytes = (string) preg_replace(['/\e\[\?[\d;]*[uc]/', '/\eP>\|[^\e\x07]*(?:\e\\\\|\x07)/', '/\e\]11;[^\e\x07]*(?:\e\\\\|\x07)/',
-            '/\e_G[^\e\x07]*(?:\e\\\\|\x07)/', '/\e\[[46];\d+;\d+t/'], '', $this->probe);
+            '/\e_G[^\e\x07]*(?:\e\\\\|\x07)/', '/\e\[[46];\d+;\d+t/'], '', $this->answers);
         $this->probing = null;
-        $this->probe = '';
+        $this->answers = '';
         if ($this->root !== null && $this->images() !== $this->painter->protocol) {
             // (the terminal has images: what was drawn of image cells meanwhile is drawn again)
             $this->painter = new Internal\DeviceImages($this->images(), $this->cellSize(...));

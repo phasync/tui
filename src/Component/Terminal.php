@@ -20,7 +20,10 @@ use phasync\Tui\Pty;
  * SIGWINCH), its keys and pastes when the component has the focus, the answers to its queries.
  * It starts when the component has its real size (`sized()`: the render of the parent that shows
  * it), so full-screen programs that read their size once at start (vim, htop, less) start at the
- * size of their pane; a Terminal that no render shows has not started its program yet.
+ * size of their pane; a Terminal that no render shows has not started its program yet. One that
+ * must run before it is shown (a shell opened in the background, kept with `keep()`) is given a
+ * size: `new Terminal('sh', size: [80, 24])` starts at mount, 80x24, and is resized (SIGWINCH)
+ * when a render places it.
  *
  * When the program exits, the component stays as it is, showing the last output, and announces
  * it: `$onExit` is called with the exit status (in a coroutine of the component), the event
@@ -52,6 +55,7 @@ final class Terminal extends Component
      * @param string|null                $cwd     working directory, default the current one
      * @param array<string,string>       $env     variables added to the inherited environment
      * @param (\Closure(int $code, Terminal $terminal): void)|null $onExit called when the program has ended
+     * @param array{int, int}|null       $size    `[cols, rows]` to start the program at when mounted, before any render shows it (default: it starts when shown)
      * @param string|list<string>|null $class
      * @param array<string, mixed>|null $style
      */
@@ -60,6 +64,7 @@ final class Terminal extends Component
         private readonly ?string $cwd = null,
         private readonly array $env = [],
         private readonly ?\Closure $onExit = null,
+        private readonly ?array $size = null,
         ?string $key = null,
         ?string $id = null,
         string|array|null $class = null,
@@ -71,11 +76,18 @@ final class Terminal extends Component
     protected function mount(): void
     {
         $this->exited = new Deferred();
+        if ($this->size !== null) {
+            // asked to run before it is shown: at the given size, until a render places it
+            $this->surface->resize(max(1, $this->size[0]), max(1, $this->size[1]));
+            $this->launch();
+        }
     }
 
     protected function sized(): void
     {
-        $this->launch();
+        if ($this->pty === null) {
+            $this->launch();
+        }
     }
 
     private function launch(): void
