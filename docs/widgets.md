@@ -896,3 +896,10 @@ is for a view you scroll yourself: a column (row) with a thumb as large as the p
 numbers are props; the owner passes the current ones. A click on the track puts the thumb there, a drag
 moves it, the wheel scrolls three; `onScroll($position)` gets the new first row. Nothing is drawn when
 everything shows. It takes no keys. Style: `Scrollbar`, `Scrollbar::thumb`.
+
+## Badge
+
+`new Badge('beta', 'warning')`: a small coloured label, a space each side. Variants `neutral`, `info`,
+`success`, `warning`, `error` (the state `Badge:success` etc. in the stylesheet). `closable: true` makes a
+removable tag (`php ×`): a click on the `×`, or Delete/Backspace on the focused tag, calls
+`onClose($badge)`; the owner stops rendering it. A plain badge takes no focus. Style: `Badge`, `Badge::close`.
