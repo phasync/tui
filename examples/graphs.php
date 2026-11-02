@@ -111,7 +111,7 @@ $picture = fn(CanvasContext $c) => $c->drawImage($photo, 0, 0, $c->width(), $c->
 
 $graphBox = fn() => new Box(new Canvas(draw: $graph, marker: $marker), '<b>cpu</b> and <b>net</b>', class: 'grow');
 $screen = fn() => new Column([
-    new Row([new Text('<b>graphs</b>'), new Text(fn() => 'marker: ' . $marker . sprintf('   graph %.0f fps', $frames->fps) . (count($s->cpu) ? sprintf('   cpu %d%%', end($s->cpu)) : ''), class: 'grow text-right text-muted')], class: 'px-1'),
+    new Row([new Text('<b>graphs</b>'), new Text(fn() => 'marker: ' . $marker . ($fast ? sprintf('   graph %.0f fps', $frames->fps) : '') . (count($s->cpu) ? sprintf('   cpu %d%%', end($s->cpu)) : ''), class: 'grow text-right text-muted')], class: 'px-1'),
     new Row([
         $graphBox(),
         new Column([

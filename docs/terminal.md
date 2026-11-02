@@ -293,7 +293,14 @@ adds the stack traces; a program that installed its own `set_exception_handler()
 terminal was first taken over keeps it. The size is re-read on SIGWINCH with
 ext-pcntl, else polled twice a second. Text copied in a window goes to the clipboard with OSC 52
 and also through `wl-copy`, `xclip` or `pbcopy` when one is installed and a display is available.
-Writes to the terminal never block other coroutines and never interleave.
+Writes to the terminal never block other coroutines and never interleave; what is still queued
+when the program ends (a large frame on its way) is written before the terminal is restored.
+
+For a report about a terminal: `TUI_TRACE_BYTES=<file>` in the environment appends every byte
+sent to `<file>`, every byte read to `<file>.in`, and to `<file>.times` when, one line per send
+or read with its first bytes; `php tools/terminal-probe.php` prints what the terminal in front
+of you answers to the queries the device uses (device attributes, Kitty graphics and keyboard,
+cell size, Sixel geometry, background colour, modes 2026, 80 and 1016).
 
 ## FakeTerminal
 

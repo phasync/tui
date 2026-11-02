@@ -669,17 +669,22 @@ lists the methods: paths with `beginPath`, `moveTo`, `lineTo`, `arc`, `arcTo`, `
 have), `quarter` (2x2), `half` (1x2, two colours a cell), `block` (1x1), `pixels` (an image in the
 terminal's pixels; `quarter` on a terminal without images), and `auto` (the default: `pixels`
 where `TerminalDevice::images()` is not `none`, else `braille`). `markerInUse()` tells which.
-The canvas draws on a raster of its cells times the cell size in pixels (`Surface::cellSize()`,
-8x16 unless the terminal says otherwise) for every marker; the glyph markers scale it down to
-their dots, so a drawing covers the same cells on every marker.
+The canvas draws on a raster of the output grid: its cells times the cell size in pixels
+(`Surface::cellSize()`, 8x16 unless the terminal says otherwise) on `pixels`, times the dots a
+cell on the glyph markers (2x4 on `braille`); a dot is on where its pixel is at least half
+covered, so a drawing covers the same cells on every marker. A stroke of straight lines thinner
+than a dot (`lineWidth: 0.25` on `braille`) is snapped to the dot grid and comes out exactly one
+dot wide: axes and grid lines are crisp, where a browser would draw two faint dots.
 
 **When it draws**: when it renders: its size changed, a `State` the closure read changed (a live
 graph needs nothing else), or a new closure came with the parent's render. A drawing that comes
 out as the last one writes nothing, so a canvas that is drawn again every frame costs only the
-drawing when nothing moved. On `pixels` it writes one Kitty image through `write()` like any
-producer; the device shows it with the terminal's protocol: on Kitty it sends it once and places
-it, and a window over part of it costs placements only; on iTerm2 and Sixel it sends the cells
-that changed (see [terminal](terminal.md#images)).
+drawing when nothing moved. On `pixels` it writes images through `write()` like any producer:
+the whole picture the first time and after a size change, then one small image over each run
+of cells whose pixels changed, while the other cells keep what they show (a scrolling graph
+changes the cells along its curve, not the space around it). The device shows them with the
+terminal's protocol (see [terminal](terminal.md#images)), so the terminal decodes only what
+changed.
 
 **Pointer**: with `onMouse:` it follows the mouse (motion without a button too) and each `Mouse`
 carries the position in the canvas's units in `canvasX`/`canvasY` (the middle of the cell, with
@@ -688,11 +693,8 @@ returns false, the wheel only when it returns true.
 
 **Style**: `Canvas`. Its colour (the theme's accent; `text-` classes) is the starting `fillStyle`
 and `strokeStyle`, its background (`bg-` classes) what shows where nothing is drawn. Needs
-`ext-gd` or `ext-imagick` (phasync/canvas draws with one of them).
-
-**phasync/canvas is young**: strokes thinner than a unit (`lineWidth` under 1, so every line of a
-dot or two) and `drawImage()` do not follow the transform yet, so they come out at the wrong
-size, and `drawImage()` of a path or PNG bytes fails; pass a `GdImage` meanwhile (see DEVNOTES).
+`ext-gd` (phasync/canvas draws in PHP and reads and writes images with GD; `ext-imagick` is an
+optional renderer, `\phasync\Canvas\Canvas::$renderer = 'imagick'`).
 
 ## Markdown
 

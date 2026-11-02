@@ -586,31 +586,30 @@ at start-up which of these it has. Hosted programs get the same: `kitten icat`, 
 `examples/graphs.php` printed headless (`php examples/graphs.php --headless=88x20@2 --marker=braille`):
 
 ```text
- graphs                                                       marker: braille   cpu 50%
+ graphs                                                       marker: braille   cpu 54%
 ╭ cpu and net ───────────────────────────────────────────────╮╭ logo ──────────────────╮
-│ 100%                                                       ││          ⢀⣠⣦⣀          │
-│       cpu  net                                             ││       ⣀⣴⣾⣿⣿⣿⣿⣿⣶⣄⡀      │
-│                                                            ││      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿      │
-│                                                            ││      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿      │
-│                                                            ││      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿      │
-│          ⢰                                                 ││      ⠈⠛⢿⣿⣿⣿⣿⣿⣿⣿⠟⠋      │
-│          ⢸                                                 ││         ⠈⠙⠻⡿⠛⠉         │
-│  50%     ⢸                                                 │╰────────────────────────╯
-│          ⢸⡀                                                │╭ photo ─────────────────╮
-│          ⣿⡇                                                ││⠛⠛⠛                     │
-│          ⣿⡇                                                ││                        │
-│          ⣿⡇                                                ││                        │
-│         ⢀⣿⡇                                                ││                        │
-│      ⣶⣾⣷⣿⣿⡇                                                ││                        │
-│   0% ⠿⠿⠿⠿⠿⠇                                                ││                        │
-│    -60 s                                                now││                        │
+│ 100% ⡄                                                     ││          ⣠⣴⣦⣄          │
+│      ⡇cpu  net                                             ││      ⢀⣤⣶⣿⣿⣿⣿⣿⣿⣶⣤⡀      │
+│      ⡇                                                     ││      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇      │
+│      ⡇                                                     ││      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇      │
+│      ⡇                                                     ││      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇      │
+│      ⡇⡰⢄ ⢠⢆                                                ││      ⠈⠛⠿⣿⣿⣿⣿⣿⣿⠿⠛⠁      │
+│      ⣧⠃⠈⣆⠇⠈⡆ ⣀                                             ││          ⠙⠻⠟⠋          │
+│  50% ⡏  ⠹  ⠸⡴⠁                                             │╰────────────────────────╯
+│      ⡇      ⠁                                              │╭ photo ─────────────────╮
+│      ⡇                                                     ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿│
+│      ⡇                                                     ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿│
+│      ⡇                                                     ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿│
+│      ⡇                                                     ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿│
+│      ⡇                                                     ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿│
+│   0% ⠧⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠄││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿│
+│    -60 s                                                now││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿│
 ╰────────────────────────────────────────────────────────────╯╰────────────────────────╯
  ctrl+q quit
 ```
 
-(The axes, the cpu line and the photo are missing here because phasync/canvas does not yet
-apply the transform to strokes thinner than a unit or to `drawImage()`; see DEVNOTES.md. They
-appear without a change to the example once it does.)
+(The axes are hairlines, one dot wide; the photo's cells are all dots on, each in the colour of
+its pixels, which this text cannot show.)
 
 ## How it compares
 
