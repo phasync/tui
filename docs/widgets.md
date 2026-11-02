@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, and `Toast`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast` and `Paginator`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -803,3 +803,11 @@ screen corner, from anywhere in a running program (no instance needed). Severiti
 `timeout: 0` stays until clicked. Toasts stack in one overlay on the running root, one row each
 (markup allowed), never take the focus or the keys; a click dismisses one; `Toast::clear()`
 removes all. Styles: `Toast::message`, `Toast::mark`, with the severity as state.
+
+## Paginator
+
+`new Paginator(pages: 20, page: 1, display: 'numbers'|'dots'|'text', onChange: fn(int $page) => ...)`:
+`‹ 1 … 9 10 11 … 20 ›`, `‹ ● ○ ○ ›` or `‹ 3 / 20 ›`. Pages count from 1. Left/Right (h/l) and
+Page Up/Down step, Home/End go to the ends (at an end the key goes on); a click on a number or dot
+goes there, on `‹ ›` steps. `page()`, `setPage()`; a `Field` (value = the page). Styles:
+`Paginator::page` (state `current`), `Paginator::arrow` (state `disabled`).
