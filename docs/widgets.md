@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, `LineChart` with `ScatterChart`, `Heatmap`, and `BigText`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, `LineChart` with `ScatterChart`, `Heatmap`, `BigText`, `Stopwatch` and `Timer`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -860,3 +860,14 @@ contrast). A click on a cell with a value calls `onSelect`. `null` leaves a cell
 three with `compact: true` (half blocks). A clock or counter is `new BigText((string) $n)`; there is no
 separate `Digits` widget. `BigText::rows($text, $compact)` gives the rows as strings. Style: `BigText`
 (the colour of the glyphs, the accent by default).
+
+## Stopwatch, Timer
+
+`new Stopwatch(running: false, precision: 0, onTick: fn(float $elapsed) => ...)`: a clock that counts
+up (`00:12`, `00:12.3` with `precision: 1`, `1:02:03` from an hour) and ticks by itself only while it
+runs. Space or a click starts/stops, `r` resets; `play()`, `pause()` (not `start()`/`stop()`: those are
+the component's), `reset()`, `elapsed()`, `isRunning()`, `Stopwatch::format($seconds, $precision)`.
+`new Timer(300, running: true, onFinish: fn(Timer $t) => ...)` counts down (rounded up, so `00:00`
+means over), stops at zero, calls `onFinish` once and sets the state `finished` until reset;
+`remaining()`, `isFinished()`; playing a finished timer starts over. Styles: `Stopwatch` (states
+`running`, `focused`), `Timer:finished`.

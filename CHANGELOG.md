@@ -14,6 +14,7 @@ Widget parity with ratatui, Textual and Bubbles (branch `widgets/parity`):
 - New: `LineChart` and `ScatterChart` (series on axes with labels and legend, drawn on a `Canvas`).
 - New: `Heatmap` (cells coloured by value, optional labels and numbers).
 - New: `BigText` (large block-glyph numbers and text, also compact).
+- New: `Stopwatch` and `Timer` (self-ticking clock and countdown with play/pause/reset, `onFinish`).
 
 ## 0.0.5 (2026-11-02)
 
