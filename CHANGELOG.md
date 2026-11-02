@@ -13,6 +13,15 @@
   `braille`) is snapped to the dot grid and shows as exactly one dot wide, where a browser would
   draw it as two faint dots; axes and grid lines come out crisp. Curves and rotated transforms
   are stroked as they are.
+- On a Sixel terminal the last frame before the program gives the screen back draws the image
+  cells as quarter blocks. Windows Terminal keeps Sixel images apart from the text and showed
+  them over the shell after the switch back to the main screen; erasing the screen first raced
+  the switch there and sometimes erased the shell's text instead.
+- `TUI_TRACE_BYTES=<file>` logs every byte the device sends to the terminal (and `<file>.in`
+  what it reads), and `tools/terminal-probe.php` prints what the terminal answers to the
+  queries the device uses: for a report about a terminal.
+- `examples/graphs.php --fast`: new samples every 5 ms, frames uncapped, the frame rate in the
+  header (a Braille graph redraws about 115 times a second on a 2014 Xeon, interpreted).
 
 ## 0.0.4-beta1 (2026-11-01)
 

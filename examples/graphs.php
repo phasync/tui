@@ -9,6 +9,7 @@
  *     php examples/graphs.php --inline              # the graph only, under the shell's output
  *     php examples/graphs.php --theme=light         # dark, light, mono
  *     php examples/graphs.php --headless=100x30     # the Braille version, printed
+ *     php examples/graphs.php --fast                # new samples every 5 ms, frames uncapped: the header shows the frame rate
  *
  * In kitty, WezTerm, Ghostty, Konsole (Kitty graphics), iTerm2 and VS Code's terminal (iTerm2
  * images), xterm, foot, mlterm and Windows Terminal (Sixel) the canvases are real pixels;
@@ -24,11 +25,18 @@ use phasync\Tui\{State, Tui};
 
 $marker = ($m = preg_grep('/^--marker=/', $argv)) ? substr(reset($m), 9) : 'auto';
 $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
+$fast = in_array('--fast', $argv, true);
 $s = new State(['cpu' => [], 'net' => []]);
 $photo = imagecreatefrompng(__DIR__ . '/assets/photo.png');
+// the graph's frame rate: how often its canvas drew in the last second (not a State: counting a frame must not ask for another)
+$frames = (object) ['n' => 0, 'since' => microtime(true), 'fps' => 0.0];
 
 // the graph: 0-100 % over the last 60 samples, the network as a filled area, the cpu as a line
-$graph = function (CanvasContext $c) use ($s) {
+$graph = function (CanvasContext $c) use ($s, $frames) {
+    $frames->n++;
+    if (($dt = microtime(true) - $frames->since) >= 1.0) {
+        [$frames->fps, $frames->n, $frames->since] = [$frames->n / $dt, 0, microtime(true)];
+    }
     [$w, $h] = [$c->width(), $c->height()];
     [$left, $bottom] = [6, $h - 1.5];
     $x = fn(int $i) => $left + ($w - $left - 1) * $i / 59;
@@ -103,7 +111,7 @@ $picture = fn(CanvasContext $c) => $c->drawImage($photo, 0, 0, $c->width(), $c->
 
 $graphBox = fn() => new Box(new Canvas(draw: $graph, marker: $marker), '<b>cpu</b> and <b>net</b>', class: 'grow');
 $screen = fn() => new Column([
-    new Row([new Text('<b>graphs</b>'), new Text(fn() => 'marker: ' . $marker . (count($s->cpu) ? sprintf('   cpu %d%%', end($s->cpu)) : ''), class: 'grow text-right text-muted')], class: 'px-1'),
+    new Row([new Text('<b>graphs</b>'), new Text(fn() => 'marker: ' . $marker . sprintf('   graph %.0f fps', $frames->fps) . (count($s->cpu) ? sprintf('   cpu %d%%', end($s->cpu)) : ''), class: 'grow text-right text-muted')], class: 'px-1'),
     new Row([
         $graphBox(),
         new Column([
@@ -114,24 +122,24 @@ $screen = fn() => new Column([
     new Help(class: 'px-1'),
 ]);
 
-\fiber\run(function () use ($s, $screen, $graphBox, $theme, $argv) {
+\fiber\run(function () use ($s, $screen, $graphBox, $theme, $argv, $fast) {
     // two series sampled by coroutines: a noisy cpu load and a bursty network
-    Tui::go(function () use ($s) {
+    Tui::go(function () use ($s, $fast) {
         $v = 40.0;
         while (true) {
             $v = max(2, min(98, $v + mt_rand(-120, 120) / 10));
             $s->cpu = [...array_slice($s->cpu, -59), $v];
-            Tui::sleep(0.2);
+            Tui::sleep($fast ? 0.005 : 0.2);
         }
     });
-    Tui::go(function () use ($s) {
+    Tui::go(function () use ($s, $fast) {
         while (true) {
             $burst = mt_rand(0, 9) === 0 ? mt_rand(40, 90) : mt_rand(5, 25);
             $s->net = [...array_slice($s->net, -59), (float) $burst];
-            Tui::sleep(0.3);
+            Tui::sleep($fast ? 0.005 : 0.3);
         }
     });
     in_array('--inline', $argv, true)
-        ? Tui::inline(fn() => $graphBox()->with(height: 12), theme: $theme, fps: 30)
-        : Tui::run($screen, theme: $theme, fps: 30);
+        ? Tui::inline(fn() => $graphBox()->with(height: 12), theme: $theme, fps: $fast ? 1000 : 30)
+        : Tui::run($screen, theme: $theme, fps: $fast ? 1000 : 30);
 });

@@ -312,6 +312,28 @@ it('on Sixel, draws again only the cells a window covered, scaled to them, and u
     });
 });
 
+it('on Sixel, draws the image cells as text before leaving the screen (a terminal that keeps images apart from the text would show them over the shell), without erasing it', function () {
+    if (!function_exists('imagecreatefromstring')) {
+        $this->markTestSkipped('Sixel output needs GD');
+    }
+    \fiber\run(function () {
+        $t = new FakeTerminal(30, 10, images: 'sixel');
+        $root = new Surface(30, 10);
+        $t->attach($root);
+        $t->settle();
+        $root->write("\e[2;3H" . Ansi::image(twoColours(64, 48), 8, 3));
+        $t->refresh();
+        $t->takeOutput();
+        $t->detach();
+        $out = $t->takeOutput();
+        // the quarter-block fallback over the image's cells (red then blue), then mode 8452 reset and the main screen
+        $frame = substr($out, 0, (int) strpos($out, "\e[?8452l"));
+        expect($out)->not->toContain("\e[2J")->and($out)->not->toContain("\eP")
+            ->and($frame)->toContain("\e[0;38;2;255;0;0m████\e[0;38;2;0;0;255m████\e[3;3H")
+            ->and(strpos($out, "\e[?8452l"))->toBeLessThan(strpos($out, "\e[?1049l"));
+    });
+});
+
 it('round-trips a hosted program\'s Sixel image to a Sixel terminal, and shows it as quarter blocks without a protocol', function () {
     if (!function_exists('imagecreatefromstring')) {
         $this->markTestSkipped('Sixel output needs GD');
