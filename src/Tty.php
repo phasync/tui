@@ -58,6 +58,17 @@ final class Tty extends TerminalDevice
         $this->hyperlinks = self::hyperlinksFromEnvironment(getenv());
         $this->images = self::imagesFromEnvironment(getenv());
         $this->setColors(self::colorsFromEnvironment(getenv()));
+        $this->traceFile = getenv('TUI_TRACE_BYTES') ?: null;
+    }
+
+    /** `TUI_TRACE_BYTES=<file>` in the environment: every byte sent to the terminal is appended to the file, every byte received to `<file>.in`. */
+    private ?string $traceFile = null;
+
+    private function trace(string $bytes, bool $in = false): void
+    {
+        if ($this->traceFile !== null && $bytes !== '') {
+            @file_put_contents($this->traceFile . ($in ? '.in' : ''), $bytes, \FILE_APPEND);
+        }
     }
 
     /**
@@ -223,6 +234,7 @@ final class Tty extends TerminalDevice
         }
         stream_set_blocking($this->out, true);
         if ($this->restore !== '') {
+            $this->trace($this->restore);
             @fwrite($this->out, $this->restore);
         }
         $this->stty($this->saved);
@@ -257,6 +269,7 @@ final class Tty extends TerminalDevice
     {
         // one writer at a time: bytes sent while a write waits for the terminal queue behind it,
         // so two sequences never interleave
+        $this->trace($bytes);
         $this->queue .= $bytes;
         if ($this->sending) {
             return;
@@ -287,7 +300,11 @@ final class Tty extends TerminalDevice
             return '';
         }
         $data = @fread($this->in, 65536);
-        return \is_string($data) ? $data : '';
+        if (\is_string($data)) {
+            $this->trace($data, true);
+            return $data;
+        }
+        return '';
     }
 
     protected function clipboard(string $text): void
