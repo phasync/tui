@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.0 (2026-11-02)
+
+The library stops abstracting what `fiber\` abstracts, and stops owning a key:
+
+- **`Tui::go()`, `Tui::sleep()` and `Quit` are gone.** A program's coroutines are plain
+  `fiber\go()` and wait with plain `fiber\sleep()`, `fiber\await()` or a stream. The program is
+  the `fiber\run()` it is in: when the screen ends, `Tui` cancels that run (`fiber\cancel
+  (fiber\frame())`, fiber-interop/api 0.3.3), so every wait of the program's coroutines throws
+  `fiber\Cancelled` and `fiber\run()` returns; the failure of a coroutine nobody awaits ends the
+  program (`fiber\on_failure()`). `Tui::run()`/`inline()` inside a run use that run, from
+  `{main}` they make one; `Tui::headless()` uses the caller's run (a test that goes on after
+  its program nests it in a `fiber\run()` of its own). On an adapter without `fiber\cancel()`
+  the screen ends and the coroutines run on. `Tui::nextFrame()` stays. Requires
+  fiber-interop/api ^0.3.3 (phasync/revolt/react adapters as before; amp 0.3.1 and trueasync
+  0.1.1 gained `cancel()`).
+- **No default quit key.** `Tui` no longer binds Ctrl-Q; a program binds its own,
+  `keys: ['ctrl+q' => ['quit', 'quit']]` (listed by `Help`) or a component binding to the
+  action `quit`. `Tui::QUIT` is gone.
+- `Internal\Signal`'s clock is a `fiber\service`, so a program's end does not stall the timed
+  waits of the next program in the same process.
+
 ## 0.0.7 (2026-11-02)
 
 - `BigText` draws more than English. The block font: a letter with a diacritic as its base letter

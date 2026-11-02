@@ -28,7 +28,7 @@ it('stops the fiber\go() coroutines of a program when it quits: their fiber\slee
                 $log[] = 'cleaned up';
             }
         });
-        $t = Tui::headless(fn() => new Text("n={$s->n}"), 20, 2);
+        $t = Tui::headless(fn() => new Text("n={$s->n}"), 20, 2, keys: ['ctrl+q' => ['quit', 'quit']]);
         // started while it runs, ended by Quit without a catch of its own
         \fiber\go(function () use (&$log) {
             while (true) {
@@ -45,9 +45,9 @@ it('stops the fiber\go() coroutines of a program when it quits: their fiber\slee
 });
 
 it('throws the cancellation from every fiber\sleep() of a coroutine whose program has ended', function () {
-    fiber\run(function () {
+    $calls = [];
+    fiber\run(function () use (&$calls) {
         $t = Tui::headless(new Text('x'), 10, 1);
-        $calls = [];
         \fiber\go(function () use (&$calls) {
             try {
                 fiber\sleep(0.1);     // (since 0.0.3-beta8 cut short too: the coroutine is cancelled with the Quit)
@@ -65,9 +65,9 @@ it('throws the cancellation from every fiber\sleep() of a coroutine whose progra
             }
         });
         Tui::quit();
-        fiber\sleep(0.2);
-        expect($calls)->toBe(['fiber\sleep: Cancelled', 'Cancelled', 'Cancelled']);
     });
+    // (after fiber\run(): the quit cancelled the run, the body's own next wait would throw too)
+    expect($calls)->toBe(['fiber\sleep: Cancelled', 'Cancelled', 'Cancelled']);
 });
 
 it('cancels every coroutine of the run when the program ends, and a sleep without a program is plain', function () {

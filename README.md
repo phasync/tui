@@ -79,7 +79,7 @@ $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
             }
         });
     }
-    in_array('--inline', $argv, true) ? Tui::inline($boxes, theme: $theme) : Tui::run($screen, theme: $theme);
+    in_array('--inline', $argv, true) ? Tui::inline($boxes, theme: $theme, keys: ['ctrl+q' => ['quit', 'quit']]) : Tui::run($screen, theme: $theme, keys: ['ctrl+q' => ['quit', 'quit']]);
 });
 ```
 
@@ -107,13 +107,13 @@ fiber\run(function () use ($s) {
     Tui::inline(fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),
-    ]));
+    ]), keys: ['ctrl+q' => ['quit', 'quit']]);
 });
 ```
 
 That is a whole program: a line and a progress bar as a live region under the shell's output,
 counting to 100%. The closure is the screen; it is rendered again whenever a `State` it read
-changes, here from a coroutine. Ctrl-Q quits; `Tui::run()` shows the same screen full screen,
+changes, here from a coroutine. It binds no quit key (add `keys: ['ctrl+q' => ['quit', 'quit']]`, as `examples/working.php` does); `Tui::run()` shows the same screen full screen,
 `Tui::headless()` on an in-memory terminal for tests (`examples/working.php` runs both ways).
 `fiber\go()` is `fiber\go()` for a coroutine of the program: its exception ends the program, and
 it stops with the program when it waits with `fiber\sleep()`; both must be called inside
@@ -191,7 +191,7 @@ library uses the loop you have. (Without an adapter the first `Tui::run()` throw
 resizes and terminal restore on SIGTERM. PHP 8.3 or later, ext-gd for `Canvas`.
 
 **A first program**, `examples/kitchen-sink.php`: a little of everything on one screen, no
-class of its own. Tab moves the focus, Ctrl-Q quits; `TUI_HEADLESS=80x22 php
+class of its own. Tab moves the focus, the program binds Ctrl-Q to quit; `TUI_HEADLESS=80x22 php
 examples/kitchen-sink.php` prints the screen as text without a terminal:
 
 ```text
@@ -270,7 +270,7 @@ $log->append("started\n");
             new Box($log, 'log', class: 'grow'),
         ], class: 'grow'),
         new Help(),
-    ]), keys: ['ctrl+l' => [fn() => $log->append(date('H:i:s') . " hello\n"), 'log a line']]);
+    ]), keys: ['ctrl+q' => ['quit', 'quit'], 'ctrl+l' => [fn() => $log->append(date('H:i:s') . " hello\n"), 'log a line']]);
 });
 ```
 
@@ -612,9 +612,9 @@ disposes the component tree: `Terminal`s hang their programs up with everything 
 the terminal is restored. An exception in the root component, in a coroutine of it, or in the
 code that started it does the same and is then thrown to you, by `start()` or by
 `fiber\run()`, with the terminal already given back. `Tui::run($root)`, `Tui::inline($root)`
-and `Tui::headless($root, $cols, $rows)` are the runner: they start the root, quit it on Ctrl-Q
-when nothing binds that key (or when `Tui::quit()` is called, or a key bound to `'quit'` is
-pressed), and return when it ended. A `Pty` you start yourself is yours to end.
+and `Tui::headless($root, $cols, $rows)` are the runner: they start the root, quit it when a key the program bound to `quit`
+(`keys: ['ctrl+q' => ['quit', 'quit']]`; the runner binds none itself) is
+pressed (or when `Tui::quit()` is called), and return when it ended. A `Pty` you start yourself is yours to end.
 
 **Test it headless.** `FakeTerminal` is a terminal device in memory; what it shows must equal
 the root's cells, and input is encoded as a real terminal would: `type()` for text, `press()`

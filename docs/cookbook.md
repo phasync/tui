@@ -1,7 +1,7 @@
 # Cookbook
 
 Ten screens, each a whole program of under forty lines, none of them with a class. Copy
-one into a file after `require 'vendor/autoload.php';` and run it; Ctrl-Q quits. Each is run
+one into a file after `require 'vendor/autoload.php';` and run it; each binds Ctrl-Q to quit. Each is run
 by `tests/Docs/CookbookTest.php` under a `FakeTerminal` at 60x20 and at 160x50, so what you
 read here works. Without a terminal, `TUI_HEADLESS=80x24 php screen.php` prints the screen as
 text, and `TUI_THEME=light` (or `--theme=mono`) picks the theme it is drawn in.

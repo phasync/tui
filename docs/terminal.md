@@ -305,7 +305,7 @@ fiber\run(function () {
     (new App())->start(new Tty());   // run() returns once the app quits (or rethrows its failure)
 });
 
-Tui::run(new App());                 // the same in one call, Ctrl-Q quitting by default
+Tui::run(new App(), keys: ['ctrl+q' => ['quit', 'quit']]);    // the same in one call
 ```
 
 ## Tty

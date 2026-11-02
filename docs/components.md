@@ -45,14 +45,14 @@ fiber\run(function () {
     Tui::inline(fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),
-    ]));
+    ]), keys: ['ctrl+q' => ['quit', 'quit']]);
 });
 ```
 
 **A closure is a component.** `Tui::run()`, `Tui::inline()` and `Tui::headless()` take an
 element, a component, or a closure that returns either. The closure is rendered (called) when
 the screen is shown and again whenever a `State` it read changes (see "State" below): here,
-every write of `$s->done`. It quits on Ctrl-Q like every program run by `Tui`. A closure that
+every write of `$s->done`. It quits on the key it binds (`keys: ['ctrl+q' => ['quit', 'quit']]`; `Tui` binds none of its own). A closure that
 reads no state is called once, and the component it returns is the root itself
 (`Tui::run(fn() => new App())`).
 
@@ -256,8 +256,9 @@ fiber\run(function () {
 root, waits until it has quit, gives the terminal back and returns the root component (to read
 what it collected). `Tui::inline($root, keep: true)` does the same in inline mode, and
 `Tui::headless($root, $cols, $rows)` starts it on a `FakeTerminal` inside your own `fiber\run()`
-and returns the terminal, for tests (`inline: true` for inline mode). Under `Tui`, **Ctrl-Q
-quits** when no component on the key's way binds it (a `Help` element lists it as "quit");
+and returns the terminal, for tests (`inline: true` for inline mode). **The quit key is the
+program's**: `Tui` binds none; `keys: ['ctrl+q' => ['quit', 'quit']]` (listed by `Help` as
+"quit") or a component's binding to the action `quit` ends it, as `Tui::quit()` does.
 `$root` may be an element tree or a closure (see "Without a class").
 
 - **Quitting.** Dispose the root component (`$this->dispose()` in its key handler), call
@@ -751,7 +752,7 @@ on its first row), which goes on.
 the exception: while it is focused, the keys its own bindings do not take go to its program,
 not to the plain bindings of its parents, their elements' `onKey:` or `anywhere` bindings. Its
 parents' bindings marked `first` (asked on the way down) and `always` still come before it, and
-so does the runner's Ctrl-Q of `Tui::run()`. So a shell gets Ctrl-D, Ctrl-R and Escape
+so a shell gets Ctrl-D, Ctrl-R and Escape
 whatever the application binds, and a key the application needs from inside a shell is bound
 `'first' => true`.
 
@@ -1278,8 +1279,7 @@ the function keys. A key the application needs while a shell has the focus is bo
 `'first' => true` (or `'always' => true`), and it is then not the shell's, so pick ones a shell
 does not use, as tmux does: Ctrl-Tab and Alt-number (what `Tabs` binds), a prefix key such as
 Ctrl-B or Ctrl-Space, function keys the program does not read. Avoid binding Ctrl-A to Ctrl-Z,
-Escape, Tab and the arrows `first` around a Terminal. The runner's Ctrl-Q (`Tui::run()`) still
-ends the program when nothing binds it.
+Escape, Tab and the arrows `first` around a Terminal.
 
 ### Log
 

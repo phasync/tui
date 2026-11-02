@@ -140,6 +140,6 @@ $screen = fn() => new Column([
         }
     });
     in_array('--inline', $argv, true)
-        ? Tui::inline(fn() => $graphBox()->with(height: 12), theme: $theme, fps: $fast ? 1000 : 30)
-        : Tui::run($screen, theme: $theme, fps: $fast ? 1000 : 30);
+        ? Tui::inline(fn() => $graphBox()->with(height: 12), theme: $theme, fps: $fast ? 1000 : 30, keys: ['ctrl+q' => ['quit', 'quit']])
+        : Tui::run($screen, theme: $theme, fps: $fast ? 1000 : 30, keys: ['ctrl+q' => ['quit', 'quit']]);
 });

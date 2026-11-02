@@ -30,5 +30,5 @@ fiber\run(function () use ($s, $full) {
         new ProgressBar($s->done / 100),
         new Help(),
     ]);
-    $full ? Tui::run($screen) : Tui::inline($screen);
+    $full ? Tui::run($screen, keys: ['ctrl+q' => ['quit', 'quit']]) : Tui::inline($screen, keys: ['ctrl+q' => ['quit', 'quit']]);
 });

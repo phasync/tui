@@ -20,14 +20,14 @@ function dashboard(array $args, int $cols, int $rows, Closure $check): void
     $code = (string) file_get_contents(__DIR__ . '/../../examples/dashboard.php');
     $code = preg_replace(['/^<\?php/', "/^require .*;\n/m"], '', $code);
     $code = str_replace(
-        ['Tui::inline($boxes, theme: $theme)', 'Tui::run($screen, theme: $theme)'],
-        ['$GLOBALS[\'dashboardRun\']($boxes, true, $theme)', '$GLOBALS[\'dashboardRun\']($screen, false, $theme)'],
+        ['Tui::inline($boxes, theme: $theme, keys: ', 'Tui::run($screen, theme: $theme, keys: '],
+        ['$GLOBALS[\'dashboardRun\']($boxes, true, $theme, ', '$GLOBALS[\'dashboardRun\']($screen, false, $theme, '],
         $code,
         $count,
     );
     expect($count)->toBe(2);
-    $GLOBALS['dashboardRun'] = function (Closure $root, bool $inline, ?string $theme) use ($cols, $rows, $check): void {
-        $t = Tui::headless($root, $cols, $rows, inline: $inline, theme: $theme);
+    $GLOBALS['dashboardRun'] = function (Closure $root, bool $inline, ?string $theme, array $keys) use ($cols, $rows, $check): void {
+        $t = Tui::headless($root, $cols, $rows, inline: $inline, theme: $theme, keys: $keys);
         $t->run(fn() => $check($t));
     };
     (static function (array $argv) use ($code) {

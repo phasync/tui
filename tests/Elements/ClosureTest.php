@@ -45,7 +45,7 @@ function spec91(int $cols, int $rows, bool $inline = false): FakeTerminal
     return Tui::headless(fn() => new Column([
         new Text("Working… {$s->done}%"),
         new ProgressBar($s->done / 100),
-    ]), $cols, $rows, $inline);
+    ]), $cols, $rows, $inline, keys: ['ctrl+q' => ['quit', 'quit']]);
 }
 
 it('runs the example of SPEC 9.1 headless at two sizes, full screen and inline', function (int $cols, int $rows, bool $inline) {
@@ -120,9 +120,9 @@ it('updates a closure Text, a Box title and a ProgressBar value inside a static 
     });
 });
 
-it('quits a closure root with Ctrl-Q when nothing binds it, and gives a closure that read no state its component as the root', function () {
+it('quits a closure root with the Ctrl-Q the program binds, and gives a closure that read no state its component as the root', function () {
     \fiber\run(function () {
-        $t = Tui::headless(fn() => new Text('hello'), 20, 3);
+        $t = Tui::headless(fn() => new Text('hello'), 20, 3, keys: ['ctrl+q' => ['quit', 'quit']]);
         $t->settle();
         $t->press('ctrl+q');
         expect($t->isAttached())->toBeFalse();

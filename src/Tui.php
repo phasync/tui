@@ -44,19 +44,20 @@ use phasync\Tui\Internal\Live;
  * programs. **Headless without editing**: a program run with `--headless=COLSxROWS` (or with
  * `TUI_HEADLESS=COLSxROWS` in the environment) runs `Tui::run()`/`Tui::inline()` on a
  * `FakeTerminal` of that size instead of the terminal for a second (`COLSxROWS@SECONDS` for
- * another time), prints the screen and ends (the root quits, as with Ctrl-Q):
+ * another time), prints the screen and ends (the root quits, as `Tui::quit()` does):
  * `php examples/dashboard.php --headless=100x30`.
  *
  * **The program is the `fiber\run()` it is in.** `Tui::run()` and `Tui::inline()` called inside
  * your `fiber\run()` run the screen there: the coroutines you start with `fiber\go()` before or
- * beside it are the program's, and when the screen ends (Ctrl-Q, `Tui::quit()`, the root
+ * beside it are the program's, and when the screen ends (its quit key, `Tui::quit()`, the root
  * disposed) the whole run is cancelled (`fiber\cancel(fiber\frame())`): every wait they are in
  * throws `fiber\Cancelled`, which ends them (or is caught, to clean up without waiting), and
  * `fiber\run()` returns. Called from `{main}`, they make a `fiber\run()` of their own. They return
  * the root component, ended (read what it collected from it); the code after the call runs
- * until its next wait. **Quitting**: the root quits when it is disposed (`$this->dispose()` in
- * the root, `$root->dispose()` from anywhere, `Tui::quit()`) or when Ctrl-Q reaches it and no
- * component on the way binds Ctrl-Q (a `Help` element lists it as "quit").
+ * until its next wait. **Quitting** is the program's own: the root quits when it is disposed
+ * (`$this->dispose()` in the root, `$root->dispose()` from anywhere, `Tui::quit()`), and a key
+ * does it when the program binds one, `keys: ['ctrl+q' => ['quit', 'quit']]` (listed by `Help`
+ * as "quit") or a component's `bindings()` to `'quit'`. The library binds no key of its own.
  * **Theme**: `theme:` is `'dark'`, `'light'` or `'mono'` (see `Stylesheet::theme()`); without it the
  * program is drawn in the theme the person running it asked for with `--theme=NAME` or
  * `TUI_THEME=NAME` (`run()` and `inline()`, with or without `--headless`), else in the theme for
@@ -75,9 +76,6 @@ use phasync\Tui\Internal\Live;
  */
 final class Tui
 {
-    /** The key that quits a program run by `Tui` when nothing binds it. */
-    public const QUIT = 'ctrl+q';
-
     /**
      * Wait for the next frame of the running program: returns once the frame has been drawn
      * and sent to the terminal, with the seconds since the frame before it (the `dt` of a game
@@ -109,7 +107,7 @@ final class Tui
     }
 
     /**
-     * End the running program, as Ctrl-Q does: the root is disposed, the terminal given back,
+     * End the running program: the root is disposed, the terminal given back,
      * and `Tui::run()` (`inline()`) returns. From any handler or coroutine of the program, also
      * one started with `fiber\go()`; a key action too, without a closure:
      * `Tui::run($screen, keys: ['q' => ['quit', 'quit']])` (a binding to `'quit'` on a component
@@ -178,12 +176,12 @@ final class Tui
      * $inline, see `FakeTerminal::inline()`) and return the terminal: for tests and headless
      * programs, inside your own `fiber\run()`, which is the program's run as for `run()`: its
      * end cancels that run (a test that goes on after the program ended, or runs several, puts
-     * each in a nested `fiber\run()`). The root quits as under `run()` (Ctrl-Q included); drive it
-     * with the terminal's `press()`, `type()`, `settle()` and read it with `text()`.
+     * each in a nested `fiber\run()`). The root quits as under `run()` (`keys:` binds its quit
+     * key); drive it with the terminal's `press()`, `type()`, `settle()` and read it with `text()`.
      * `$terminal->detach()` ends it. A failure of the program comes out of your `fiber\run()`.
      *
      *     fiber\run(function () {
-     *         $terminal = Tui::headless(new App(), 60, 20);
+     *         $terminal = Tui::headless(new App(), 60, 20, keys: ['ctrl+q' => 'quit']);
      *         $terminal->press('ctrl+q');
      *     });
      *
@@ -364,7 +362,6 @@ final class Tui
         } else {
             $app = $root instanceof Component ? $root : new Live($root);
         }
-        $app->quitOn(self::QUIT);
         if ($keys !== []) {
             $app->bind($keys, first: true);
         }

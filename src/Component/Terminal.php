@@ -42,8 +42,7 @@ use phasync\Tui\Pty;
  * not take keys from it. A key the application needs while a shell has the focus is bound
  * `'first' => true` or `'always' => true` (it is then not the shell's): pick ones a shell does
  * not use, as tmux does (Ctrl-Tab, Alt-number, a prefix key such as Ctrl-B or Ctrl-Space,
- * F-keys a program does not read). The runner's Ctrl-Q (`Tui::run()`) still ends the program
- * when nothing binds it.
+ * F-keys a program does not read).
  */
 final class Terminal extends Component
 {

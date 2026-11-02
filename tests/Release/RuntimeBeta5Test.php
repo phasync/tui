@@ -85,7 +85,7 @@ it('ends a headless program that quits, with coroutines of \fiber\go() looping i
         fiber\run(function () {
             $s = new State(['n' => 0]);
             \fiber\go(function () use ($s) { while (true) { \fiber\sleep(0.01); $s->n++; } });
-            $t = Tui::headless(fn() => new Text("n={$s->n}"), 10, 1);
+            $t = Tui::headless(fn() => new Text("n={$s->n}"), 10, 1, keys: ['ctrl+q' => ['quit', 'quit']]);
             fiber\sleep(0.1);
             $t->press('ctrl+q');
         });

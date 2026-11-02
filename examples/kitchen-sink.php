@@ -61,5 +61,5 @@ $log->append("started\n");
             new Box($log, 'log', class: 'grow'),
         ], class: 'grow'),
         new Help(),
-    ]), keys: ['ctrl+l' => [fn() => $log->append(date('H:i:s') . " hello\n"), 'log a line']]);
+    ]), keys: ['ctrl+q' => ['quit', 'quit'], 'ctrl+l' => [fn() => $log->append(date('H:i:s') . " hello\n"), 'log a line']]);
 });

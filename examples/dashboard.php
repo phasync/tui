@@ -50,5 +50,5 @@ $theme = ($t = preg_grep('/^--theme=/', $argv)) ? substr(reset($t), 8) : null;
             }
         });
     }
-    in_array('--inline', $argv, true) ? Tui::inline($boxes, theme: $theme) : Tui::run($screen, theme: $theme);
+    in_array('--inline', $argv, true) ? Tui::inline($boxes, theme: $theme, keys: ['ctrl+q' => ['quit', 'quit']]) : Tui::run($screen, theme: $theme, keys: ['ctrl+q' => ['quit', 'quit']]);
 });

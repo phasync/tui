@@ -206,15 +206,24 @@ it('changes nothing when the starter returns normally', function () {
     });
 });
 
-it('quits a Tui program with ctrl+q when nothing binds it, and Help lists it', function () {
+it('does not quit a Tui program on ctrl+q unless the program binds it, and then Help lists it', function () {
     fiber\run(function () {
-        $app = new class () extends Component {
+        $make = fn() => new class () extends Component {
             protected function render(): Element
             {
                 return new Element\Column([new Text('app'), new Element\Help()]);
             }
         };
+        $app = $make();
         $t = Tui::headless($app, 30, 3);
+        $t->settle();
+        expect($t->text())->not->toContain('ctrl+q');
+        $t->press('ctrl+q');
+        expect($app->isMounted())->toBeTrue()->and($t->isAttached())->toBeTrue();
+        $t->detach();
+
+        $app = $make();
+        $t = Tui::headless($app, 30, 3, keys: ['ctrl+q' => ['quit', 'quit']]);
         $t->settle();
         expect($t->text())->toContain('ctrl+q quit');
         $t->press('ctrl+q');

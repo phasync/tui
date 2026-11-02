@@ -86,7 +86,7 @@ it('cancels a fiber\go() coroutine wherever it waits when the program quits', fu
     $got = [];
     $start = microtime(true);
     fiber\run(function () use (&$got) {
-        $t = Tui::headless(new Text('x'), 10, 1);
+        $t = Tui::headless(new Text('x'), 10, 1, keys: ['ctrl+q' => ['quit', 'quit']]);
         \fiber\go(function () use (&$got) {
             try {
                 fiber\sleep(30);

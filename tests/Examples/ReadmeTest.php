@@ -31,8 +31,10 @@ it('runs the one-file program of the README and of docs/components.md on an in-m
     preg_match('/```php\n((?:(?!```).)*Working….*?)```/s', $text, $m);
     expect($m[1])->toContain('Tui::inline(fn() => new Column([')->toContain('fiber\go(');
     // as written, but faster, and headless: the screen is read, then Ctrl-Q
-    $code = str_replace(['fiber\sleep(0.05)', 'Tui::inline(', "]));\n});"], ['fiber\sleep(0.002)', '$t = Tui::headless(', "]), 60, 8, inline: true);\n    readmeWorking(\$t);\n});"], $m[1], $count);
-    expect($count)->toBe(3);
+    $code = str_replace(['fiber\sleep(0.05)', 'Tui::inline(', "]), keys:"], ['fiber\sleep(0.002)', '$t = Tui::headless(', "]), 60, 8, inline: true, keys:"], $m[1], $count);
+    $code = str_replace("]);\n});", "]);\n    readmeWorking(\$t);\n});", $code, $more);
+    $count += $more;
+    expect($count)->toBe(4);
     eval($code);
 })->with(['README.md', 'docs/components.md']);
 
@@ -43,7 +45,7 @@ it('runs the README\'s styled screen: utility classes and markup, side by side w
     expect($count)->toBe(1);
     eval($code);
     run(function () {
-        $t = Tui::headless($GLOBALS['readmeStyled'], 110, 12);
+        $t = Tui::headless($GLOBALS['readmeStyled'], 110, 12, keys: ['ctrl+q' => ['quit', 'quit']]);
         $t->settle();
         $lines = explode("\n", $t->text());
         $screen = $t->root();
@@ -214,7 +216,7 @@ it('runs the README\'s tree of 100,000 nodes: it opens fast, moves to the end, c
     eval(readmeBlock('final class Outline'));
     run(function () {
         $start = microtime(true);
-        $t = Tui::headless($app = new Outline(), 50, 12);
+        $t = Tui::headless($app = new Outline(), 50, 12, keys: ['ctrl+q' => ['quit', 'quit']]);
         $t->run(function (FakeTerminal $t) use ($start) {
             $t->settle();
             expect($t->text())->toContain('outline')->toContain('section 1')->toContain('item 1.1');

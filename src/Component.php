@@ -1281,8 +1281,7 @@ abstract class Component extends Element
      * keys its own bindings and `onKey()` do not take go to its surface's program, not to the
      * bindings of the components around it (their plain ones, their elements' `onKey:`, and
      * `anywhere` ones); only their bindings marked `first` (which see the key on its way down)
-     * or `always` (an application's quit key) and the runner's quit key (Ctrl-Q of `Tui::run()`)
-     * come before it. A `Terminal` says so, so a shell gets Ctrl-D, Ctrl-R, Escape and the
+     * or `always` (an application's quit key) come before it. A `Terminal` says so, so a shell gets Ctrl-D, Ctrl-R, Escape and the
      * arrows whatever its parents bind. Override it for a widget that wants the same (a game,
      * a raw key pad).
      */
@@ -2697,7 +2696,7 @@ abstract class Component extends Element
 
     /**
      * @internal On a root: dispose it when $key reaches it and no component on the key path
-     * binds it (`Tui::run()`'s Ctrl-Q); null for none. `Help` lists it as "quit".
+     * binds it; null for none. `Help` lists it as "quit". (`Tui` binds none: a program's `keys:` do.)
      */
     final public function quitOn(?string $key): void
     {

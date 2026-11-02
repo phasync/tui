@@ -115,6 +115,7 @@ function kanbanKeys(State $s): array
             }
             $s->log = [...$s->log, $answer ? 'renamed' : 'kept'];
         }, 'rename'],
+        'ctrl+q' => ['quit', 'quit'],
     ];
 }
 
