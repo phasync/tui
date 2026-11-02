@@ -2,7 +2,7 @@
 
 Components for the screens applications are made of, in `phasync\Tui\Component\`: `Editor`,
 `Table`, `Select`, `Tree`, `Dialog` and `Confirm`, `Form` with `Button` and `Checkbox`, `ScrollView`,
-`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, `LineChart` with `ScatterChart`, `Heatmap`, `BigText`, `Stopwatch`, `Timer`, `DirectoryTree` and `FilePicker`. Each is an element (place it in a tree where it
+`Tabs`, `ProgressBar` and `Spinner`, `Canvas`, `Markdown`, `Collapsible` and `Accordion`, `Toast`, `Paginator`, `MaskedInput`, `Menu` with `MenuBar`, `LineChart` with `ScatterChart`, `Heatmap`, `BigText`, `Stopwatch`, `Timer`, `DirectoryTree` and `FilePicker`, and the small ones: `Scrollbar`, `Badge`, `Link` and `Placeholder`. Each is an element (place it in a tree where it
 shows), takes its keys from `bindings()` (rebind them with `bind()`, see
 [components](components.md#key-bindings)), draws itself through `write()` in the look the
 stylesheet gives it, and is tested through `FakeTerminal` for the keyboard and the mouse.
@@ -912,3 +912,9 @@ Ctrl-click, and shown as plain text on the others. It takes the focus; Enter or 
 `onActivate($url)`, which is how a program opens it itself (a terminal that is sent mouse reports does
 not follow links on its own). Style: `Link` (accent, underlined), `:focused`, `:hover`, `:disabled`. In a
 `Text` or `Markdown` a link is `<href=https://...>text</>` (see [styling](styling.md#markup-in-text)).
+
+## Placeholder
+
+`new Placeholder('sidebar', width: 20)`: a `╱`-hatched stand-in that fills its room and writes its label and
+size (` sidebar 20x5 `) in the middle, for sketching a layout before the widgets exist. Style:
+`Placeholder` (dimmed), `Placeholder::label`.

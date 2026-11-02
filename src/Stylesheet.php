@@ -295,6 +295,8 @@ final class Stylesheet
             'Link:focused' => ['inverse' => true],
             'Link:hover' => ['bold' => true],
             'Link:disabled' => ['dim' => true],
+            'Placeholder' => ['color' => '$muted', 'dim' => true],
+            'Placeholder::label' => ['dim' => false, 'bold' => true],
             'Form::error' => ['color' => '$error'],
             '*:invalid' => ['color' => '$error'],
             '*::scrollbar' => ['color' => '$muted'],

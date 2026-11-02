@@ -20,6 +20,7 @@ Widget parity with ratatui, Textual and Bubbles (branch `widgets/parity`):
 - New: `Scrollbar` (standalone, for a view you scroll yourself).
 - New: `Badge` (status label with variants; `closable: true` for a removable tag).
 - New: `Link` (focusable OSC 8 hyperlink with `onActivate`).
+- New: `Placeholder` (hatched stand-in showing its label and size).
 
 ## 0.0.5 (2026-11-02)
 
