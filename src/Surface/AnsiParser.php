@@ -47,7 +47,7 @@ class AnsiParser
         return $result;
     }
 
-    /** @param bool $committed true for a failure after a commit (`@`); such an error is not backtracked over (exception code 1) */
+    /** @param bool $committed true for a failure after a commit (`@`); such an error is not backtracked over (`ParseError::$committed`) */
     private function fail(string $expected, bool $committed = false): never
     {
         $offset = \max($this->offset, $this->maxOffset);
@@ -63,7 +63,7 @@ class AnsiParser
             $found = \ctype_print($char) ? "'{$char}'" : '\x' . \bin2hex($char);
         }
 
-        throw new \RuntimeException("Parse error at line {$line}, column {$col}: expected {$expected}, found {$found}", $committed ? 1 : 0);
+        throw new AnsiParserParseError("Parse error at line {$line}, column {$col}: expected {$expected}, found {$found}", $committed, $line, $col, $offset, $expected, $found);
     }
 
     private function expect(string $rule): void
@@ -80,7 +80,7 @@ class AnsiParser
 
         $_seqOffset1 = $this->offset;
         $_result = [];
-        $_seq1_0 = [];
+        $_seq1_0 = []; $_rep2Count = 0;
         do {
             $_repOffset2 = $this->offset;
             $_rep2 = $this->parseItem();
@@ -88,7 +88,8 @@ class AnsiParser
                 if ($this->offset === $_repOffset2) {
                     break;
                 }
-                $_seq1_0[] = $_rep2;
+                $_rep2Count++;
+                if ($_rep2 !== AnsiParserSignal::HIT) { $_seq1_0[] = $_rep2; }
             }
         } while ($_rep2 !== AnsiParserSignal::MISS);
         if ($_seq1_0 === AnsiParserSignal::MISS) {
@@ -111,7 +112,7 @@ class AnsiParser
         if ($_seq1_1 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq1_1;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -323,7 +324,7 @@ class AnsiParser
         if ($_seq5_1 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq5_1;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -357,7 +358,7 @@ class AnsiParser
         if (!($_sn8_1 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn8_1;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -430,7 +431,7 @@ class AnsiParser
         if (!($_sn10_1 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn10_1;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -455,7 +456,7 @@ class AnsiParser
         if ($_seq11_0 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq11_0;
         }
-        $_seq11_1 = [];
+        $_seq11_1 = []; $_rep12Count = 0;
         do {
             $_repOffset12 = $this->offset;
             if ($this->offset >= $this->length || !\str_contains('' . "\0" . '	
@@ -469,7 +470,8 @@ class AnsiParser
                 if ($this->offset === $_repOffset12) {
                     break;
                 }
-                $_seq11_1[] = $_rep12;
+                $_rep12Count++;
+                if ($_rep12 !== AnsiParserSignal::HIT) { $_seq11_1[] = $_rep12; }
             }
         } while ($_rep12 !== AnsiParserSignal::MISS);
         if ($_seq11_1 === AnsiParserSignal::MISS) {
@@ -492,7 +494,7 @@ class AnsiParser
         if ($_seq11_2 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq11_2;
         }
-        $_seq11_3 = [];
+        $_seq11_3 = []; $_rep13Count = 0;
         do {
             $_repOffset13 = $this->offset;
             $_rep13 = $this->parseCsiChar();
@@ -500,7 +502,8 @@ class AnsiParser
                 if ($this->offset === $_repOffset13) {
                     break;
                 }
-                $_seq11_3[] = $_rep13;
+                $_rep13Count++;
+                if ($_rep13 !== AnsiParserSignal::HIT) { $_seq11_3[] = $_rep13; }
             }
         } while ($_rep13 !== AnsiParserSignal::MISS);
         if ($_seq11_3 === AnsiParserSignal::MISS) {
@@ -527,7 +530,7 @@ class AnsiParser
         if (!($_sn11_5 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn11_5;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -552,7 +555,7 @@ class AnsiParser
         if ($_seq14_0 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq14_0;
         }
-        $_seq14_1 = [];
+        $_seq14_1 = []; $_rep15Count = 0;
         do {
             $_repOffset15 = $this->offset;
             $_rep15 = $this->parseCsiChar();
@@ -560,7 +563,8 @@ class AnsiParser
                 if ($this->offset === $_repOffset15) {
                     break;
                 }
-                $_seq14_1[] = $_rep15;
+                $_rep15Count++;
+                if ($_rep15 !== AnsiParserSignal::HIT) { $_seq14_1[] = $_rep15; }
             }
         } while ($_rep15 !== AnsiParserSignal::MISS);
         if ($_seq14_1 === AnsiParserSignal::MISS) {
@@ -587,7 +591,7 @@ class AnsiParser
         if (!($_sn14_3 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn14_3;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -684,7 +688,7 @@ class AnsiParser
             $_choice17_1 = $_sn18_1;
             goto _seqEnd18;
         }
-        if ($_choice17_1 === []) { $_choice17_1 = null; }
+        if ($_choice17_1 === []) { $_choice17_1 = AnsiParserSignal::HIT; }
         _seqEnd18:
         if ($_choice17_1 !== AnsiParserSignal::MISS) {
             $_result = $_choice17_1;
@@ -726,7 +730,7 @@ class AnsiParser
             $_choice17_2 = $_sn19_1;
             goto _seqEnd19;
         }
-        if ($_choice17_2 === []) { $_choice17_2 = null; }
+        if ($_choice17_2 === []) { $_choice17_2 = AnsiParserSignal::HIT; }
         _seqEnd19:
         if ($_choice17_2 !== AnsiParserSignal::MISS) {
             $_result = $_choice17_2;
@@ -759,7 +763,7 @@ class AnsiParser
         if ($_seq21_0 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq21_0;
         }
-        $_seq21_1 = [];
+        $_seq21_1 = []; $_rep22Count = 0;
         do {
             $_repOffset22 = $this->offset;
             if ($this->offset >= $this->length || !\str_contains('' . "\0" . '	
@@ -773,7 +777,8 @@ class AnsiParser
                 if ($this->offset === $_repOffset22) {
                     break;
                 }
-                $_seq21_1[] = $_rep22;
+                $_rep22Count++;
+                if ($_rep22 !== AnsiParserSignal::HIT) { $_seq21_1[] = $_rep22; }
             }
         } while ($_rep22 !== AnsiParserSignal::MISS);
         if ($_seq21_1 === AnsiParserSignal::MISS) {
@@ -821,7 +826,7 @@ class AnsiParser
         if (!($_sn21_5 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn21_5;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -871,7 +876,7 @@ class AnsiParser
         if (!($_sn23_3 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn23_3;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -936,7 +941,7 @@ class AnsiParser
             $_choice24_1 = $_sn25_1;
             goto _seqEnd25;
         }
-        if ($_choice24_1 === []) { $_choice24_1 = null; }
+        if ($_choice24_1 === []) { $_choice24_1 = AnsiParserSignal::HIT; }
         _seqEnd25:
         if ($_choice24_1 !== AnsiParserSignal::MISS) {
             $_result = $_choice24_1;
@@ -978,7 +983,7 @@ class AnsiParser
             $_choice24_2 = $_sn26_1;
             goto _seqEnd26;
         }
-        if ($_choice24_2 === []) { $_choice24_2 = null; }
+        if ($_choice24_2 === []) { $_choice24_2 = AnsiParserSignal::HIT; }
         _seqEnd26:
         if ($_choice24_2 !== AnsiParserSignal::MISS) {
             $_result = $_choice24_2;
@@ -1011,7 +1016,7 @@ class AnsiParser
         if ($_seq28_0 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq28_0;
         }
-        $_seq28_1 = [];
+        $_seq28_1 = []; $_rep29Count = 0;
         do {
             $_repOffset29 = $this->offset;
             if ($this->offset >= $this->length || !\str_contains('' . "\0" . '	
@@ -1025,7 +1030,8 @@ class AnsiParser
                 if ($this->offset === $_repOffset29) {
                     break;
                 }
-                $_seq28_1[] = $_rep29;
+                $_rep29Count++;
+                if ($_rep29 !== AnsiParserSignal::HIT) { $_seq28_1[] = $_rep29; }
             }
         } while ($_rep29 !== AnsiParserSignal::MISS);
         if ($_seq28_1 === AnsiParserSignal::MISS) {
@@ -1073,7 +1079,7 @@ class AnsiParser
         if (!($_sn28_5 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn28_5;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -1123,7 +1129,7 @@ class AnsiParser
         if (!($_sn30_3 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn30_3;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -1148,7 +1154,7 @@ class AnsiParser
         if ($_seq31_0 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq31_0;
         }
-        $_seq31_1 = [];
+        $_seq31_1 = []; $_rep32Count = 0;
         do {
             $_repOffset32 = $this->offset;
             if ($this->offset >= $this->length || !\str_contains('' . "\0" . '	
@@ -1162,7 +1168,8 @@ class AnsiParser
                 if ($this->offset === $_repOffset32) {
                     break;
                 }
-                $_seq31_1[] = $_rep32;
+                $_rep32Count++;
+                if ($_rep32 !== AnsiParserSignal::HIT) { $_seq31_1[] = $_rep32; }
             }
         } while ($_rep32 !== AnsiParserSignal::MISS);
         if ($_seq31_1 === AnsiParserSignal::MISS) {
@@ -1211,7 +1218,7 @@ class AnsiParser
         if (!($_sn31_5 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn31_5;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -1261,7 +1268,7 @@ class AnsiParser
         if (!($_sn33_3 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn33_3;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -1326,7 +1333,7 @@ class AnsiParser
             $_choice34_1 = $_sn35_1;
             goto _seqEnd35;
         }
-        if ($_choice34_1 === []) { $_choice34_1 = null; }
+        if ($_choice34_1 === []) { $_choice34_1 = AnsiParserSignal::HIT; }
         _seqEnd35:
         if ($_choice34_1 !== AnsiParserSignal::MISS) {
             $_result = $_choice34_1;
@@ -1368,7 +1375,7 @@ class AnsiParser
             $_choice34_2 = $_sn36_1;
             goto _seqEnd36;
         }
-        if ($_choice34_2 === []) { $_choice34_2 = null; }
+        if ($_choice34_2 === []) { $_choice34_2 = AnsiParserSignal::HIT; }
         _seqEnd36:
         if ($_choice34_2 !== AnsiParserSignal::MISS) {
             $_result = $_choice34_2;
@@ -1414,7 +1421,7 @@ class AnsiParser
             $_choice38_0 = $_sn39_1;
             goto _seqEnd39;
         }
-        if ($_choice38_0 === []) { $_choice38_0 = null; }
+        if ($_choice38_0 === []) { $_choice38_0 = AnsiParserSignal::HIT; }
         _seqEnd39:
         if ($_choice38_0 !== AnsiParserSignal::MISS) {
             $_result = $_choice38_0;
@@ -1438,7 +1445,7 @@ class AnsiParser
         if ($_seq40_0 !== AnsiParserSignal::HIT) {
             $_choice38_1[] = $_seq40_0;
         }
-        $_seq40_1 = [];
+        $_seq40_1 = []; $_rep41Count = 0;
         do {
             $_repOffset41 = $this->offset;
             if ($this->offset >= $this->length || !\str_contains('' . "\0" . '	
@@ -1452,7 +1459,8 @@ class AnsiParser
                 if ($this->offset === $_repOffset41) {
                     break;
                 }
-                $_seq40_1[] = $_rep41;
+                $_rep41Count++;
+                if ($_rep41 !== AnsiParserSignal::HIT) { $_seq40_1[] = $_rep41; }
             }
         } while ($_rep41 !== AnsiParserSignal::MISS);
         if ($_seq40_1 === AnsiParserSignal::MISS) {
@@ -1497,7 +1505,7 @@ class AnsiParser
             $_choice38_1 = $_sn40_4;
             goto _seqEnd40;
         }
-        if ($_choice38_1 === []) { $_choice38_1 = null; }
+        if ($_choice38_1 === []) { $_choice38_1 = AnsiParserSignal::HIT; }
         _seqEnd40:
         if ($_choice38_1 !== AnsiParserSignal::MISS) {
             $_result = $_choice38_1;
@@ -1521,7 +1529,7 @@ class AnsiParser
         if ($_seq42_0 !== AnsiParserSignal::HIT) {
             $_choice38_2[] = $_seq42_0;
         }
-        $_seq42_1 = [];
+        $_seq42_1 = []; $_rep43Count = 0;
         do {
             $_repOffset43 = $this->offset;
             if ($this->offset >= $this->length || !\str_contains('' . "\0" . '	
@@ -1535,7 +1543,8 @@ class AnsiParser
                 if ($this->offset === $_repOffset43) {
                     break;
                 }
-                $_seq42_1[] = $_rep43;
+                $_rep43Count++;
+                if ($_rep43 !== AnsiParserSignal::HIT) { $_seq42_1[] = $_rep43; }
             }
         } while ($_rep43 !== AnsiParserSignal::MISS);
         if ($_seq42_1 === AnsiParserSignal::MISS) {
@@ -1566,7 +1575,7 @@ class AnsiParser
             $_choice38_2 = $_sn42_3;
             goto _seqEnd42;
         }
-        if ($_choice38_2 === []) { $_choice38_2 = null; }
+        if ($_choice38_2 === []) { $_choice38_2 = AnsiParserSignal::HIT; }
         _seqEnd42:
         if ($_choice38_2 !== AnsiParserSignal::MISS) {
             $_result = $_choice38_2;
@@ -1599,7 +1608,7 @@ class AnsiParser
         if ($_seq44_0 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq44_0;
         }
-        $_seq44_1 = [];
+        $_seq44_1 = []; $_rep45Count = 0;
         do {
             $_repOffset45 = $this->offset;
             if ($this->offset >= $this->length) {
@@ -1681,7 +1690,8 @@ class AnsiParser
                 if ($this->offset === $_repOffset45) {
                     break;
                 }
-                $_seq44_1[] = $_rep45;
+                $_rep45Count++;
+                if ($_rep45 !== AnsiParserSignal::HIT) { $_seq44_1[] = $_rep45; }
             }
         } while ($_rep45 !== AnsiParserSignal::MISS);
         if ($_seq44_1 === AnsiParserSignal::MISS) {
@@ -1691,7 +1701,7 @@ class AnsiParser
         if ($_seq44_1 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq44_1;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -1787,7 +1797,7 @@ class AnsiParser
             $_choice49_0 = $_sn50_1;
             goto _seqEnd50;
         }
-        if ($_choice49_0 === []) { $_choice49_0 = null; }
+        if ($_choice49_0 === []) { $_choice49_0 = AnsiParserSignal::HIT; }
         _seqEnd50:
         if ($_choice49_0 !== AnsiParserSignal::MISS) {
             $_result = $_choice49_0;
@@ -1822,7 +1832,7 @@ class AnsiParser
             $_choice49_1 = $_sn51_1;
             goto _seqEnd51;
         }
-        if ($_choice49_1 === []) { $_choice49_1 = null; }
+        if ($_choice49_1 === []) { $_choice49_1 = AnsiParserSignal::HIT; }
         _seqEnd51:
         if ($_choice49_1 !== AnsiParserSignal::MISS) {
             $_result = $_choice49_1;
@@ -1864,7 +1874,7 @@ class AnsiParser
             $_choice49_2 = $_sn52_1;
             goto _seqEnd52;
         }
-        if ($_choice49_2 === []) { $_choice49_2 = null; }
+        if ($_choice49_2 === []) { $_choice49_2 = AnsiParserSignal::HIT; }
         _seqEnd52:
         if ($_choice49_2 !== AnsiParserSignal::MISS) {
             $_result = $_choice49_2;
@@ -1906,7 +1916,7 @@ class AnsiParser
         if (!($_sn54_1 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn54_1;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -1953,7 +1963,7 @@ class AnsiParser
         if (!($_sn55_2 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn55_2;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -2000,7 +2010,7 @@ class AnsiParser
         if (!($_sn56_2 instanceof \Charm\Parsing\SequenceResume)) {
             return $_sn56_2;
         }
-        if ($_result === []) { $_result = null; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
 
         return $_result;
     }
@@ -2279,4 +2289,20 @@ class AnsiParser
 }
 
 enum AnsiParserSignal { case HIT; case MISS; }
+
+/** Thrown by AnsiParser::parse(). `$committed` is true if a commit (`@`) had been passed, so no alternative could recover. */
+class AnsiParserParseError extends \RuntimeException
+{
+    public function __construct(
+        string $message,
+        public readonly bool $committed,
+        public readonly int $sourceLine,
+        public readonly int $sourceColumn,
+        public readonly int $offset,
+        public readonly string $expected,
+        public readonly string $found,
+    ) {
+        parent::__construct($message);
+    }
+}
 
