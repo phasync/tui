@@ -17,15 +17,15 @@ use function fiber\writable;
  *     if (!$tty->isTerminal()) { exit("Run me in a terminal\n"); }
  *     $tty->attach($root);
  *
- * Attaching saves the terminal settings and switches to raw mode with `stty`; detaching restores
- * them. They are also restored when the program ends any other way: an uncaught exception, a
+ * Attaching saves the terminal settings and switches to raw mode, detaching restores them: with
+ * PHP's `Io\Terminal\Terminal` where it exists (PHP 8.7, RFC io_terminal), else with `stty`. They are also restored when the program ends any other way: an uncaught exception, a
  * fatal error, `exit()`, or SIGTERM/SIGHUP/SIGINT/SIGQUIT (with ext-pcntl; the program then exits
  * with status 128 + signal). An exception nobody catches is printed after the terminal is
  * restored as its class, message and file:line (and those of its previous exceptions) on
  * stderr, with the stack trace only when `TUI_TRACE=1` is in the environment, and the program
  * exits with status 255; a program that set its own handler with `set_exception_handler()`
- * before keeps it. The size is re-read on SIGWINCH with ext-pcntl, else polled with
- * `stty size` twice a second. Text copied in a window goes to the clipboard with OSC 52, and also
+ * before keeps it. The size is `Io\Terminal\Terminal::getSize()`, read when asked; without it,
+ * `stty size`, re-read on SIGWINCH with ext-pcntl, else polled twice a second. Text copied in a window goes to the clipboard with OSC 52, and also
  * through `wl-copy`, `xclip` or `pbcopy` when one is installed and a display is available.
  */
 final class Tty extends TerminalDevice
@@ -35,6 +35,9 @@ final class Tty extends TerminalDevice
     /** @var resource */
     private $out;
     private ?string $saved = null;
+    /** PHP's own terminal (RFC io_terminal), when this PHP has it, and its raw-mode lease while attached. */
+    private ?\Io\Terminal\Terminal $native = null;
+    private ?\Io\Terminal\ModeToken $mode = null;
     private string $restore = '';
     /** @var array{int,int}|null */
     private ?array $size = null;
@@ -59,6 +62,16 @@ final class Tty extends TerminalDevice
         $this->images = self::imagesFromEnvironment(getenv());
         $this->setColors(self::colorsFromEnvironment(getenv()));
         $this->traceFile = getenv('TUI_TRACE_BYTES') ?: null;
+        // the RFC's API (fromStdio()); the ext-terminal 1.x extension shares the class name, not the API
+        if (method_exists(\Io\Terminal\Terminal::class, 'fromStdio')) {
+            $this->native = \Io\Terminal\Terminal::fromStreams($this->in, $this->out);
+        }
+    }
+
+    /** Whether the terminal's mode and size come from PHP's `Io\Terminal` rather than `stty`. */
+    public function isNative(): bool
+    {
+        return $this->native !== null;
     }
 
     /** `TUI_TRACE_BYTES=<file>` in the environment: every byte sent to the terminal is appended to the file, every byte received to `<file>.in`. */
@@ -171,15 +184,19 @@ final class Tty extends TerminalDevice
     /** @throws \RuntimeException when not connected to a terminal */
     protected function open(string $restore): void
     {
-        if ($this->saved !== null) {
+        if ($this->saved !== null || $this->mode !== null) {
             return;
         }
         if (!$this->isTerminal()) {
             throw new \RuntimeException('Not a terminal: STDIN and STDOUT must be connected to a terminal');
         }
         $this->restore = $restore;
-        $this->saved = trim($this->stty('-g'));
-        $this->stty('raw', '-echo');
+        if ($this->native !== null) {
+            $this->mode = $this->native->enableRawMode();
+        } else {
+            $this->saved = trim($this->stty('-g'));
+            $this->stty('raw', '-echo');
+        }
         stream_set_blocking($this->in, false);
         stream_set_blocking($this->out, false);
         self::$openTerminals[spl_object_id($this)] = $this;
@@ -235,7 +252,7 @@ final class Tty extends TerminalDevice
 
     protected function close(): void
     {
-        if ($this->saved === null) {
+        if ($this->saved === null && $this->mode === null) {
             return;
         }
         stream_set_blocking($this->out, true);
@@ -250,9 +267,15 @@ final class Tty extends TerminalDevice
             $this->trace($this->restore);
             @fwrite($this->out, $this->restore);
         }
-        $this->stty($this->saved);
+        if ($this->mode !== null) {
+            $mode = $this->mode;
+            $this->mode = null;
+            $this->native->restoreMode($mode);
+        } else {
+            $this->stty($this->saved);
+            $this->saved = null;
+        }
         stream_set_blocking($this->in, true);
-        $this->saved = null;
         unset(self::$openTerminals[spl_object_id($this)]);
         if ($this->signals) {
             $this->signals = false;
@@ -262,9 +285,15 @@ final class Tty extends TerminalDevice
         }
     }
 
-    /** The terminal's size as [cols, rows], from `stty size` (re-read on SIGWINCH, or twice a second). */
+    /** The terminal's size as [cols, rows]: `Io\Terminal`'s, else from `stty size` (re-read on SIGWINCH, or twice a second). */
     public function size(): array
     {
+        if ($this->native !== null) {
+            $size = $this->native->getSize();
+            return $this->size = $size === null
+                ? $this->size ?? [(int) (getenv('COLUMNS') ?: 80), (int) (getenv('LINES') ?: 24)]
+                : [$size->cols, $size->rows];
+        }
         $now = microtime(true);
         if ($this->size === null || $this->resized || (!$this->signals && $now - $this->sizeChecked > 0.5)) {
             $this->resized = false;

@@ -60,6 +60,7 @@ fiber\run(function () use ($tty) {
 | `nextFrame(): float` | Wait for the next frame, and return once it has been drawn and sent to the terminal, with the seconds since the frame before it (`Tui::nextFrame()` is the one for a program's coroutine). |
 | `TerminalDevice::of(Surface $root): ?TerminalDevice` | The device a root is attached to, or null. A component reaches its own with `$this->device()`. |
 | `size(): array` | The terminal's size as `[cols, rows]`. |
+| `isNative(): bool` | Whether raw mode and the size come from PHP's own `Io\Terminal\Terminal` (PHP 8.7 with the io_terminal RFC) rather than `stty`. |
 | `hasKittyKeyboard(): bool` | True once the terminal answered the kitty keyboard query. |
 | `supportsHyperlinks(): bool` | True if the terminal shows OSC 8 hyperlinks, so the device writes the cells' links (see below). |
 | `terminalName(): string` | The name the terminal gave when asked (XTVERSION) at `attach()`, such as `kitty(0.36.4)`; `''` when it did not answer. |

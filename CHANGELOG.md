@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **`Tty` uses PHP's `Io\Terminal\Terminal` where it exists** (the io_terminal RFC, proposed
+  for PHP 8.7): raw mode is a `ModeToken` lease and the size is `getSize()`, read when asked,
+  instead of running `stty -g`, `stty raw -echo`, `stty <saved>` and `stty size`. Elsewhere
+  `stty` as before. `Tty::isNative()` says which. The ext-terminal 1.x extension shares the class
+  name but not the API, and is not used.
+
 ## 0.1.0 (2026-11-02)
 
 The library stops abstracting what `fiber\` abstracts, and stops owning a key:
