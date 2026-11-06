@@ -112,7 +112,7 @@ class AnsiParser
         if ($_seq1_1 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq1_1;
         }
-        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; } else { $_result = $_result[0]; }
 
         return $_result;
     }
@@ -324,7 +324,7 @@ class AnsiParser
         if ($_seq5_1 !== AnsiParserSignal::HIT) {
             $_result[] = $_seq5_1;
         }
-        if ($_result === []) { $_result = AnsiParserSignal::HIT; }
+        if ($_result === []) { $_result = AnsiParserSignal::HIT; } else { $_result = $_result[0]; }
 
         return $_result;
     }
